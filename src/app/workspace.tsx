@@ -227,6 +227,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [month, setMonth] = useState(new Date().toISOString().slice(0, 7)),
     [followupSelected, setFollowupSelected] = useState('Needs Attention'),
     [bookingLimit, setBookingLimit] = useState(20),
+    [tableLimit, setTableLimit] = useState(20),
     [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7)),
     [day, setDay] = useState(''),
     [intakeOpen, setIntakeOpen] = useState(false),
@@ -533,6 +534,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       setDraftLimit(8);
       setBookingLimit(20);
     }
+    setTableLimit(20);
     if (typeof window !== 'undefined') {
       const next = workspaceUrl(name, window.location.hash);
       const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -3842,6 +3844,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     );
   } else if (page === 'Payments') {
     const list = s.payments.filter((p: R) => filter === 'All' || p.direction === filter);
+    const activity = s.financialActivity ?? [];
     view = (
       <>
         {heading(
@@ -3860,13 +3863,16 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <button
               className={`btn ${filter === v ? 'primary' : ''}`}
               key={v}
-              onClick={() => setFilter(v)}
+              onClick={() => {
+                setFilter(v);
+                setTableLimit(20);
+              }}
             >
               {pretty(v)}
             </button>
           ))}
         </div>
-        <Card title="Cash, card and bank activity" count={s.financialActivity?.length ?? 0}>
+        <Card title="Cash, card and bank activity" count={activity.length}>
           <p className="section-body">
             Actual money movements from the accounting ledger, including direct Padova payments and
             refunds. Each movement appears once.
@@ -3882,7 +3888,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {s.financialActivity?.map((a: R) => (
+                {activity.slice(0, tableLimit).map((a: R) => (
                   <tr key={a.id}>
                     <td>
                       {dateLabel(a.date)}
@@ -3909,6 +3915,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
+          {activity.length > tableLimit && (
+            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
+              Show more activity
+            </button>
+          )}
         </Card>
         <Card title="Receipts, payments and allocations" count={list.length}>
           <div className="table-wrap">
@@ -3925,7 +3936,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {list.map((p: R) => (
+                {list.slice(0, tableLimit).map((p: R) => (
                   <tr key={p.id}>
                     <td>
                       <strong>{p.party}</strong>
@@ -3984,6 +3995,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
+          {list.length > tableLimit && (
+            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
+              Show more payments
+            </button>
+          )}
           {!list.length && <Empty />}
         </Card>
       </>
@@ -4002,14 +4018,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <button
               key={v}
               className={`btn ${filter === v ? 'primary' : ''}`}
-              onClick={() => setFilter(v)}
+              onClick={() => {
+                setFilter(v);
+                setTableLimit(20);
+              }}
             >
               {v}
             </button>
           ))}
         </div>
         <div className="asset-grid">
-          {list.map((a: R) => (
+          {list.slice(0, tableLimit).map((a: R) => (
             <div className="card asset-card" key={a.id}>
               <div className="asset-head">
                 <span className="travel-icon">
@@ -4060,6 +4079,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
           ))}
         </div>
+        {list.length > tableLimit && (
+          <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
+            Show more assets
+          </button>
+        )}
         {!canAssets && <Empty>Travel Assets access requires permission.</Empty>}
         {s.fulfillmentEnabled && can('manage_assets') && (
           <div className="detail-section">
@@ -4127,7 +4151,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {s.commissions.map((c: R) => (
+                {s.commissions.slice(0, tableLimit).map((c: R) => (
                   <tr key={c.id}>
                     <td>
                       <button
@@ -4178,6 +4202,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
+          {s.commissions.length > tableLimit && (
+            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
+              Show more commissions
+            </button>
+          )}
         </Card>
         <div style={{ marginTop: 22 }}>
           <CommissionPayables
@@ -4205,7 +4234,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <button
               className={filter === x ? 'btn small primary' : 'btn small'}
               key={x}
-              onClick={() => setFilter(x)}
+              onClick={() => {
+                setFilter(x);
+                setTableLimit(20);
+              }}
             >
               {x}
             </button>
@@ -4247,6 +4279,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       Number(r.received) < Number(r.supplier_expected) ||
                       Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
                   )
+                  .slice(0, tableLimit)
                   .map((r: R) => (
                     <tr key={r.id}>
                       <td>
@@ -4300,6 +4333,16 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
+          {s.refunds.filter(
+            (r: R) =>
+              filter === 'All' ||
+              Number(r.received) < Number(r.supplier_expected) ||
+              Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
+          ).length > tableLimit && (
+            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
+              Show more refunds
+            </button>
+          )}
           {!s.refunds.length && <Empty>No refunds recorded.</Empty>}
         </Card>
       </>
@@ -4696,7 +4739,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           'Attributed, chronological events. Financial history is append-only.',
         )}
         <Card title="Recent events" count={s.audit.length}>
-          {s.audit.map((a: R) => (
+          {s.audit.slice(0, tableLimit).map((a: R) => (
             <div className="activity" key={a.id}>
               <span className="activity-dot" />
               <div>
@@ -4716,6 +4759,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </div>
             </div>
           ))}
+          {s.audit.length > tableLimit && (
+            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
+              Show more activity
+            </button>
+          )}
         </Card>
       </>
     );
