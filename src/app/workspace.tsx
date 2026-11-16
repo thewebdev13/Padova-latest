@@ -3297,6 +3297,13 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         (!day || (kind === 'booking' && r.travel_start <= day && r.travel_end >= day)) &&
         (bookingStatus === 'All' || (kind === 'booking' && r.reservation_status === bookingStatus)),
     );
+    const filteredDrafts = (s.bookingDrafts ?? []).filter((draft: R) => {
+      if (draftChannelFilter === 'All') return true;
+      if (draftChannelFilter === 'historical') return draft.kind === 'historical_booking';
+      if (draftChannelFilter === 'voucher') return draft.kind === 'voucher_sale';
+      if (draft.kind === 'historical_booking' || draft.kind === 'voucher_sale') return false;
+      return intakeChannelFilterKey(draft.intake_source) === draftChannelFilter;
+    });
     view = (
       <>
         {heading(
@@ -3379,8 +3386,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         {!!s.bookingDrafts?.length && (
           <details className="card section-body intake-drafts" open>
             <summary>
-              Drafts & unposted historical records ({s.bookingDrafts.length}) — separate from the
-              transactions below
+              Drafts & unposted historical records (
+              {draftChannelFilter === 'All'
+                ? filteredDrafts.length
+                : `${filteredDrafts.length} of ${s.bookingDrafts.length}`}
+              ) — separate from the transactions below
             </summary>
             <div className="intake-draft-filters" role="group" aria-label="Filter drafts">
               {(
@@ -3410,15 +3420,6 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
             <div className="intake-draft-grid">
               {(() => {
-                const filteredDrafts = s.bookingDrafts.filter((draft: R) => {
-                  if (draftChannelFilter === 'All') return true;
-                  if (draftChannelFilter === 'historical')
-                    return draft.kind === 'historical_booking';
-                  if (draftChannelFilter === 'voucher') return draft.kind === 'voucher_sale';
-                  if (draft.kind === 'historical_booking' || draft.kind === 'voucher_sale')
-                    return false;
-                  return intakeChannelFilterKey(draft.intake_source) === draftChannelFilter;
-                });
                 if (!filteredDrafts.length) {
                   return (
                     <p className="intake-draft-empty">

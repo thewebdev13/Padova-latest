@@ -202,6 +202,7 @@ export default function BookingEntry(props: Props) {
       v.traveler_ids.includes(id),
     );
   const closeBooking = () => {
+    if (busy) return;
     if (
       hasUnsavedTicketing() &&
       !confirm(
@@ -349,6 +350,17 @@ export default function BookingEntry(props: Props) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [inline, setInline] = useState<R | null>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || busy) return;
+      // Nested dialogs / open comboboxes handle Escape themselves (stopPropagation).
+      if (inline || travelerDetailsId) return;
+      event.preventDefault();
+      closeBooking();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, inline, travelerDetailsId]);
   const [extra, setExtra] = useState<Record<string, R[]>>({});
   const [hotelDirectoryHits, setHotelDirectoryHits] = useState<R[]>([]);
   const [hotelDirectoryNote, setHotelDirectoryNote] = useState('');
