@@ -1297,15 +1297,37 @@ td small {
 }
 .intake-draft-more {
   grid-column: 1 / -1;
+  padding: 4px 0 8px;
+}
+.list-pager {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 10px 16px;
-  padding: 4px 0 8px;
+  margin-top: 10px;
 }
-.intake-draft-more .muted {
+.list-pager-only {
+  margin: 10px 0 0;
+}
+.list-pager .muted {
   margin: 0;
   font-size: 12px;
+}
+.list-pager-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.list-pager-ellipsis {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.list-pager-controls .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .intake-draft-provenance {
   margin: 0;

@@ -48,6 +48,7 @@ import {
   receivableCommissionLabel,
 } from '@/lib/commission-line-label';
 import { readWorkspaceLocation, workspaceUrl } from '@/lib/workspace-routes';
+import ListPager, { pageSlice } from '@/components/list-pager';
 import UserAdministration, {
   PasswordChange,
   PersonalRecoveryCodes,
@@ -226,8 +227,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [horizon, setHorizon] = useState(7),
     [month, setMonth] = useState(new Date().toISOString().slice(0, 7)),
     [followupSelected, setFollowupSelected] = useState('Needs Attention'),
-    [bookingLimit, setBookingLimit] = useState(20),
-    [tableLimit, setTableLimit] = useState(20),
+    [bookingPage, setBookingPage] = useState(1),
+    [tablePage, setTablePage] = useState(1),
     [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7)),
     [day, setDay] = useState(''),
     [intakeOpen, setIntakeOpen] = useState(false),
@@ -255,7 +256,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       whatsapp?: string;
     } | null>(null),
     [draftChannelFilter, setDraftChannelFilter] = useState('All'),
-    [draftLimit, setDraftLimit] = useState(8);
+    [draftPage, setDraftPage] = useState(1);
   const resetIntakeChannels = (clearText = false) => {
     setIntakeFile(null);
     setIntakeDrag(false);
@@ -531,10 +532,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     setMobile(false);
     setError('');
     if (name === 'Bookings') {
-      setDraftLimit(8);
-      setBookingLimit(20);
+      setDraftPage(1);
+      setBookingPage(1);
     }
-    setTableLimit(20);
+    setTablePage(1);
     if (typeof window !== 'undefined') {
       const next = workspaceUrl(name, window.location.hash);
       const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -3413,7 +3414,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   aria-pressed={draftChannelFilter === key}
                   onClick={() => {
                     setDraftChannelFilter(key);
-                    setDraftLimit(8);
+                    setDraftPage(1);
                   }}
                 >
                   {label}
@@ -3429,10 +3430,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </p>
                   );
                 }
-                const visibleDrafts = filteredDrafts.slice(0, draftLimit);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
                 return (
                   <>
-                    {visibleDrafts.map((draft: R) => (
+                    {draftPager.items.map((draft: R) => (
                       <button
                         key={draft.id}
                         type="button"
@@ -3550,20 +3551,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         </span>
                       </button>
                     ))}
-                    {filteredDrafts.length > draftLimit && (
-                      <div className="intake-draft-more">
-                        <p className="muted">
-                          Showing {visibleDrafts.length} of {filteredDrafts.length}
-                        </p>
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          onClick={() => setDraftLimit((n) => n + 8)}
-                        >
-                          Show more drafts
-                        </button>
-                      </div>
-                    )}
+                    <div className="intake-draft-more">
+                      <ListPager
+                        page={draftPager.page}
+                        totalPages={draftPager.totalPages}
+                        total={draftPager.total}
+                        from={draftPager.from}
+                        to={draftPager.to}
+                        onPage={setDraftPage}
+                        label="drafts"
+                      />
+                    </div>
                   </>
                 );
               })()}
@@ -3571,12 +3569,23 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           </details>
         )}
         <Card title="Transactions" count={items.length}>
-          {transactionTable(items.slice(0, bookingLimit))}
-          {items.length > bookingLimit && (
-            <button className="btn ghost" onClick={() => setBookingLimit(bookingLimit + 20)}>
-              Show more
-            </button>
-          )}
+          {(() => {
+            const bookingPager = pageSlice(items, bookingPage, 20);
+            return (
+              <>
+                {transactionTable(bookingPager.items)}
+                <ListPager
+                  page={bookingPager.page}
+                  totalPages={bookingPager.totalPages}
+                  total={bookingPager.total}
+                  from={bookingPager.from}
+                  to={bookingPager.to}
+                  onPage={setBookingPage}
+                  label="transactions"
+                />
+              </>
+            );
+          })()}
         </Card>
       </>
     );
@@ -3865,7 +3874,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               key={v}
               onClick={() => {
                 setFilter(v);
-                setTableLimit(20);
+                setTablePage(1);
               }}
             >
               {pretty(v)}
@@ -3877,6 +3886,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             Actual money movements from the accounting ledger, including direct Padova payments and
             refunds. Each movement appears once.
           </p>
+          {(() => {
+            const activityPager = pageSlice<R>(activity, tablePage, 20);
+            return (
+              <>
           <div className="table-wrap">
             <table>
               <thead>
@@ -3888,7 +3901,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {activity.slice(0, tableLimit).map((a: R) => (
+                {activityPager.items.map((a: R) => (
                   <tr key={a.id}>
                     <td>
                       {dateLabel(a.date)}
@@ -3915,13 +3928,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
-          {activity.length > tableLimit && (
-            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
-              Show more activity
-            </button>
-          )}
+          <ListPager
+            page={activityPager.page}
+            totalPages={activityPager.totalPages}
+            total={activityPager.total}
+            from={activityPager.from}
+            to={activityPager.to}
+            onPage={setTablePage}
+            label="activity rows"
+          />
+              </>
+            );
+          })()}
         </Card>
         <Card title="Receipts, payments and allocations" count={list.length}>
+          {(() => {
+            const paymentPager = pageSlice<R>(list, tablePage, 20);
+            return (
+              <>
           <div className="table-wrap">
             <table>
               <thead>
@@ -3936,7 +3960,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {list.slice(0, tableLimit).map((p: R) => (
+                {paymentPager.items.map((p: R) => (
                   <tr key={p.id}>
                     <td>
                       <strong>{p.party}</strong>
@@ -3995,17 +4019,25 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
-          {list.length > tableLimit && (
-            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
-              Show more payments
-            </button>
-          )}
+          <ListPager
+            page={paymentPager.page}
+            totalPages={paymentPager.totalPages}
+            total={paymentPager.total}
+            from={paymentPager.from}
+            to={paymentPager.to}
+            onPage={setTablePage}
+            label="payments"
+          />
+              </>
+            );
+          })()}
           {!list.length && <Empty />}
         </Card>
       </>
     );
   } else if (page === 'Travel Assets') {
     const list = s.assets.filter((a: R) => filter === 'All' || a.kind === filter);
+    const assetPager = pageSlice<R>(list, tablePage, 20);
     view = (
       <>
         {heading(
@@ -4020,7 +4052,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               className={`btn ${filter === v ? 'primary' : ''}`}
               onClick={() => {
                 setFilter(v);
-                setTableLimit(20);
+                setTablePage(1);
               }}
             >
               {v}
@@ -4028,7 +4060,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           ))}
         </div>
         <div className="asset-grid">
-          {list.slice(0, tableLimit).map((a: R) => (
+          {assetPager.items.map((a: R) => (
             <div className="card asset-card" key={a.id}>
               <div className="asset-head">
                 <span className="travel-icon">
@@ -4079,11 +4111,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
           ))}
         </div>
-        {list.length > tableLimit && (
-          <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
-            Show more assets
-          </button>
-        )}
+        <ListPager
+          page={assetPager.page}
+          totalPages={assetPager.totalPages}
+          total={assetPager.total}
+          from={assetPager.from}
+          to={assetPager.to}
+          onPage={setTablePage}
+          label="assets"
+        />
         {!canAssets && <Empty>Travel Assets access requires permission.</Empty>}
         {s.fulfillmentEnabled && can('manage_assets') && (
           <div className="detail-section">
@@ -4151,7 +4187,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {s.commissions.slice(0, tableLimit).map((c: R) => (
+                {pageSlice<R>(s.commissions, tablePage, 20).items.map((c: R) => (
                   <tr key={c.id}>
                     <td>
                       <button
@@ -4202,11 +4238,20 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
-          {s.commissions.length > tableLimit && (
-            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
-              Show more commissions
-            </button>
-          )}
+          {(() => {
+            const commissionPager = pageSlice<R>(s.commissions, tablePage, 20);
+            return (
+              <ListPager
+                page={commissionPager.page}
+                totalPages={commissionPager.totalPages}
+                total={commissionPager.total}
+                from={commissionPager.from}
+                to={commissionPager.to}
+                onPage={setTablePage}
+                label="commissions"
+              />
+            );
+          })()}
         </Card>
         <div style={{ marginTop: 22 }}>
           <CommissionPayables
@@ -4236,7 +4281,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               key={x}
               onClick={() => {
                 setFilter(x);
-                setTableLimit(20);
+                setTablePage(1);
               }}
             >
               {x}
@@ -4254,6 +4299,16 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             ).length
           }
         >
+          {(() => {
+            const refundRows = s.refunds.filter(
+              (r: R) =>
+                filter === 'All' ||
+                Number(r.received) < Number(r.supplier_expected) ||
+                Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
+            );
+            const refundPager = pageSlice<R>(refundRows, tablePage, 20);
+            return (
+              <>
           <div className="table-wrap">
             <table>
               <thead>
@@ -4272,15 +4327,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </tr>
               </thead>
               <tbody>
-                {s.refunds
-                  .filter(
-                    (r: R) =>
-                      filter === 'All' ||
-                      Number(r.received) < Number(r.supplier_expected) ||
-                      Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-                  )
-                  .slice(0, tableLimit)
-                  .map((r: R) => (
+                {refundPager.items.map((r: R) => (
                     <tr key={r.id}>
                       <td>
                         <button
@@ -4333,16 +4380,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </tbody>
             </table>
           </div>
-          {s.refunds.filter(
-            (r: R) =>
-              filter === 'All' ||
-              Number(r.received) < Number(r.supplier_expected) ||
-              Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-          ).length > tableLimit && (
-            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
-              Show more refunds
-            </button>
-          )}
+          <ListPager
+            page={refundPager.page}
+            totalPages={refundPager.totalPages}
+            total={refundPager.total}
+            from={refundPager.from}
+            to={refundPager.to}
+            onPage={setTablePage}
+            label="refunds"
+          />
+              </>
+            );
+          })()}
           {!s.refunds.length && <Empty>No refunds recorded.</Empty>}
         </Card>
       </>
@@ -4739,31 +4788,42 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           'Attributed, chronological events. Financial history is append-only.',
         )}
         <Card title="Recent events" count={s.audit.length}>
-          {s.audit.slice(0, tableLimit).map((a: R) => (
-            <div className="activity" key={a.id}>
-              <span className="activity-dot" />
-              <div>
-                <strong>{a.summary || pretty(a.kind)}</strong>
-                <p>
-                  {new Date(a.created_at).toLocaleString()} · {a.actor_name ?? a.actor}
-                </p>
-                {bks.some((b) => b.id === a.record_id) && (
-                  <button
-                    className="btn ghost"
-                    style={{ marginTop: 8 }}
-                    onClick={() => openRecord('booking', a.record_id)}
-                  >
-                    Open booking <ArrowRight size={12} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          {s.audit.length > tableLimit && (
-            <button type="button" className="btn ghost" onClick={() => setTableLimit((n) => n + 20)}>
-              Show more activity
-            </button>
-          )}
+          {(() => {
+            const activityPager = pageSlice<R>(s.audit, tablePage, 20);
+            return (
+              <>
+                {activityPager.items.map((a: R) => (
+                  <div className="activity" key={a.id}>
+                    <span className="activity-dot" />
+                    <div>
+                      <strong>{a.summary || pretty(a.kind)}</strong>
+                      <p>
+                        {new Date(a.created_at).toLocaleString()} · {a.actor_name ?? a.actor}
+                      </p>
+                      {bks.some((b) => b.id === a.record_id) && (
+                        <button
+                          className="btn ghost"
+                          style={{ marginTop: 8 }}
+                          onClick={() => openRecord('booking', a.record_id)}
+                        >
+                          Open booking <ArrowRight size={12} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <ListPager
+                  page={activityPager.page}
+                  totalPages={activityPager.totalPages}
+                  total={activityPager.total}
+                  from={activityPager.from}
+                  to={activityPager.to}
+                  onPage={setTablePage}
+                  label="events"
+                />
+              </>
+            );
+          })()}
         </Card>
       </>
     );
