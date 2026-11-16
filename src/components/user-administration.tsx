@@ -35,7 +35,7 @@ export default function UserAdministration() {
     setLink('');
     try {
       const r = await post({ action: 'recovery', id });
-      setLink(`${window.location.origin}/#reset=${r.token}`);
+      setLink(`${window.location.origin}/w/dashboard#reset=${r.token}`);
       setMessage(
         `Single-use link expires ${new Date(r.expires_at).toLocaleTimeString()}. Copy and deliver privately after verifying the recipient. It is not stored in audit history.`,
       );

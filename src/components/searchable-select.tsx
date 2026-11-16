@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react';
 type Option = {
   value: string;
   label: string;
@@ -51,8 +51,11 @@ export default function SearchableSelect({
   const [text, setText] = useState(selectedLabel);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | undefined>();
   const input = useRef<HTMLInputElement>(null);
+  const results = useRef<HTMLDivElement>(null);
   const committed = useRef(value);
+  const blurClose = useRef<number | null>(null);
   useEffect(() => {
     if (value !== committed.current) {
       committed.current = value;
@@ -65,6 +68,40 @@ export default function SearchableSelect({
       setText((prev) => (prev === selectedLabel ? prev : selectedLabel));
     }
   }, [value, selectedLabel, open]);
+  useLayoutEffect(() => {
+    if (!open || !input.current) {
+      setMenuStyle(undefined);
+      return;
+    }
+    const place = () => {
+      const rect = input.current?.getBoundingClientRect();
+      if (!rect) return;
+      const maxHeight = Math.min(280, Math.max(120, window.innerHeight - rect.bottom - 12));
+      const width = Math.max(rect.width, 220);
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+      setMenuStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left,
+        width,
+        maxHeight,
+        zIndex: 1200,
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, text, choices.length]);
+  useEffect(() => {
+    return () => {
+      if (blurClose.current != null) window.clearTimeout(blurClose.current);
+    };
+  }, []);
   const query = text === selectedLabel ? '' : text.trim().toLocaleLowerCase();
   const matches = choices.filter((option) =>
     [option.label, option.detail ?? '', ...(option.keywords ?? [])].some((term) =>
@@ -73,6 +110,7 @@ export default function SearchableSelect({
   );
   const visible = matches.slice(0, 50);
   const pick = (option: Option) => {
+    if (blurClose.current != null) window.clearTimeout(blurClose.current);
     committed.current = option.value;
     setText(option.label);
     input.current?.setCustomValidity('');
@@ -80,7 +118,7 @@ export default function SearchableSelect({
     setOpen(false);
   };
   return (
-    <div className="search-select">
+    <div className={`search-select${open ? ' is-open' : ''}`}>
       <div className="search-select-control">
         <input
           ref={input}
@@ -98,6 +136,7 @@ export default function SearchableSelect({
           value={text}
           placeholder="Search and select…"
           onFocus={(e) => {
+            if (blurClose.current != null) window.clearTimeout(blurClose.current);
             e.target.select();
             onSearch?.('');
             setOpen(true);
@@ -105,7 +144,11 @@ export default function SearchableSelect({
           }}
           onBlur={() => {
             // Delay close so option onMouseDown/onClick can commit the selection.
-            window.setTimeout(() => setOpen(false), 120);
+            blurClose.current = window.setTimeout(() => {
+              const activeEl = document.activeElement;
+              if (results.current?.contains(activeEl)) return;
+              setOpen(false);
+            }, 180);
           }}
           onClick={(e) => {
             e.currentTarget.select();
@@ -174,7 +217,7 @@ export default function SearchableSelect({
         </button>
       </div>
       {open && (
-        <div className="search-select-results">
+        <div className="search-select-results" ref={results} style={menuStyle}>
           <div
             id={`${id}-options`}
             role="listbox"

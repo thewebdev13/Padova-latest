@@ -11,6 +11,9 @@ import {
   readBookingRecovery,
   writeBookingRecovery,
   clearBookingRecovery,
+  shouldAutoOpenBookingRecovery,
+  snoozeBookingRecoveryAutoOpen,
+  isServerDraftRecovery,
 } from '../src/lib/booking-recovery';
 let db: Database;
 const date = '2026-11-02';
@@ -106,6 +109,9 @@ test('automatic recovery is actor-scoped, retains exact retry identity and survi
   assert.ok(!recovered.paste.includes('4111111111111111'));
   assert.ok(!recovered.paste.includes('hidden'));
   assert.equal(readBookingRecovery('second', storage), null);
+  assert.equal(shouldAutoOpenBookingRecovery('first', recovered, storage), true);
+  snoozeBookingRecoveryAutoOpen('first', storage);
+  assert.equal(shouldAutoOpenBookingRecovery('first', recovered, storage), false);
   clearBookingRecovery('first', storage);
   assert.equal(readBookingRecovery('first', storage), null);
   assert.equal(
@@ -116,6 +122,24 @@ test('automatic recovery is actor-scoped, retains exact retry identity and survi
       },
     }),
     false,
+  );
+});
+test('server Continue Draft recovery does not auto-open on refresh', () => {
+  const draft = {
+    version: 1 as const,
+    actorId: 'first',
+    commandKey: randomUUID(),
+    savedAt: date,
+    values: { draft_id: 'draft-row-1', sale: '100' },
+    components: [],
+    traveler: '',
+    paste: '',
+  };
+  assert.equal(isServerDraftRecovery(draft), true);
+  assert.equal(shouldAutoOpenBookingRecovery('first', draft), false);
+  assert.equal(
+    shouldAutoOpenBookingRecovery('first', { ...draft, values: { sale: '100' } }),
+    true,
   );
 });
 test('booking change consistently projects dates, traveled state, travelers and references over the normal single trip while preserving its original row', async () => {

@@ -1,27 +1,47 @@
-# Owner messages — send later (not sent)
+# Owner / client WhatsApp messages — send carefully
 
-**Programmer rule (new client):** one short ask at a time. Do **not** dump A2+B+C+D together. Do **not** ask for passwords. Post only after written Approve.
-
-Suggested order later: **(1) QA try** → **(2) Approve A1 only** → then A2 / B / C / D only if needed.
+**Programmer rule:** one short ask at a time. No passwords. Post money only after written Approve.
 
 ---
 
-## Message 0 — QA check (optional — QA already updated `dpl_6j68eWQ…`)
+## SEND NOW — Padova client update (WhatsApp-ready)
 
-Send when you want them to poke QA. No history questions. No passwords.
+Accurate as of QA deploy `dpl_3HkYCQQRWRgUcJ7yRKQYTTRQtGNy` → https://qa.padovatravel.com  
+(Practice / QA only — production Render not changed.)
 
 ```
-Hi — latest booking intake / referring-org / hotel directory updates are on QA:
+Hi — Padova update (short + clear).
+
+QA ready to try:
 https://qa.padovatravel.com
+(Practice data. Login with your staff account.)
 
-Practice data only. If anything feels awkward on New Booking or Intake, reply with a screenshot — no need to dig into old 2026 files yet.
+✅ DONE on QA
+1) Intake draft — paste / file / CSV / .eml → creates a DRAFT only. Staff must review → Save Booking. Missing amounts stay Unknown (nothing invented, no money posted from intake).
+2) Email path — forward / .eml for Shmuel@ or mindy@padovatravel.com → draft. (Automatic Gmail poll not connected yet.)
+3) WhatsApp path — paste chat text OR PC read-only bridge → draft. Never auto-sends. (Per your preference: no official Meta API.)
+4) Referring organization on the booking — applies that org’s deal as commission Padova owes (separate payable).
+5) Secondary commission field — extra party that owes Padova (separate from IATA ~90% receivable and from affiliate payable).
+6) Hotel directory tips (location / corp / IATA / best book) in booking + Partnerships UI.
+7) Targeted fixes — dropdown miss-clicks + dashboard reload layout.
+
+⏳ NOT done yet / waiting
+• Old 2026 history money — reviewed and prepared; NOTHING new posted. First ask later will be Approve 6 allocations (~$4,991) only when you say.
+• Auto email from mailbox — needs Google Workspace/OAuth access.
+• Live WhatsApp on your PC — needs your PC online + bridge setup with you.
+• Hotel directory table on cloud DB — needs reviewed SQL apply (UI is ready).
+• Live production (Render) — not updated yet; QA first.
+
+Please try: Transactions → Intake draft, and New Booking (referring org / hotel tips).
+If anything feels wrong, send a screenshot.
+
+No need to dig old 2026 files in this message.
+Thanks
 ```
 
 ---
 
-## Message 1 — First history ask (RECOMMENDED first money message)
-
-Only 6 allocations. One reply word. No extra questions.
+## LATER — Message 1 history (only after they try QA / when you want money ask)
 
 ```
 Subject: Padova — please approve 6 receipt allocations ($4,991.39)
@@ -43,35 +63,37 @@ Thanks
 
 ---
 
-## Message 2 — Only after A1 done (A2 creates)
+## LATER packs (do not attach to the update above)
 
-```
-Next 5 need a booking created before allocation. Reply Yes/No each (or a date for Perlowitz):
-
-- Perlowitz $4,609 — travel Apr 20 / Apr 25 / leave Unknown, then create+allocate?
-- Matis Hilton $90 — create Hotel (cost $50) then allocate?
-- Rita $950 fee — create then allocate?
-- Chaim climbers/netski $390 — separate booking (not the $4,340 flight) then allocate?
-- Galimidi $100 certificate — booking or asset note, then allocate?
-```
+- Message 2 = A2 creates (Perlowitz/Matis/Rita/Chaim/Galimidi)
+- Batch B defaults / Stop B
+- Batch C costs / Batch D other receipts
 
 ---
 
-## Message 3 — Batch B (only if you need Owner confirmation)
+## NOT for Padova Owner — your internal “Dear Team” salary note
 
-Safer for a new client: apply B defaults yourself, then send:
+That letter is **company ↔ your staff**, not Padova Travel.
+
+If you **already sent it to your team:** do **not** resend the same text. Wait. Only follow up when you have a real decision (cut / no cut / timeline). Suggested follow-up later (only if needed):
 
 ```
-For 8 old holds I’ll keep the safe defaults (blank Fair House dates, proportional fees, leave Needs Review where unclear, GISLVP still expected-only). Reply Stop B if any of that is wrong; otherwise no action needed.
+Hi team — quick follow-up to my earlier note.
+
+Still no final decision on any salary change. We are watching next month’s revenue.
+
+If anything temporary is needed, I will speak with each person individually first. If revenue holds, we stay as we are.
+
+Thank you for your patience.
 ```
 
-Full checkbox block (only if they want line-by-line): see `docs/BATCH_B_OWNER_QA_20261116.md`.
+If you **accidentally sent the salary letter to the Padova client:** send a short correction (not the status list mixed in):
 
----
+```
+Hi — sorry, a company-internal staffing note was sent to you by mistake. Please disregard it; it is not about Padova Travel.
 
-## Later (do not attach to Message 1)
+Separately, here is the real Padova QA update: https://qa.padovatravel.com
+(I’ll send the clear point-by-point status in the next message.)
+```
 
-- Batch C: 17 costs — default Keep Unknown  
-- Batch D: ~$46k other receipts  
-
-Detail packs stay with you until A1 is approved.
+Then send the **SEND NOW** Padova block above as the next message.

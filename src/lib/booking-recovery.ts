@@ -11,6 +11,8 @@ export type BookingRecovery = {
 };
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 const key = (actorId: string) => `padova:booking-recovery:v1:${actorId}`;
+const snoozeKey = (actorId: string) => `padova:booking-recovery:snooze:v1:${actorId}`;
+
 export function readBookingRecovery(actorId: string, storage?: Store): BookingRecovery | null {
   try {
     const store = storage ?? (typeof window === 'undefined' ? undefined : window.localStorage);
@@ -41,10 +43,61 @@ export function writeBookingRecovery(draft: BookingRecovery, storage?: Store): b
     return false;
   }
 }
-export function clearBookingRecovery(actorId: string, storage?: Store) {
+export function clearBookingRecovery(actorId: string, storage?: Store, session?: Store) {
   try {
-    (storage ?? window.localStorage).removeItem(key(actorId));
+    (storage ?? (typeof window === 'undefined' ? undefined : window.localStorage))?.removeItem(
+      key(actorId),
+    );
   } catch {
     /* Storage may be disabled. */
   }
+  clearBookingRecoverySnooze(actorId, session ?? storage);
+}
+
+/** Server drafts already live under Drafts — do not force-open them on every refresh. */
+export function isServerDraftRecovery(draft: BookingRecovery | null | undefined): boolean {
+  const id = draft?.values?.draft_id;
+  return typeof id === 'string' && id.length > 0;
+}
+
+export function snoozeBookingRecoveryAutoOpen(actorId: string, storage?: Store) {
+  try {
+    const store = storage ?? (typeof window === 'undefined' ? undefined : window.sessionStorage);
+    store?.setItem(snoozeKey(actorId), '1');
+  } catch {
+    /* Storage may be disabled. */
+  }
+}
+
+export function clearBookingRecoverySnooze(actorId: string, storage?: Store) {
+  try {
+    const store = storage ?? (typeof window === 'undefined' ? undefined : window.sessionStorage);
+    store?.removeItem(snoozeKey(actorId));
+  } catch {
+    /* Storage may be disabled. */
+  }
+}
+
+export function isBookingRecoveryAutoOpenSnoozed(actorId: string, storage?: Store): boolean {
+  try {
+    const store = storage ?? (typeof window === 'undefined' ? undefined : window.sessionStorage);
+    return store?.getItem(snoozeKey(actorId)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Auto-open on load only for unfinished *new* bookings.
+ * Skip server Continue Draft rows (re-open from Drafts) and same-tab Cancel snooze.
+ */
+export function shouldAutoOpenBookingRecovery(
+  actorId: string,
+  draft: BookingRecovery | null,
+  session?: Store,
+): boolean {
+  if (!draft || draft.actorId !== actorId) return false;
+  if (isServerDraftRecovery(draft)) return false;
+  if (isBookingRecoveryAutoOpenSnoozed(actorId, session)) return false;
+  return true;
 }

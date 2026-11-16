@@ -15,6 +15,7 @@ import CommandForm from './command-form';
 import BookingPartySelect from './booking-party-select';
 import {
   clearBookingRecovery,
+  snoozeBookingRecoveryAutoOpen,
   writeBookingRecovery,
   type BookingRecovery,
 } from '@/lib/booking-recovery';
@@ -208,6 +209,14 @@ export default function BookingEntry(props: Props) {
       )
     )
       return;
+    // Server drafts are reopened from Drafts — do not keep forcing them after Cancel.
+    if (props.config.defaults.draft_id) {
+      recoveryFinished.current = true;
+      clearBookingRecovery(state.actor.id);
+    } else {
+      // Keep local crash recovery, but do not auto-pop again this browser tab after Cancel.
+      snoozeBookingRecoveryAutoOpen(state.actor.id);
+    }
     onClose();
   };
   useEffect(() => {
@@ -3771,6 +3780,8 @@ export default function BookingEntry(props: Props) {
                   },
                   crypto.randomUUID(),
                 );
+                recoveryFinished.current = true;
+                clearBookingRecovery(state.actor.id);
                 onClose();
               } catch (e) {
                 setError(e instanceof Error ? e.message : 'Draft save failed');

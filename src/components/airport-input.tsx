@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 const airports = [
   ['EWR', 'Newark'],
   ['JFK', 'New York JFK'],
@@ -32,15 +32,53 @@ export default function AirportInput({
 }) {
   const [open, setOpen] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | undefined>();
+  const input = useRef<HTMLInputElement>(null);
+  const blurClose = useRef<number | null>(null);
   const choices = airports
     .filter(
       ([code, name]) => !searching || `${code} ${name}`.toLowerCase().includes(value.toLowerCase()),
     )
     .sort((a, b) => Number(b[0] === value) - Number(a[0] === value));
+  useLayoutEffect(() => {
+    if (!open || !input.current) {
+      setMenuStyle(undefined);
+      return;
+    }
+    const place = () => {
+      const rect = input.current?.getBoundingClientRect();
+      if (!rect) return;
+      const maxHeight = Math.min(280, Math.max(120, window.innerHeight - rect.bottom - 12));
+      const width = Math.max(rect.width, 220);
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+      setMenuStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left,
+        width,
+        maxHeight,
+        zIndex: 1200,
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, value]);
+  useEffect(() => {
+    return () => {
+      if (blurClose.current != null) window.clearTimeout(blurClose.current);
+    };
+  }, []);
   return (
-    <div className="form-field search-select">
+    <div className={`form-field search-select${open ? ' is-open' : ''}`}>
       <label htmlFor={id}>{label}</label>
       <input
+        ref={input}
         id={id}
         aria-label={label}
         role="combobox"
@@ -50,6 +88,7 @@ export default function AirportInput({
         placeholder="Airport code or name"
         value={value}
         onFocus={(e) => {
+          if (blurClose.current != null) window.clearTimeout(blurClose.current);
           e.target.select();
           setSearching(false);
           setOpen(true);
@@ -60,8 +99,7 @@ export default function AirportInput({
           setOpen(true);
         }}
         onBlur={() => {
-          // Delay close so option onMouseDown/onClick can commit the selection.
-          window.setTimeout(() => setOpen(false), 120);
+          blurClose.current = window.setTimeout(() => setOpen(false), 180);
         }}
         onChange={(e) => {
           setSearching(true);
@@ -82,7 +120,12 @@ export default function AirportInput({
         }}
       />
       {open && (
-        <div className="search-select-results" id={`${id}-airports`} role="listbox">
+        <div
+          className="search-select-results"
+          id={`${id}-airports`}
+          role="listbox"
+          style={menuStyle}
+        >
           {choices.map(([code, name]) => (
             <button
               key={code}
@@ -91,6 +134,7 @@ export default function AirportInput({
               aria-selected={code === value}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
+                if (blurClose.current != null) window.clearTimeout(blurClose.current);
                 onChange(code);
                 setOpen(false);
               }}
