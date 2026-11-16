@@ -1,0 +1,18 @@
+Customer: QA Sample Customer
+Traveler: QA Sample Traveler
+Product: Flight
+Trip Type: One Way
+Airline: United Airlines
+Route: EWR-MIA
+Departure: 2027-08-03
+PNR: UA4455
+Flight Numbers: UA1200
+Cabin: Economy
+Booked Through: Unknown
+Seller Cost: 210.50
+Seller Paid: Unpaid
+Customer Price: 289.00
+Customer Paid: Partial
+Amount Received: 100.00
+Summary: One-way EWR-MIA sample for intake upload test.
+Notes: Synthetic local test file 06 — Partial payment claim is for review only until Save Booking.

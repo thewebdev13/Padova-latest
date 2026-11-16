@@ -1,0 +1,54 @@
+{
+  "status": "INSTALLED_DATA_VERIFIED",
+  "project": "unugynfzmxjxifgofxjr",
+  "region": "us-east-1",
+  "migration": "20261029134634",
+  "marker": "20261029_historical_booking_preparations",
+  "source": "supabase/migrations/20261029134634_padova_historical_booking_preparations.sql",
+  "sourceSha256": "6e1c2c4d25944a3ea47f0f3d676a6ca9f289a6927731bebfef7eb26d5ade970c",
+  "expectedPreparedBookings": 501,
+  "expectedSourceRows": 4109,
+  "expectedAcceptedMappings": 1500,
+  "liveFinancialPostings": 0,
+  "preflightPreservation": {
+    "audit": "84a1f6b409040e431c454c6ebfb45a00",
+    "reviews": "458b3ac400f42ac9d9d52f80d0e07558",
+    "evidence": "f4f99de6524f058f3052e0c797e037de",
+    "settings": "eb83bfb2873c90698448dcfa3e200c22",
+    "bookings": 0,
+    "movements": 0,
+    "mappings": 0
+  },
+  "note": "Never reinstall or change the installed source. Preparation tables are immutable, private and read-only to runtime. Prior evidence, reviews, audit and settings must remain unchanged; accepted mapping links are an explicitly authorized additive preparation result.",
+  "preparedBookings": 501,
+  "sourceRows": 4109,
+  "acceptedMappings": 1500,
+  "sourcePayloadsVerified": 4109,
+  "classificationCounts": {
+    "Prepared booking": 501,
+    "Linked supporting row": 999,
+    "Needs Review": 1378,
+    "Preserved supporting row": 1231
+  },
+  "readbackVerifiedAt": "2026-10-29T14:06:04.814Z",
+  "preservationUnchanged": true,
+  "idempotency": {
+    "newBookings": 0,
+    "newSourceRows": 0,
+    "newMappings": 0,
+    "liveFinancialMovements": 0
+  },
+  "identicalGeneratedBatchReplay": {
+    "batches": 186,
+    "completed": true,
+    "newBookings": 0,
+    "newSourceRows": 0,
+    "newMappings": 0,
+    "duplicateCustomers": 0,
+    "duplicateTravelers": 0,
+    "duplicateReceipts": 0,
+    "duplicateAssets": 0,
+    "duplicateFinancialMovements": 0
+  },
+  "postReplayReadbackVerifiedAt": "2026-10-29T14:33:54.390Z"
+}

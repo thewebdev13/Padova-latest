@@ -1,0 +1,6 @@
+{
+  "migration": "supabase/migrations/20261101221513_targeted_entry_reliability.sql",
+  "sha256": "48815d5527747d510a4775b0c8867065f12a8d5eb416f43a7764f3af3e318127",
+  "qaProject": "cnpyvmhgbtyleckyirye",
+  "productionApplied": false
+}

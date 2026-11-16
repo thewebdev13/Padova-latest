@@ -1,0 +1,15 @@
+Customer: QA Sample Customer
+Traveler: QA Sample Traveler
+Product: Car
+Route: MIA airport
+Departure: 2027-05-12
+Return: 2027-05-18
+PNR: CAR7788
+Booked Through: Unknown
+Seller: Unknown
+Seller Cost: Unknown
+Seller Paid: Unknown
+Customer Price: 320.00
+Customer Paid: Unpaid
+Summary: Miami airport car rental sample for intake upload test.
+Notes: Synthetic local test file 03.

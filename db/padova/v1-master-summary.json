@@ -1,0 +1,8 @@
+{
+  "project": "unugynfzmxjxifgofxjr",
+  "schema": "padova",
+  "installed": true,
+  "migration": "supabase/migrations/20261030125035_v1_source_profiles.sql",
+  "sha256": "c454bfa214437289dd692a91975784c5d21eae1c6dcdeddc86a037fc14bdea1d",
+  "historicalFinancialPostingAuthorized": false
+}

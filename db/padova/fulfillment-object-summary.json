@@ -1,0 +1,17 @@
+{
+  "status": "INSTALLED",
+  "projectName": "Padova Travel - US Private Trial",
+  "projectRef": "unugynfzmxjxifgofxjr",
+  "region": "us-east-1",
+  "migrationVersion": "20261029012515",
+  "migrationName": "padova_fulfillment_catalogs_units",
+  "marker": "20261029_fulfillment_catalogs_units",
+  "sourceFile": "supabase/migrations/20261029012515_padova_fulfillment_catalogs_units.sql",
+  "sha256": "e721505b51a9bda166557fd285bd1775a09eb70fa1efc2b005c916d0c154c01b",
+  "newTables": ["programs", "instruments", "program_accounts", "travel_components", "inventory_profiles", "fulfillment_details", "funding_asset_uses", "expected_events", "expected_event_updates"],
+  "nullableColumns": ["padova.assets.app_unit", "padova.funding_components.app_unit", "padova.supplier_refunds.app_quantity_unit"],
+  "updatedViews": ["padova.app_assets", "padova.app_funding_components", "padova.app_asset_balances", "padova.app_refunds"],
+  "updatedFunctions": ["padova.app_write_assets", "padova.app_write_funding_components", "padova.app_write_asset_movements", "padova.app_write_refund"],
+  "verification": {"evidenceRows": 37071, "reviewRows": 947, "preservationHashesUnchanged": true, "apiExposures": 0, "backupReadTables": 9, "backupPlaintextVault": false},
+  "instruction": "Already installed. Do not regenerate or reinstall. Prepare a separate incremental migration for future changes."
+}

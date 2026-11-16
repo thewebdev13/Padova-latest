@@ -1,0 +1,840 @@
+You are working on the existing Padova System Build project.
+This is a corrective rebuild of the core booking workflow and its underlying data model. The current booking-entry design is conceptually wrong and too complicated. Do not patch individual labels. Fix the model properly.
+Do not ask me design questions. Use this specification and your best engineering judgment to finish the work.
+Use the existing repo, existing branch/current HEAD, existing US Supabase project, and existing Practice workspace.
+Repo: C:\Users\necha\OneDrive\Documents\ChatGPT\Padova System Build
+Supabase project: Padova Travel - US Private Trial Project ref: unugynfzmxjxifgofxjr
+Do NOT:
+- create another Supabase project
+- create another app/repo
+- reset or throw away current work
+- edit any original historical Google Sheets/source accounting files
+- perform destructive historical financial cutover
+- invent historical financial values
+- convert unknown values into zero/defaults
+- expose full credit card numbers or sensitive card data
+- make airline/hotel brand the financial “supplier”
+Historical source spreadsheets remain READ ONLY.
+Implement and verify everything first in Practice Only.
+Use additive/migratable schema changes. Preserve existing data and provenance. If an existing table already correctly represents one of the concepts below, reuse/migrate it rather than creating useless duplicate tables.
+The normal employee booking screen must be extremely simple.
+The database underneath can be sophisticated.
+A normal booking should NOT require the employee to understand accounting architecture.
+The system must clearly separate:
+1. Customer
+2. Traveler(s)
+3. Travel itself
+4. Where the reservation was booked
+5. How Padova obtained/funded it
+6. Outside seller/partner, if any
+7. What Padova owes
+8. What the customer owes
+9. Payments
+10. Reusable points/vouchers/certificates
+11. Notes
+Do not show abstract terms such as “actual supplier” in the normal UI.
+An airline such as United is the airline providing the flight. It is NOT automatically Padova’s financial supplier.
+For V1, the product selector must contain only:
+- Flight
+- Hotel
+- Car
+- Other
+REMOVE from normal booking entry:
+- Limo
+- Package
+- Flight + Hotel
+- other unnecessary product types
+More can be added later.
+At the top of booking entry:
+- searchable existing customer
+- inline Add New
+- allow Unknown when genuinely appropriate
+Support multiple travelers.
+The user must be able to:
+- search an existing traveler
+- select multiple travelers
+- simply type a new traveler name and continue
+If a typed name does not exist:
+- allow the booking to continue immediately
+- when booking is saved, automatically create a reusable traveler record
+If a likely duplicate exists:
+- show a non-blocking duplicate warning
+- allow employee to use existing or create new
+- do not block booking entry
+Do not force the employee to leave the booking screen to create a traveler.
+The current Practice traveler directory appears incomplete and contains bad/combined/duplicate names.
+Fix the directory import/reconciliation separately from the new-booking UX.
+Requirements:
+- preserve original raw imported traveler text
+- preserve source row/file provenance
+- do not invent travelers
+- do not merge people merely because names look similar
+- use DOB/email/phone/other identifiers where available before merging
+- where one historical cell clearly contains multiple travelers and there is a high-confidence delimiter, split into separate candidate travelers
+- if ambiguous, preserve the raw entry and mark it for review instead of guessing
+- make sure all safely identifiable traveler names from the existing imported historical sources appear in Practice traveler search
+This must NOT delay the new booking workflow.
+When Product = Flight, show a clean Travel section.
+Fields:
+- Airline
+- Route
+- Travel start date
+- Travel end/return date when applicable
+- Flight number(s)
+- Cabin
+- Airline PNR
+- Ticket number(s)
+- Booking Source Confirmation
+- Reservation Summary
+- Booking Notes
+Searchable dropdown. Allow Add New.
+Do not require the user to select the same airline again elsewhere.
+For multi-carrier itineraries, allow primary airline plus optional additional airline information under More Details. Do not make this cumbersome in V1.
+Simple editable text.
+Examples: EWR-TLV EWR-TLV-EWR JFK-LHR-TLV-JFK
+Do NOT force segment-by-segment entry in V1.
+Optional free text. Allow multiple flight numbers.
+Optional.
+This is the airline confirmation/reference.
+Do NOT create another duplicate “Airline Confirmation” field.
+Allow multiple airline PNRs/references if needed, but keep the normal UI simple.
+Optional. Allow more than one.
+This is separate from Airline PNR.
+Examples:
+- Amex Travel confirmation
+- Capital One Travel confirmation
+- GDS booking reference
+- other booking-platform confirmation
+A GDS booking reference generally belongs here.
+Large editable text field.
+User may paste/type any useful itinerary or reservation summary.
+Do not auto-remove or overwrite the user’s summary.
+Large always-available free-text field.
+This is for ANY notes the employee wants to preserve.
+When Product = Hotel, use hotel-specific fields:
+- Property / Hotel
+- City / Location
+- Check-in date
+- Check-out date
+- Room type, optional
+- Hotel/property confirmation
+- Booking Source Confirmation
+- Reservation Summary
+- Booking Notes
+Hotel/property must be searchable and Add New should be possible when appropriate.
+For hotels, include:
+Commission Expected?
+- Yes
+- No
+- Unknown
+If Yes, reveal:
+- percentage OR dollar amount
+- expected payer/source
+- expected date, optional
+- received amount
+- received date
+- status automatically calculated
+Commission expected and commission received must remain separate.
+When Product = Car:
+- Rental company
+- Pickup location
+- Drop-off location
+- Pickup date/time
+- Drop-off date/time
+- Rental/company confirmation
+- Booking Source Confirmation
+- Reservation Summary
+- Booking Notes
+Keep optional details under More Details.
+Generic:
+- Name/description
+- Start date
+- End date
+- Primary confirmation
+- Booking Source Confirmation
+- Reservation Summary
+- Booking Notes
+This answers ONLY:
+Where / through what booking method was the reservation actually made?
+It does NOT answer who financially supplied the value.
+It does NOT describe vouchers or who Padova bought points from.
+The selector must be:
+- searchable
+- user-extensible
+- Add New inline
+- not a hard-coded enum that requires a code change every time a new method is added
+Seed these:
+- GDS
+- Amex Travel / Business Platinum
+- Capital One Travel
+- Award Booking
+- Other / Custom
+Do NOT add fake/invented companies.
+Hotel methods may include:
+- Direct Hotel
+- Expedia TAAP
+- Amex Travel
+- Capital One Travel
+- Award Booking
+- Other / Custom
+Only show methods relevant to the selected product where practical.
+If Booked Through = Award Booking:
+Reveal:
+- Loyalty Program
+Program selector must be searchable with:
+- existing programs
+- Add New
+- Other
+Examples could include Aeroplan, AAdvantage, United MileagePlus, etc., but the database must not be limited to those.
+The UI may show simple fields, but the database should support multiple references cleanly.
+Use a reusable booking/travel references model if appropriate, supporting reference types such as:
+- airline_pnr
+- ticket_number
+- booking_source_confirmation
+- hotel_confirmation
+- car_confirmation
+- other_reference
+Do not force the employee to work with a references table directly.
+This is separate from Booked Through.
+This section represents the financial/value source used to fulfill the booking.
+Make it simple.
+The employee should be able to add one or more Fulfillment / Funding Components.
+If there is one component, normal UI feels like one simple choice.
+If multiple components are added, the system automatically treats the booking as mixed funding.
+Do not force the user to choose “Mixed” first.
+Initial component types:
+1. Padova Card / Normal Payment
+2. Customer Card
+3. Outside Seller / Partner
+4. Padova-Owned Value
+5. Other
+The Outside Seller and Padova-Owned Value types then reveal what kind of value was involved.
+If Padova paid normally:
+Ask:
+- Amount
+- Payment method/account
+If method is Card:
+- searchable saved card/account
+- Add New Card/Account
+Saved payment-account records should contain only safe metadata such as:
+- nickname
+- issuer
+- owner
+- last four digits if desired
+- notes
+- active/inactive
+NEVER store full card number, CVV, or sensitive authentication data.
+Other payment methods may include:
+- ACH
+- Zelle
+- Check
+- Wire
+- Cash
+- Other
+Sometimes the customer’s own card pays the travel provider/platform.
+Support this explicitly.
+Fields:
+- customer/card owner
+- optional safe card nickname / last 4
+- amount
+- notes/reference
+Important accounting rule:
+If the customer’s card funded the travel provider directly, this is NOT automatically Padova cash/card spend.
+Do not incorrectly create a Padova cash cost simply because the booking has a dollar value.
+This is critical.
+If Padova bought something from another person/company:
+Ask:
+- searchable reusable seller/partner database
+- Add New inline
+- Unknown option where necessary
+Inline Add New seller should allow:
+- name
+- person/company
+- phone optional
+- email optional
+- notes optional
+Searchable/extensible options:
+- Complete Booking / Ticket
+- Points / Miles
+- Voucher / Travel Credit
+- Certificate / Award
+- Hotel Booking / Stay
+- Other / Custom
+Do NOT create completely different seller architecture for points vs vouchers vs certificates.
+They are different types of value supplied by the same generic seller relationship.
+- Seller
+- What seller supplied
+- Program / issuer, if relevant
+- Quantity / face value, if relevant
+- Description
+- Padova Cost
+- Additional taxes/fees, if Padova actually bears them
+- Payment Status
+- Amount Paid
+- Balance Owed
+- Payment Method
+- Payment Account when relevant
+- Payment Date
+- Payment Reference
+- Notes
+- More Details
+Payment Status:
+- Unpaid
+- Partial
+- Paid
+Rules:
+If Unpaid: amount paid = 0 unless explicitly entered.
+If Partial: allow amount paid.
+If Paid: default amount paid to full Padova obligation unless user changes it.
+Balance owed MUST be calculated automatically.
+Never require the employee to manually calculate balance.
+Do NOT make these totally separate seller workflows.
+Use the seller flow above, then reveal value-specific details.
+Optional details:
+- loyalty program
+- quantity
+- agreed point rate
+- rate unit
+- fixed Padova cost
+- taxes/fees
+- account holder, if relevant
+- notes
+The seller’s own underlying cost basis or rebate economics are NOT Padova’s cost unless Padova owns the points.
+If seller uses their own points directly for the booking:
+- do NOT create Padova points inventory
+- record seller obligation/cost only
+If seller transfers points into Padova-controlled inventory first:
+- create an acquisition/inventory lot
+- record quantity and acquisition cost
+- later consume the lot against bookings
+These are two different economic events and must remain distinct.
+Capture:
+- issuer/program
+- voucher/credit identifier or safe reference
+- face value
+- amount used on this booking
+- expiry if known
+- Padova acquisition cost
+- seller
+- seller payment status
+- notes
+If the voucher was transferred to Padova and Padova retains remaining value:
+- create/update a Padova voucher asset
+- track remaining face value
+- track remaining cost basis appropriately
+If seller simply used their own voucher to fulfill this booking:
+- do not incorrectly create a Padova-owned voucher asset.
+Capture:
+- program/issuer
+- certificate type
+- description
+- holder/source
+- expiry if known
+- Padova acquisition cost
+- seller/payment information
+- notes
+Certificate types must be user-extensible.
+Do not require schema changes every time a new Hyatt/Hilton/airline/etc. certificate appears.
+If Padova is using value it already owns, allow selection of:
+- Points / Miles
+- Voucher / Travel Credit
+- Certificate / Award
+The employee should search Padova inventory and select the existing asset/account.
+Select:
+- program/account
+- quantity used
+System:
+- creates inventory movement
+- reduces balance
+- allocates cost basis
+- preserves source/acquisition history
+Select existing voucher.
+Enter:
+- amount used
+System:
+- reduces remaining face value
+- preserves appropriate remaining basis
+- records booking usage
+Allow Add New if the voucher genuinely needs to be created first.
+Select existing certificate or Add New.
+When used:
+- mark/consume it according to its rules
+- preserve history
+- do not simply delete the asset
+V1 must support reusable records for:
+- points/miles accounts and lots
+- vouchers/travel credits
+- certificates/awards
+No gift-card project is needed now.
+Do not spend time building a separate gift-card feature.
+The data model must preserve:
+- owner/holder
+- program/issuer
+- acquired from whom
+- acquired date
+- original quantity/face value
+- acquisition cost
+- remaining quantity/value
+- expiry when relevant
+- status
+- notes
+- source booking/acquisition transaction
+- usage movements
+Do not overwrite history when balances change.
+Use movements/transactions.
+The system must be capable of representing Amex Business Platinum Pay With Points correctly without cluttering normal entry.
+If Booked Through = Amex Travel / Business Platinum, advanced details may include:
+- points owner/account holder
+- gross Membership Rewards points redeemed
+- expected rebate
+- actual rebate
+- qualifying/selected airline when relevant
+- rebate status
+These should be under More Details unless needed.
+Important:
+If an OUTSIDE SELLER owns the points and Padova pays seller a fixed amount:
+- Padova cost is what Padova owes seller
+- seller’s 35% rebate belongs to seller unless the agreement says otherwise
+- do NOT treat seller’s rebate as Padova income
+If PADOVA owns the points:
+- record gross point redemption movement
+- record rebate later as a separate returned-points movement
+- do not rewrite the original redemption to pretend only net points were used
+This supports the previously discussed Amex 35% rebate model correctly.
+Keep this simple on the booking screen.
+Primary fields:
+- Customer Sale Price
+- Optional Additional Charge / Fee
+- Total Customer Due
+- Payment Status
+Payment Status:
+- Unpaid
+- Partial
+- Paid
+Payment is normally expected right away, so do not create unnecessary “pay later” workflow language.
+Ask:
+- amount received, default full amount
+- method
+- date
+- reference optional
+Ask:
+- amount received
+- method
+- date
+- reference optional
+System calculates remaining balance.
+Full remaining customer balance becomes due/needs attention.
+Payment methods:
+- Zelle
+- ACH
+- Check
+- Card
+- Wire
+- Cash
+- Other
+Behind the simple UI, preserve the existing proper many-to-many accounting architecture:
+- one customer receipt may cover multiple bookings
+- one booking may have multiple receipts
+Do not break that ability.
+The booking form may create a simple receipt + allocation automatically.
+The normal screen should focus on total sale.
+Under More Details, allow optional charge lines such as:
+- base travel sale
+- booking/service fee
+- change fee
+- fare difference
+- other
+Important: Fare difference is not automatically a booking fee.
+Do not double count fees or adjustments.
+Keep seller obligation separate from customer money.
+Support:
+- one seller obligation per booking component
+- one payment can eventually cover multiple seller obligations
+- one obligation can be partially paid through multiple payments
+The booking screen may handle simple one-obligation/one-payment entry automatically.
+The accounting model underneath must remain many-to-many capable.
+There must always be a large visible Booking Notes field.
+Do not hide the only useful notes field inside an advanced drawer.
+Also allow specialized notes on:
+- seller relationship
+- asset
+- payment
+- commission
+But the main booking notes must always be easy.
+Do not make booking entry impossible because one optional detail is missing.
+Allow Draft save.
+Missing important information should create a Needs Attention item instead of blocking the entire booking unnecessarily.
+Examples:
+- missing sale price
+- missing Padova cost
+- customer unpaid
+- seller unpaid
+- missing award program
+- unresolved migration value
+- missing PNR if operationally needed
+- commission overdue
+- refund pending
+- expiring voucher/certificate
+Keep normal status simple.
+Booking status:
+- Draft
+- Booked / Confirmed
+- Cancelled
+- Refunded
+For flights, support ticketing status separately if needed:
+- Not Ticketed / Unknown
+- Ticketed
+- Voided
+- Refunded
+Do not confuse “reservation exists” with “ticket issued.”
+Do not blindly create tables with these exact names if equivalent good tables already exist.
+But the database must logically support:
+- bookings
+- customers/parties
+- travelers
+- booking_travelers
+- travel_components
+- flight details
+- hotel details
+- car details
+- booking/travel references
+- booking_source_methods
+- loyalty_programs
+Booking-source methods and loyalty programs must be data-driven/user-extensible, not rigid enums.
+- parties / sellers / partners
+- seller roles/metadata
+- fulfillment/funding components
+- seller obligations
+- seller payments
+- seller payment allocations
+- customer charges
+- customer receipts
+- receipt allocations
+Safe references only.
+- asset accounts
+- asset lots
+- asset movements
+- vouchers/credits
+- certificates/awards
+Use a coherent architecture; do not duplicate concepts just to match names in this spec.
+- expected
+- received
+- payer
+- status
+- dates
+- notes
+- audit/activity history
+- migration provenance
+- Needs Attention items
+Anywhere the user selects a reusable entity, use a searchable selector.
+Where appropriate support:
+- Search Existing
+- Add New
+- Other / Custom
+- Unknown
+Examples:
+- traveler
+- customer
+- seller
+- airline
+- hotel
+- booking source/method
+- loyalty program
+- certificate type
+- payment account
+- voucher
+- points account
+Do not make the employee backspace a hard-coded default and type over it.
+New records should be creatable without leaving booking entry.
+Example seller inline creation:
+- name required
+- person/company optional/default
+- phone optional
+- email optional
+- notes optional
+Example traveler:
+- name first
+- DOB/contact can be added later
+Example booking source/program:
+- name
+- type/category where helpful
+After Add New, automatically select the newly created item.
+Do NOT spend time integrating OpenAI/AI parsing in this pass.
+The structured fields must be correct first.
+However, design field names/API boundaries cleanly so a future feature can:
+Paste Booking → Extract → Review → Apply
+Future parser should eventually be able to map into:
+- airline
+- route
+- dates
+- flight numbers
+- cabin
+- airline PNR
+- ticket numbers
+- booking source confirmation
+- reservation summary
+No schema redesign should be required when that parser is added later.
+Do not spend time now on:
+- shared WhatsApp inbox
+- AI copilot
+- client portal
+- flight disruption claims
+- marketing automation
+- GDS ticketing terminal
+- phone system
+- gift cards
+- advanced quote engine
+- public booking website
+- unrelated agency features
+The priority is:
+Booking → Travel → Source → Seller/Funding → Money → Assets → Notes → Attention
+Get this foundation excellent first.
+All original source files remain untouched.
+For migrated records:
+- preserve raw source text
+- preserve source file/sheet/row
+- preserve ambiguous values
+- Unknown is not zero
+- Missing is not false
+- do not manufacture seller/payment/points values
+- do not force airline into seller field
+- do not infer financial supplier from travel brand
+If old data contains a generic “Supplier” field, determine whether it really represents:
+- airline/hotel/travel brand
+- booking source
+- outside seller
+- unknown
+Map only when evidence is sufficient.
+Otherwise preserve raw value and flag for review.
+Historical financial cutover remains staged unless already explicitly approved elsewhere.
+Apply/test this in Practice Only first.
+Practice data must be usable enough to test:
+- traveler search
+- customer search
+- seller search
+- booking methods
+- loyalty programs
+- points/voucher/certificate selection
+Do not pollute production/live historical records with fake testing.
+Create automated tests plus manual smoke tests for at least these scenarios.
+Travel:
+- United
+- EWR-TLV-EWR
+- airline PNR ABC123
+- booking source confirmation AMEX999
+Booked Through: Amex Travel / Business Platinum
+Fulfillment: Outside Seller / Partner
+Seller: John Smith
+What seller supplied: Complete Booking / Points-funded booking
+Padova cost: $4,400
+Customer sale: $4,900
+Expected result:
+- United exists only as travel airline
+- United is NOT seller
+- seller is John Smith
+- airline PNR and Amex confirmation remain separate
+- customer receivable $4,900
+- seller obligation $4,400
+- profit logic reflects Padova economics only
+Flight booked through: Award Booking
+Program: AAdvantage
+Seller: outside seller
+Seller supplies: Points / Miles
+Expected:
+- program stored correctly
+- seller stored correctly
+- points do not become Padova inventory if seller used their own points directly
+Use existing Padova points inventory.
+Expected:
+- inventory movement created
+- quantity reduced
+- cost basis allocated
+- booking cost reflects Padova-owned inventory basis/taxes correctly
+- source lot history preserved
+Seller provides a United travel credit/voucher.
+Capture:
+- face value
+- Padova purchase cost
+- amount used
+- seller payment
+Expected:
+- if seller uses it directly, no fake Padova asset
+- if transferred to Padova, asset/balance is created
+- remaining value preserved where applicable
+Existing $1,000 voucher. Use $600.
+Expected:
+- booking records $600 value use
+- $400 remains
+- cost basis remains coherent
+- full movement history preserved
+Customer’s own card pays booking source directly.
+Expected:
+- card owner = customer
+- not incorrectly counted as Padova card spend
+- customer sale/fee still handled separately
+Hotel booking with expected commission.
+Expected:
+- expected commission separate from received commission
+- unpaid commission appears in Needs Attention when overdue
+One booking uses:
+- outside seller certificate
+- Padova card for taxes
+- Padova voucher
+Expected:
+- three funding/fulfillment components
+- total Padova cost calculated correctly
+- each component retains its own provenance
+Type a traveler who does not exist.
+Expected:
+- booking saves
+- reusable traveler record created automatically
+- traveler immediately appears in future search
+Type a very similar existing traveler.
+Expected:
+- non-blocking duplicate warning
+- user can choose existing or create new
+Sale $5,000. Receipt $3,000.
+Expected:
+- Paid $3,000
+- Balance $2,000 automatically
+- status Partial
+- Needs Attention reflects balance
+Padova owes seller $4,000. Paid $1,500.
+Expected:
+- seller balance $2,500
+- status Partial
+- Needs Attention reflects unpaid seller obligation
+Specifically remove/fix:
+- airline shown as “supplier”
+- confusing “Actual Supplier” field
+- hard-coded Direct Airline default in inappropriate places
+- manual Route/Reservation Summary confusion
+- non-searchable dropdowns
+- selectors that require backspacing existing text
+- missing Add New
+- Product = Limo
+- Product = Package
+- Product = Flight + Hotel
+- fields appearing even when irrelevant
+- duplicate airline confirmation + airline PNR concepts
+- points/voucher/certificate fields scattered randomly
+- booking source mixed with funding source
+- customer money mixed with seller money
+Do not redesign the entire application cosmetically.
+Focus on workflow.
+The booking screen should feel like a clean operational form with sections:
+1. Customer & Travelers
+2. Travel
+3. Booked Through
+4. How Padova Got / Paid for It
+5. Customer Money
+6. Commission, when relevant
+7. Notes
+Advanced details should be collapsed until needed.
+Use plain language.
+Avoid internal accounting jargon in employee-facing labels.
+System calculated fields should include where applicable:
+- customer total due
+- customer amount paid
+- customer balance
+- seller total owed
+- seller amount paid
+- seller balance
+- Padova cost
+- commission expected
+- commission received
+- asset cost basis consumed
+- booking profit
+Do not double count:
+- seller cost
+- card payment
+- points basis
+- voucher basis
+- commission
+- fees
+A payment is not automatically a new cost if it is merely settling an already-recorded obligation.
+Do not break existing support for:
+- changes
+- refunds
+- fare differences
+- booking fees
+- commissions
+- customer receipts
+- seller payments
+Keep adjustment history rather than rewriting original transactions.
+A fare difference is not automatically a booking fee.
+A refund on provider/seller side and refund to customer are separate events.
+Searchable selectors should feel fast.
+Do not load thousands of rows into large client-side dropdowns if server-side search is more appropriate.
+Use debounce/pagination/search indexes where needed.
+Booking save should be transactional enough that partial failures do not create orphaned seller obligations/assets/payments.
+Important changes must retain history.
+Do not silently rewrite:
+- original sale
+- original cost
+- asset acquisition
+- asset usage
+- payments
+- refunds
+- rebate movements
+Store created_at / updated_at / actor/workspace as appropriate.
+Maintain role/workspace boundaries.
+Practice data must remain Practice.
+Do not expose:
+- full credit card numbers
+- CVV
+- passwords
+- loyalty credentials
+- API keys
+If existing old notes contain sensitive information, do not make them more broadly visible than they already are.
+Before changing code:
+1. Inspect current schema and current New Booking implementation.
+2. Identify which existing tables/components can be reused.
+3. Create a concise internal migration plan.
+4. Implement schema migrations.
+5. Backfill/migrate existing Practice data conservatively.
+6. Rebuild booking form around the new model.
+7. Update accounting calculations/adapters.
+8. Fix traveler search/import.
+9. Add automated tests.
+10. Run manual Practice smoke tests.
+11. Run full regression suite.
+12. Build/typecheck/lint/security checks.
+13. Fix all regressions caused by this work.
+14. Commit the completed change.
+Do not stop after merely changing the UI.
+This task is complete only when:
+- I can create a Flight booking without seeing confusing supplier terminology.
+- Airline belongs to travel.
+- Booking source is separate.
+- Outside seller is separate.
+- Seller can supply complete booking, points, voucher, certificate, etc.
+- Padova-owned assets can be selected from inventory.
+- Card/account used can be selected.
+- Customer-owned card is supported.
+- seller cost/payment/balance works.
+- customer sale/payment/balance works.
+- Airline PNR and booking-source confirmation are separate.
+- reservation summary and booking notes exist.
+- Flight number/cabin/ticket numbers are optional.
+- traveler can be typed directly and saved automatically.
+- selectors are searchable.
+- Add New works inline.
+- product list is Flight/Hotel/Car/Other.
+- commission works for hotels.
+- mixed funding works.
+- Practice traveler directory is materially improved and historical raw data is preserved.
+- tests pass.
+- original source spreadsheets remain untouched.
+- production historical financial cutover has not been performed.
+When done, give me ONE concise completion report containing:
+1. Commit hash
+2. Schema/migrations changed
+3. Booking screen changes
+4. Traveler cleanup result/counts
+5. Which acceptance tests passed
+6. Full regression/build/typecheck/security results
+7. Any remaining known issue that genuinely requires owner review
+Do NOT give me another design essay.
+Do NOT ask me to decide routine implementation details.
+Build it, test it, and report the result.

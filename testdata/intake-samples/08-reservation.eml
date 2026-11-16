@@ -1,0 +1,26 @@
+From: reservations@example-hotel.com
+To: mindy@padovatravel.com
+Subject: Hotel confirmation EML01
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="padova-bound"
+
+--padova-bound
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Customer: Eml Sample Guest
+Traveler: Eml Sample Guest
+Product: Hotel
+Route: Miami Beach
+Check-in: 2027-05-01
+Check-out: 2027-05-04
+PNR: EML01
+Customer Price: 380.00
+Summary: Sample .eml intake reservation
+Notes: Synthetic email for staff forward / file upload testing. Draft only.
+
+--padova-bound
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Ignore HTML part for structured intake.</p></body></html>
+--padova-bound--

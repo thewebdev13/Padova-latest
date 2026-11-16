@@ -1,0 +1,43 @@
+Customer: Alpha Travel Group
+Traveler: Ada Alpha
+Product: Hotel
+Property: Fontainebleau Miami Beach
+Route: Miami Beach
+Check-in: 2027-03-01
+Check-out: 2027-03-04
+PNR: MULTI01
+Customer Price: 450.00
+Customer Paid: Unpaid
+Summary: Multi-file entry 1 — Miami hotel
+Notes: Synthetic multi-entry test block 1.
+
+---
+
+Customer: Beta Holdings
+Traveler: Ben Beta
+Product: Flight
+Trip Type: Round Trip
+Airline: Delta Air Lines
+Route: JFK-MIA-JFK
+Departure: 2027-04-10
+Return: 2027-04-17
+PNR: MULTI02
+Flight Numbers: DL400 / DL401
+Customer Price: 612.00
+Customer Paid: Unpaid
+Summary: Multi-file entry 2 — round-trip flight
+Notes: Synthetic multi-entry test block 2.
+
+---
+
+Customer: Gamma Family
+Traveler: Gita Gamma
+Product: Car
+Route: MIA airport
+Departure: 2027-05-01
+Return: 2027-05-05
+PNR: MULTI03
+Customer Price: 210.00
+Customer Paid: Unpaid
+Summary: Multi-file entry 3 — airport car
+Notes: Synthetic multi-entry test block 3.

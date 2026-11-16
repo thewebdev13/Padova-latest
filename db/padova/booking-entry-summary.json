@@ -1,0 +1,40 @@
+{
+  "status": "PREPARED_PRACTICE_AND_ISOLATED_ADAPTER_VERIFIED",
+  "project": "unugynfzmxjxifgofxjr",
+  "region": "us-east-1",
+  "source": "supabase/migrations/20261029195159_padova_booking_entry.sql",
+  "sourceSha256": "b73ec263caf4721f3ba6d19bbc374d20120538f46996e56ed7d0b39bda4e4161",
+  "cloudInstalled": true,
+  "practiceMigrations": [
+    "013_booking_entry",
+    "014_optional_commission_date",
+    "015_unknown_outside_quantity"
+  ],
+  "newRelations": [
+    "booking_source_methods",
+    "booking_references",
+    "booking_drafts"
+  ],
+  "existingLedgersReused": true,
+  "historicalFinancialCutover": false,
+  "travelerReconciliation": {
+    "createdOnFirstRun": 538,
+    "sourceRows": 4109,
+    "existingReferenceLabelsRetained": 334,
+    "ambiguousCells": 135,
+    "splitCells": 554,
+    "travelerCells": 1406,
+    "replayUpdated": 0,
+    "replayCreated": 0,
+    "financialHashesUnchanged": true,
+    "identityMerges": 0,
+    "uniqueNameCandidates": 872
+  },
+  "verification": {
+    "fullRegressions": 152,
+    "requestedBrowserScenarios": 12,
+    "restrictedAdapterCases": 92,
+    "httpSecurity": true,
+    "buildAndTypecheck": true
+  }
+}

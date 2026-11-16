@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.next-review/
+.next-qa/
+.data/
+.env*
+!.env.example
+.cursor/
+*.tsbuildinfo
+coverage/
+artifacts/
+.supabase/
+supabase/.temp/
+.vercel

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+supabase/migrations/*.sql text eol=lf
+db/**/*.sql text eol=lf
+tests/fixtures/*.sql text eol=lf

@@ -1,0 +1,13 @@
+Customer: QA Sample Customer
+Traveler: QA Sample Traveler
+Product: Other
+What is it: Private airport transfer and city tour package
+Route: Tel Aviv
+Departure: 2027-06-01
+Return: 2027-06-01
+PNR: TOUR44
+Seller Cost: Unknown
+Customer Price: 175.00
+Customer Paid: Unpaid
+Summary: Other/custom product sample for intake upload test.
+Notes: Synthetic local test file 04 — product Other.

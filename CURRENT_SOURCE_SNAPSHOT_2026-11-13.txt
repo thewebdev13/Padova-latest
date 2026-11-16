@@ -1,0 +1,33 @@
+Padova current source snapshot
+Created: 
+2026-11-13 12:09:41Z
+Repository: 
+C:\Users\necha\OneDrive\Documents\ChatGPT\Padova System Build
+Branch: 
+codex/padova-v1
+HEAD: 
+5b833edce5d06060c1f9d05addbaf6d07469af58
+Contents: current working copies of 
+373
+ tracked files plus 
+tests/historical-undated-booking.test.ts
+Excludes: .git, .data, .env.local, node_modules, generated output, old handoff ZIPs.
+This is source, not a database backup or production deployment.
+
+Working-tree status at packaging:
+ M docs/BUILD_STATE.md
+ M docs/SUPABASE_EGRESS_20261105.md
+ M next-env.d.ts
+ M src/components/operational-views.tsx
+ M src/lib/finance.ts
+ M src/lib/financial-importer.ts
+ M src/lib/permissions.ts
+ M src/lib/queries.ts
+ M src/lib/transaction-list.ts
+ M src/lib/travel-schedule.ts
+ M tests/historical-owned-voucher.test.ts
+ M tests/transaction-list.test.ts
+?? HANDOFF_2026-11-07/
+?? padova-programmer-handoff-2026-11-07.zip
+?? padova-programmer-handoff-2026-11-07.zip.sha256
+?? tests/historical-undated-booking.test.ts

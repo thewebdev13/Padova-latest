@@ -1,0 +1,35 @@
+# Deployment configuration only. Accepted application/accounting code is unchanged.
+# Keep the source repository private. Never attach QA credentials or QA data.
+services:
+  - type: web
+    name: padova-production
+    runtime: node
+    plan: free
+    region: virginia
+    autoDeployTrigger: off
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node --use-system-ca node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 24.13.1
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: '1'
+      - key: PADOVA_DATABASE_MODE
+        value: supabase
+      - key: PADOVA_QA
+        value: '0'
+      - key: SUPABASE_URL
+        value: https://unugynfzmxjxifgofxjr.supabase.co
+      - key: PADOVA_DB_CA_FILE
+        value: certs/supabase-root-2021.crt
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: PADOVA_AUTH_ENCRYPTION_KEY
+        sync: false

@@ -1,0 +1,14 @@
+{
+  "project": "unugynfzmxjxifgofxjr",
+  "schema": "padova",
+  "migration": "supabase/migrations/20261029225428_final_entry_integrity.sql",
+  "sha256": "e4a79f2b9a9670238d82199a8f92cc94750944a2a7b3d3f7ac3ee2f09e816a87",
+  "installed": true,
+  "historicalFinancialPostingAuthorized": false,
+  "scope": [
+    "payment account eligibility",
+    "exact seller obligation allocation",
+    "immutable source review decisions",
+    "default-disabled reviewed financial import binding to existing staging mappings"
+  ]
+}

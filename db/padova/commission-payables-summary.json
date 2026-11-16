@@ -1,0 +1,8 @@
+{
+  "project": "unugynfzmxjxifgofxjr",
+  "schema": "padova",
+  "installed": true,
+  "migration": "supabase/migrations/20261101193320_commission_payables.sql",
+  "sha256": "975173e10970f4a5ff1ca137c8ba6d623e5ae9fd5b9815aa1677bb2c3d25e6ed",
+  "historicalFinancialPostingAuthorized": false
+}

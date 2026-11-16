@@ -1,0 +1,24 @@
+From: reservations@example-hotel.test
+To: mindy@padovatravel.com
+Subject: Confirmation HOLD88 — Sample Hotel Stay
+Date: Mon, 16 Nov 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Hello Padova,
+
+Please find the reservation details below for intake testing.
+
+Product: Hotel
+Property: Sample Seaside Hotel
+Route: Fort Lauderdale
+Check-in: 2027-11-02
+Check-out: 2027-11-05
+PNR: HOLD88
+Customer Price: 610.00
+Customer Paid: Unpaid
+Summary: Email-shaped confirmation body for intake .eml upload test.
+Notes: Synthetic local test file 08 — not a real mailbox message.
+
+Thank you,
+Example Hotel Reservations

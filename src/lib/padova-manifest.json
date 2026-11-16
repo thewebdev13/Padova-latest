@@ -1,0 +1,752 @@
+{
+  "asset_acquisition_payments": {
+    "base": "asset_acquisition_payments",
+    "columns": ["id", "asset_id", "payment_id", "amount", "command_id"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "asset_id": "asset_id",
+      "payment_id": "payment_id",
+      "amount": "amount",
+      "command_id": "command_id"
+    },
+    "native": false
+  },
+  "asset_lots": {
+    "base": "asset_lots",
+    "columns": ["id", "asset_id", "quantity", "cost", "acquired_on", "source_lot_id", "command_id"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "asset_id": "asset_id",
+      "quantity": "quantity",
+      "cost": "cost",
+      "acquired_on": "acquired_on",
+      "source_lot_id": "source_lot_id",
+      "command_id": "command_id"
+    },
+    "native": false
+  },
+  "asset_movements": {
+    "base": "asset_movements",
+    "columns": [
+      "id",
+      "asset_id",
+      "lot_id",
+      "booking_id",
+      "quantity",
+      "basis",
+      "kind",
+      "effective_on",
+      "original_movement_id",
+      "command_id"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "asset_id": "asset_id",
+      "lot_id": "app_lot_id",
+      "booking_id": "booking_id",
+      "quantity": "app_quantity",
+      "basis": "basis_delta",
+      "kind": "kind",
+      "effective_on": "effective_date",
+      "original_movement_id": "app_original_movement_id",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "asset_sale_receipts": {
+    "base": "asset_sale_receipts",
+    "columns": ["id", "sale_id", "payment_id", "amount", "command_id"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "sale_id": "sale_id",
+      "payment_id": "payment_id",
+      "amount": "amount",
+      "command_id": "command_id"
+    },
+    "native": false
+  },
+  "asset_sales": {
+    "base": "asset_sales",
+    "columns": [
+      "id",
+      "asset_id",
+      "buyer_id",
+      "quantity",
+      "proceeds",
+      "basis",
+      "effective_on",
+      "payment_id",
+      "command_id"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "asset_id": "app_asset_id",
+      "buyer_id": "buyer_id",
+      "quantity": "app_quantity",
+      "proceeds": "proceeds_due",
+      "basis": "app_basis",
+      "effective_on": "app_effective_on",
+      "payment_id": "receipt_id",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "asset_transfers": {
+    "base": "asset_transfers",
+    "columns": [
+      "id",
+      "sending_asset_id",
+      "receiving_asset_id",
+      "quantity_sent",
+      "quantity_received",
+      "basis",
+      "fees",
+      "effective_on",
+      "command_id"
+    ],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "sending_asset_id": "sending_asset_id",
+      "receiving_asset_id": "receiving_asset_id",
+      "quantity_sent": "quantity_sent",
+      "quantity_received": "quantity_received",
+      "basis": "basis",
+      "fees": "fees",
+      "effective_on": "effective_on",
+      "command_id": "command_id"
+    },
+    "native": false
+  },
+  "assets": {
+    "base": "assets",
+    "columns": [
+      "id",
+      "name",
+      "kind",
+      "issuer",
+      "holder_id",
+      "seller_id",
+      "source_booking_id",
+      "ownership",
+      "expires_on",
+      "restrictions",
+      "reference",
+      "created_at",
+      "opening_quantity",
+      "opening_cost"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "name": "app_name",
+      "kind": "kind",
+      "issuer": "app_issuer",
+      "holder_id": "holder_id",
+      "seller_id": "app_seller_id",
+      "source_booking_id": "origin_booking_id",
+      "ownership": "app_ownership",
+      "expires_on": "expires_on",
+      "restrictions": "restrictions",
+      "reference": "reference",
+      "created_at": "created_at",
+      "opening_quantity": "original_face",
+      "opening_cost": "original_basis"
+    },
+    "native": false
+  },
+  "attention_resolutions": {
+    "base": "attention_resolutions",
+    "columns": ["id", "attention_key", "fingerprint", "resolver", "note", "resolved_at"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "attention_key": "attention_key",
+      "fingerprint": "fingerprint",
+      "resolver": "resolver",
+      "note": "note",
+      "resolved_at": "resolved_at"
+    },
+    "native": true
+  },
+  "audit_events": {
+    "base": "audit_events",
+    "columns": [
+      "id",
+      "command_id",
+      "actor",
+      "kind",
+      "record_id",
+      "before_value",
+      "after_value",
+      "reason",
+      "created_at"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "command_id": "app_command_id",
+      "actor": "actor",
+      "kind": "entity_table",
+      "record_id": "entity_id",
+      "before_value": "old_value",
+      "after_value": "new_value",
+      "reason": "reason",
+      "created_at": "created_at"
+    },
+    "native": false
+  },
+  "auth_throttles": {
+    "base": "auth_throttles",
+    "columns": ["bucket_hash", "attempts", "window_start"],
+    "existing": false,
+    "mapping": {
+      "bucket_hash": "bucket_hash",
+      "attempts": "attempts",
+      "window_start": "window_start"
+    },
+    "native": true
+  },
+  "booking_payers": {
+    "base": "booking_payers",
+    "columns": ["booking_id", "party_id", "reason", "command_id"],
+    "existing": false,
+    "mapping": {
+      "booking_id": "booking_id",
+      "party_id": "party_id",
+      "reason": "reason",
+      "command_id": "command_id"
+    },
+    "native": false
+  },
+  "booking_travelers": {
+    "base": "booking_travelers",
+    "columns": ["booking_id", "person_id", "status"],
+    "existing": true,
+    "mapping": {
+      "booking_id": "booking_id",
+      "person_id": "traveler_id",
+      "status": "status"
+    },
+    "native": false
+  },
+  "bookings": {
+    "base": "bookings",
+    "columns": [
+      "id",
+      "code",
+      "customer_id",
+      "supplier_id",
+      "product",
+      "channel",
+      "summary",
+      "booked_on",
+      "travel_start",
+      "travel_end",
+      "reservation_status",
+      "confirmation_status",
+      "document_status",
+      "itinerary",
+      "revision",
+      "currency",
+      "created_at"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "code": "app_code",
+      "customer_id": "customer_id",
+      "supplier_id": "supplier_id",
+      "product": "app_product",
+      "channel": "app_channel",
+      "summary": "summary",
+      "booked_on": "booked_date",
+      "travel_start": "travel_date",
+      "travel_end": "end_date",
+      "reservation_status": "status",
+      "confirmation_status": "app_confirmation_status",
+      "document_status": "app_document_status",
+      "itinerary": "app_itinerary",
+      "revision": "version",
+      "currency": "app_currency",
+      "created_at": "created_at"
+    },
+    "native": false
+  },
+  "charges": {
+    "base": "charges",
+    "columns": ["id", "booking_id", "kind", "amount", "effective_on", "command_id"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "kind": "kind",
+      "amount": "amount",
+      "effective_on": "effective_date",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "commission_allocations": {
+    "base": "commission_allocations",
+    "columns": ["id", "commission_id", "payment_id", "amount", "command_id"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "commission_id": "commission_id",
+      "payment_id": "receipt_id",
+      "amount": "amount",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "commissions": {
+    "base": "commissions",
+    "columns": [
+      "id",
+      "booking_id",
+      "payer_id",
+      "collector_id",
+      "gross",
+      "retained",
+      "due_on",
+      "command_id"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "payer_id": "app_payer_id",
+      "collector_id": "app_collector_id",
+      "gross": "gross",
+      "retained": "retention",
+      "due_on": "app_due_on",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "confirmations": {
+    "base": "confirmations",
+    "columns": ["id", "booking_id", "reference", "provider"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "reference": "reference",
+      "provider": "app_provider"
+    },
+    "native": false
+  },
+  "funding_components": {
+    "base": "funding_components",
+    "columns": [
+      "id",
+      "booking_id",
+      "kind",
+      "face_amount",
+      "cost",
+      "asset_id",
+      "asset_movement_id",
+      "account_id",
+      "seller_id",
+      "reference",
+      "effective_on",
+      "command_id"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "kind": "kind",
+      "face_amount": "face_amount",
+      "cost": "cost_basis",
+      "asset_id": "app_asset_id",
+      "asset_movement_id": "asset_movement_id",
+      "account_id": "app_account_id",
+      "seller_id": "app_seller_id",
+      "reference": "reference",
+      "effective_on": "app_effective_on",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "itinerary_revisions": {
+    "base": "itinerary_revisions",
+    "columns": ["id", "booking_id", "revision", "snapshot", "actor", "created_at"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "revision": "app_revision",
+      "snapshot": "itinerary",
+      "actor": "actor",
+      "created_at": "created_at"
+    },
+    "native": false
+  },
+  "journal_lines": {
+    "base": "journal_lines",
+    "columns": [
+      "id",
+      "command_id",
+      "account",
+      "debit",
+      "credit",
+      "booking_id",
+      "party_id",
+      "effective_on"
+    ],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "command_id": "command_id",
+      "account": "account",
+      "debit": "debit",
+      "credit": "credit",
+      "booking_id": "booking_id",
+      "party_id": "party_id",
+      "effective_on": "effective_on"
+    },
+    "native": false
+  },
+  "notes": {
+    "base": "notes",
+    "columns": ["id", "record_type", "record_id", "body", "actor", "created_at"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "record_type": "app_record_type",
+      "record_id": "app_record_id",
+      "body": "body",
+      "actor": "actor",
+      "created_at": "created_at"
+    },
+    "native": false
+  },
+  "parties": {
+    "base": "parties",
+    "columns": [
+      "id",
+      "kind",
+      "name",
+      "email",
+      "phone",
+      "roles",
+      "details",
+      "archived_at",
+      "created_at"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "kind": "kind",
+      "name": "display_name",
+      "email": "email",
+      "phone": "phone",
+      "roles": "app_roles",
+      "details": "details",
+      "archived_at": "archived_at",
+      "created_at": "created_at"
+    },
+    "native": false
+  },
+  "party_relationships": {
+    "base": "party_relationships",
+    "columns": ["id", "person_id", "group_id", "relationship", "rules"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "person_id": "from_party",
+      "group_id": "to_party",
+      "relationship": "relationship",
+      "rules": "app_rules"
+    },
+    "native": false
+  },
+  "password_reset_tokens": {
+    "base": "password_reset_tokens",
+    "columns": [
+      "token_hash",
+      "staff_id",
+      "issued_by",
+      "auth_version",
+      "expires_at",
+      "used_at",
+      "created_at"
+    ],
+    "existing": false,
+    "mapping": {
+      "token_hash": "token_hash",
+      "staff_id": "staff_id",
+      "issued_by": "issued_by",
+      "auth_version": "auth_version",
+      "expires_at": "expires_at",
+      "used_at": "used_at",
+      "created_at": "created_at"
+    },
+    "native": true
+  },
+  "payment_accounts": {
+    "base": "payment_accounts",
+    "columns": ["id", "name", "kind", "last_four", "archived_at"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "name": "name",
+      "kind": "kind",
+      "last_four": "last_four",
+      "archived_at": "archived_at"
+    },
+    "native": true
+  },
+  "payment_adjustments": {
+    "base": "receipt_adjustments",
+    "columns": ["id", "payment_id", "delta", "reason", "command_id"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "payment_id": "payment_id",
+      "delta": "delta",
+      "reason": "reason",
+      "command_id": "command_id"
+    },
+    "native": false
+  },
+  "personal_recovery_codes": {
+    "base": "personal_recovery_codes",
+    "columns": ["code_hash", "staff_id", "used_at", "created_at"],
+    "existing": false,
+    "mapping": {
+      "code_hash": "code_hash",
+      "staff_id": "staff_id",
+      "used_at": "used_at",
+      "created_at": "created_at"
+    },
+    "native": true
+  },
+  "profit_movements": {
+    "base": "profit_movements",
+    "columns": ["id", "booking_id", "kind", "amount", "effective_on", "command_id"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "kind": "kind",
+      "amount": "amount",
+      "effective_on": "effective_date",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "recovery_requests": {
+    "base": "recovery_requests",
+    "columns": ["id", "staff_id", "requested_at", "handled_at"],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "staff_id": "staff_id",
+      "requested_at": "requested_at",
+      "handled_at": "handled_at"
+    },
+    "native": true
+  },
+  "referral_payments": {
+    "base": "referral_payments",
+    "columns": ["id", "referral_id", "payment_id", "amount", "command_id"],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "referral_id": "terms_id",
+      "payment_id": "app_payment_id",
+      "amount": "amount",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "referrals": {
+    "base": "referral_terms",
+    "columns": [
+      "id",
+      "booking_id",
+      "referrer_id",
+      "basis",
+      "rate_bps",
+      "fixed_amount",
+      "after_receipt",
+      "due_on",
+      "command_id"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "referrer_id": "referrer_id",
+      "basis": "basis",
+      "rate_bps": "percentage",
+      "fixed_amount": "fixed_amount",
+      "after_receipt": "after_commission_receipt",
+      "due_on": "app_due_on",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "schema_migrations": {
+    "base": "app_schema_versions",
+    "columns": ["version", "applied_at"],
+    "existing": false,
+    "mapping": {
+      "version": "version",
+      "applied_at": "applied_at"
+    },
+    "native": true
+  },
+  "security_audit": {
+    "base": "security_audit",
+    "columns": [
+      "id",
+      "actor_id",
+      "actor_name",
+      "target_id",
+      "action",
+      "before_value",
+      "after_value",
+      "created_at"
+    ],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "actor_id": "actor_id",
+      "actor_name": "actor_name",
+      "target_id": "target_id",
+      "action": "action",
+      "before_value": "before_value",
+      "after_value": "after_value",
+      "created_at": "created_at"
+    },
+    "native": true
+  },
+  "sessions": {
+    "base": "web_sessions",
+    "columns": ["token_hash", "staff_id", "expires_at", "auth_version"],
+    "existing": false,
+    "mapping": {
+      "token_hash": "token_hash",
+      "staff_id": "staff_id",
+      "expires_at": "expires_at",
+      "auth_version": "auth_version"
+    },
+    "native": true
+  },
+  "staff": {
+    "base": "staff",
+    "columns": [
+      "id",
+      "email",
+      "name",
+      "password_hash",
+      "permissions",
+      "active",
+      "created_at",
+      "role",
+      "auth_version",
+      "updated_at"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "user_id",
+      "email": "app_email",
+      "name": "app_name",
+      "permissions": "app_permissions",
+      "active": "active",
+      "created_at": "created_at",
+      "role": "role",
+      "auth_version": "app_auth_version",
+      "updated_at": "app_updated_at"
+    },
+    "native": false
+  },
+  "supplier_obligations": {
+    "base": "supplier_obligations",
+    "columns": [
+      "id",
+      "booking_id",
+      "supplier_id",
+      "amount",
+      "effective_on",
+      "description",
+      "command_id"
+    ],
+    "existing": true,
+    "mapping": {
+      "id": "id",
+      "booking_id": "booking_id",
+      "supplier_id": "supplier_id",
+      "amount": "amount",
+      "effective_on": "effective_date",
+      "description": "app_description",
+      "command_id": "app_command_id"
+    },
+    "native": false
+  },
+  "tasks": {
+    "base": "tasks",
+    "columns": [
+      "id",
+      "title",
+      "record_type",
+      "record_id",
+      "assignee_id",
+      "due_on",
+      "priority",
+      "status",
+      "notes",
+      "created_at"
+    ],
+    "existing": false,
+    "mapping": {
+      "id": "id",
+      "title": "title",
+      "record_type": "record_type",
+      "record_id": "record_id",
+      "assignee_id": "assignee_id",
+      "due_on": "due_on",
+      "priority": "priority",
+      "status": "status",
+      "notes": "notes",
+      "created_at": "created_at"
+    },
+    "native": true
+  },
+  "traveler_private": {
+    "base": "traveler_private",
+    "columns": [
+      "person_id",
+      "legal_first",
+      "middle_name",
+      "last_name",
+      "dob",
+      "ktn",
+      "documents",
+      "memberships",
+      "preferences"
+    ],
+    "existing": false,
+    "mapping": {
+      "person_id": "person_id",
+      "legal_first": "legal_first",
+      "middle_name": "middle_name",
+      "last_name": "last_name",
+      "dob": "dob",
+      "ktn": "ktn",
+      "documents": "documents",
+      "memberships": "memberships",
+      "preferences": "preferences"
+    },
+    "native": true
+  }
+}

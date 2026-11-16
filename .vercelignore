@@ -1,0 +1,16 @@
+.data
+.env*
+.git
+.cursor
+.next*
+node_modules
+tests
+testdata
+docs
+db
+supabase
+artifacts
+coverage
+*.tsbuildinfo
+CURRENT_SOURCE_SNAPSHOT_*.txt
+render.yaml

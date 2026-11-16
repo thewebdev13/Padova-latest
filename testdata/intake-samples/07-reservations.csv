@@ -1,0 +1,4 @@
+Product,Customer,Traveler,Route,Departure,Return,PNR,Customer Price,Summary
+Hotel,Sample Hotel Guest,Sample Hotel Guest,Miami Beach,2027-03-01,2027-03-04,CSVH01,450.00,CSV hotel row for intake
+Flight,Sample Flight Client,Sample Flight Traveler,JFK-ATL,2027-09-01,2027-09-05,CSVF02,612.00,CSV flight row for intake
+Car,Sample Car Renter,Sample Car Renter,MIA airport,2027-10-01,2027-10-04,CSVC03,199.00,CSV car row for intake

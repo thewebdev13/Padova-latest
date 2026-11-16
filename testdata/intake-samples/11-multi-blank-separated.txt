@@ -1,0 +1,19 @@
+Customer: Northside LLC
+Traveler: Nora North
+Product: Hotel
+Route: Brooklyn
+Check-in: 2027-06-01
+Check-out: 2027-06-03
+PNR: BLANK1
+Customer Price: 380.00
+Summary: Blank-line separated entry 1
+
+Customer: Southside Partners
+Traveler: Sam South
+Product: Other
+What is it: Concert tickets package
+Route: Manhattan
+Departure: 2027-06-12
+PNR: BLANK2
+Customer Price: 240.00
+Summary: Blank-line separated entry 2

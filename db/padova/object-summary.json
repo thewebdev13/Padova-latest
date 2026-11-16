@@ -1,0 +1,814 @@
+{
+  "project": "unugynfzmxjxifgofxjr",
+  "schema": "padova",
+  "status": "INSTALLED",
+  "newTables": [
+    "traveler_status_events",
+    "asset_acquisition_payments",
+    "asset_lots",
+    "asset_sale_receipts",
+    "asset_transfers",
+    "attention_resolutions",
+    "auth_throttles",
+    "booking_payers",
+    "journal_lines",
+    "password_reset_tokens",
+    "payment_accounts",
+    "receipt_adjustments",
+    "personal_recovery_codes",
+    "recovery_requests",
+    "app_schema_versions",
+    "security_audit",
+    "web_sessions",
+    "tasks",
+    "traveler_private",
+    "command_context",
+    "refund_movement_links"
+  ],
+  "addedColumns": [
+    {
+      "table": "asset_movements",
+      "column": "app_lot_id",
+      "type": "uuid"
+    },
+    {
+      "table": "asset_movements",
+      "column": "app_quantity",
+      "type": "int8"
+    },
+    {
+      "table": "asset_movements",
+      "column": "app_original_movement_id",
+      "type": "uuid"
+    },
+    {
+      "table": "asset_movements",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "asset_movements",
+      "column": "app_kind",
+      "type": "text"
+    },
+    {
+      "table": "asset_sales",
+      "column": "app_asset_id",
+      "type": "uuid"
+    },
+    {
+      "table": "asset_sales",
+      "column": "app_quantity",
+      "type": "int8"
+    },
+    {
+      "table": "asset_sales",
+      "column": "app_basis",
+      "type": "numeric(18,2)"
+    },
+    {
+      "table": "asset_sales",
+      "column": "app_effective_on",
+      "type": "date"
+    },
+    {
+      "table": "asset_sales",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "assets",
+      "column": "app_name",
+      "type": "text"
+    },
+    {
+      "table": "assets",
+      "column": "app_issuer",
+      "type": "text"
+    },
+    {
+      "table": "assets",
+      "column": "app_seller_id",
+      "type": "uuid"
+    },
+    {
+      "table": "assets",
+      "column": "app_ownership",
+      "type": "text"
+    },
+    {
+      "table": "assets",
+      "column": "app_kind",
+      "type": "text"
+    },
+    {
+      "table": "audit_events",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "bookings",
+      "column": "app_code",
+      "type": "text"
+    },
+    {
+      "table": "bookings",
+      "column": "app_product",
+      "type": "text"
+    },
+    {
+      "table": "bookings",
+      "column": "app_channel",
+      "type": "text"
+    },
+    {
+      "table": "bookings",
+      "column": "app_confirmation_status",
+      "type": "text"
+    },
+    {
+      "table": "bookings",
+      "column": "app_document_status",
+      "type": "text"
+    },
+    {
+      "table": "bookings",
+      "column": "app_itinerary",
+      "type": "jsonb"
+    },
+    {
+      "table": "bookings",
+      "column": "app_currency",
+      "type": "text"
+    },
+    {
+      "table": "bookings",
+      "column": "app_managed",
+      "type": "boolean"
+    },
+    {
+      "table": "charges",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "charges",
+      "column": "app_kind",
+      "type": "text"
+    },
+    {
+      "table": "commission_allocations",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "commissions",
+      "column": "app_payer_id",
+      "type": "uuid"
+    },
+    {
+      "table": "commissions",
+      "column": "app_collector_id",
+      "type": "uuid"
+    },
+    {
+      "table": "commissions",
+      "column": "app_due_on",
+      "type": "date"
+    },
+    {
+      "table": "commissions",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "confirmations",
+      "column": "app_provider",
+      "type": "text"
+    },
+    {
+      "table": "funding_components",
+      "column": "app_asset_id",
+      "type": "uuid"
+    },
+    {
+      "table": "funding_components",
+      "column": "app_account_id",
+      "type": "uuid"
+    },
+    {
+      "table": "funding_components",
+      "column": "app_seller_id",
+      "type": "uuid"
+    },
+    {
+      "table": "funding_components",
+      "column": "app_effective_on",
+      "type": "date"
+    },
+    {
+      "table": "funding_components",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "funding_components",
+      "column": "app_kind",
+      "type": "text"
+    },
+    {
+      "table": "itinerary_revisions",
+      "column": "app_revision",
+      "type": "int4"
+    },
+    {
+      "table": "notes",
+      "column": "app_record_type",
+      "type": "text"
+    },
+    {
+      "table": "notes",
+      "column": "app_record_id",
+      "type": "uuid"
+    },
+    {
+      "table": "parties",
+      "column": "app_roles",
+      "type": "text[]"
+    },
+    {
+      "table": "parties",
+      "column": "app_kind",
+      "type": "text"
+    },
+    {
+      "table": "party_relationships",
+      "column": "app_rules",
+      "type": "jsonb"
+    },
+    {
+      "table": "profit_movements",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "referral_payments",
+      "column": "app_payment_id",
+      "type": "uuid"
+    },
+    {
+      "table": "referral_payments",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "referral_terms",
+      "column": "app_due_on",
+      "type": "date"
+    },
+    {
+      "table": "referral_terms",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "staff",
+      "column": "app_email",
+      "type": "text"
+    },
+    {
+      "table": "staff",
+      "column": "app_name",
+      "type": "text"
+    },
+    {
+      "table": "staff",
+      "column": "app_permissions",
+      "type": "text[]"
+    },
+    {
+      "table": "staff",
+      "column": "app_auth_version",
+      "type": "int4"
+    },
+    {
+      "table": "staff",
+      "column": "app_updated_at",
+      "type": "timestamptz"
+    },
+    {
+      "table": "supplier_obligations",
+      "column": "app_description",
+      "type": "text"
+    },
+    {
+      "table": "supplier_obligations",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "web_sessions",
+      "column": "provider_state",
+      "type": "text"
+    },
+    {
+      "table": "receipts",
+      "column": "app_account_id",
+      "type": "uuid REFERENCES padova.payment_accounts(id)"
+    },
+    {
+      "table": "receipts",
+      "column": "app_reference",
+      "type": "text"
+    },
+    {
+      "table": "supplier_payments",
+      "column": "app_direction",
+      "type": "text"
+    },
+    {
+      "table": "supplier_payments",
+      "column": "app_account_id",
+      "type": "uuid REFERENCES padova.payment_accounts(id)"
+    },
+    {
+      "table": "supplier_payments",
+      "column": "app_verification",
+      "type": "text"
+    },
+    {
+      "table": "receipt_allocations",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "supplier_allocations",
+      "column": "app_command_id",
+      "type": "uuid"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_customer_refund_id",
+      "type": "uuid REFERENCES padova.customer_refunds(id)"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_traveler_id",
+      "type": "uuid REFERENCES padova.parties(id)"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_unit",
+      "type": "text"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_expected_basis",
+      "type": "numeric(18,2)"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_due_on",
+      "type": "date"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_reason",
+      "type": "text"
+    },
+    {
+      "table": "supplier_refunds",
+      "column": "app_command_id",
+      "type": "uuid REFERENCES padova.command_context(id)"
+    }
+  ],
+  "newViews": [
+    "app_asset_acquisition_payments",
+    "app_asset_lots",
+    "app_asset_movements",
+    "app_asset_sale_receipts",
+    "app_asset_sales",
+    "app_asset_transfers",
+    "app_assets",
+    "app_audit_events",
+    "app_booking_payers",
+    "app_booking_travelers",
+    "app_bookings",
+    "app_charges",
+    "app_commission_allocations",
+    "app_commissions",
+    "app_confirmations",
+    "app_funding_components",
+    "app_itinerary_revisions",
+    "app_journal_lines",
+    "app_notes",
+    "app_parties",
+    "app_party_relationships",
+    "app_payment_adjustments",
+    "app_profit_movements",
+    "app_referral_payments",
+    "app_referrals",
+    "app_staff",
+    "app_supplier_obligations",
+    "app_payments",
+    "app_payment_allocations",
+    "app_payment_allocation_reversals",
+    "app_commands",
+    "app_refunds",
+    "app_refund_movements",
+    "app_net_allocations",
+    "app_payment_balances",
+    "app_asset_balances",
+    "app_booking_balances"
+  ],
+  "newFunctions": [
+    {
+      "name": "app_cents",
+      "arguments": "value numeric"
+    },
+    {
+      "name": "app_whole",
+      "arguments": "value numeric"
+    },
+    {
+      "name": "app_write_asset_acquisition_payments",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_asset_lots",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_asset_movements",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_asset_sale_receipts",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_asset_sales",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_asset_transfers",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_assets",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_audit_events",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_booking_payers",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_booking_travelers",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_bookings",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_charges",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_commission_allocations",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_commissions",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_confirmations",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_funding_components",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_itinerary_revisions",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_journal_lines",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_notes",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_parties",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_party_relationships",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_payment_adjustments",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_profit_movements",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_referral_payments",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_referrals",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_staff",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_supplier_obligations",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_payment",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_allocation",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_reversal",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_command",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_refund",
+      "arguments": ""
+    },
+    {
+      "name": "app_write_refund_movement",
+      "arguments": ""
+    },
+    {
+      "name": "app_verify_journal",
+      "arguments": ""
+    },
+    {
+      "name": "app_verify_inventory",
+      "arguments": ""
+    },
+    {
+      "name": "app_verify_command",
+      "arguments": ""
+    }
+  ],
+  "newPolicies": [
+    {
+      "table": "asset_acquisition_payments",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "asset_lots",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "asset_movements",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "asset_sale_receipts",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "asset_sales",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "asset_transfers",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "assets",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "attention_resolutions",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "audit_events",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "auth_throttles",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "booking_payers",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "booking_travelers",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "bookings",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "charges",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "commission_allocations",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "commissions",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "confirmations",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "funding_components",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "itinerary_revisions",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "journal_lines",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "notes",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "parties",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "party_relationships",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "password_reset_tokens",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "payment_accounts",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "receipt_adjustments",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "personal_recovery_codes",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "profit_movements",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "recovery_requests",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "referral_payments",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "referral_terms",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "app_schema_versions",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "security_audit",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "web_sessions",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "staff",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "supplier_obligations",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "tasks",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "traveler_private",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "receipts",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "receipt_allocations",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "supplier_payments",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "supplier_allocations",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "requests",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "supplier_refunds",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "customer_refunds",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "customer_refund_payments",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "supplier_refund_receipts",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "review_cases",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "settings",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "command_context",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "refund_movement_links",
+      "role": "padova_app_server"
+    },
+    {
+      "table": "traveler_status_events",
+      "role": "padova_app_server"
+    }
+  ],
+  "constraintChanges": [
+    "Replace parties_kind_check with broader allowed party types",
+    "Replace receipts_kind_check to add supplier_refund",
+    "Allow nullable supplier_refunds.funding_id for booking-wide cases"
+  ],
+  "existingRPCExecutionRevokes": [
+    "public.padova_activate_owner()",
+    "public.padova_booking_detail(uuid)",
+    "public.padova_command(text,jsonb,uuid)",
+    "public.padova_historical_bookings(text,integer)",
+    "public.padova_historical_directory(text,integer)",
+    "public.padova_manage_staff(text,boolean)",
+    "public.padova_read(text,text,integer)",
+    "public.padova_references()",
+    "padova.booking_detail(uuid)",
+    "padova.command(text,jsonb,uuid)",
+    "padova.manage_staff(text,boolean)",
+    "padova.read_data(text,text,integer)"
+  ],
+  "stagingChanges": [],
+  "testSchemaChanges": [],
+  "dataBackfills": [],
+  "dataRemovals": [],
+  "installedMigration": "20261028191100_padova_existing_schema_adapter",
+  "adapterVersion": "20261028_existing_padova_adapter",
+  "appliedAt": "2026-10-28T19:11:00.661939Z"
+}

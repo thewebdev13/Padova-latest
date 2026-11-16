@@ -1,0 +1,24 @@
+{
+  "status": "INSTALLED",
+  "project": "unugynfzmxjxifgofxjr",
+  "region": "us-east-1",
+  "migration": "20261029131534",
+  "source": "supabase/migrations/20261029131534_padova_owned_reward_reversal_positions.sql",
+  "marker": "20261029_owned_reward_reversal_positions",
+  "previousGuardHash": "c64a4b74a4a5e8cdf78b498d464d034b",
+  "installedGuardHash": "45cf0b8863899d394e0a10d9234334a0",
+  "preservationHashes": {
+    "evidence": "7ed7898adf9e498614267ed269eb4412",
+    "reviews": "6e0e0d86c400f6230ba6254d3234c797",
+    "audit": "7c8d0985aadbf7678d91cf511ac1cbda",
+    "bookings": "d41d8cd98f00b204e9800998ecf8427e",
+    "assetMovements": "d41d8cd98f00b204e9800998ecf8427e",
+    "settings": "5fff2f8515eaa3f8272bc64360b0e55e"
+  },
+  "preservationUnchanged": true,
+  "browserExecute": false,
+  "anonymousExecute": false,
+  "securityDefiner": false,
+  "note": "Only an exact command-linked reversal of an owned points rebate may expose a negative lot. Prior migration artifacts, source evidence, reviews, financial rows and settings are unchanged. Never reinstall this migration.",
+  "sourceSha256": "01daeda3365c7659e77093624f4e2e7813d4305c43d9c6ff6e1e6b0b4312dafc"
+}

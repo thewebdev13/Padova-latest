@@ -1,0 +1,12 @@
+node_modules
+.next
+.data
+package-lock.json
+db
+docs/BUSINESS_REFERENCE.md
+docs/MASTER_REQUIREMENTS.md
+# Verbatim Owner specifications; retain the exact supplied text.
+docs/OPERATING_MODEL_REQUIREMENTS.md
+docs/MASTER_OPERATING_CLARIFICATION.md
+docs/HISTORICAL_FIELD_PRESERVATION.md
+docs/OVERNIGHT_BUILD_DIRECTIVE.md

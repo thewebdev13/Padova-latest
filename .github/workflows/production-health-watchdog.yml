@@ -1,0 +1,48 @@
+name: Production health watchdog
+
+on:
+  schedule:
+    - cron: '43 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify the production check is enabled and has succeeded daily
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          (async () => {
+            const base = `https://api.github.com/repos/${process.env.REPOSITORY}/actions/workflows/production-health.yml`;
+            async function read(url) {
+              const response = await fetch(url, {
+                headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json' },
+                signal: AbortSignal.timeout(20000)
+              });
+              if (!response.ok) throw new Error('Cannot inspect production health workflow');
+              return response.json();
+            }
+            const workflow = await read(base);
+            const { workflow_runs: runs } = await read(`${base}/runs?status=success&branch=main&per_page=1`);
+            const last = runs[0];
+            const hours = last ? (Date.now() - Date.parse(last.created_at)) / 3600000 : Infinity;
+            if (workflow.state !== 'active' || !Number.isFinite(hours) || hours > 26)
+              throw new Error('Production check disabled, absent or no success in 26 hours');
+            const summary = `## PASS: production monitor active\nLast successful check: ${last.created_at} (${hours.toFixed(1)} hours ago).\n\nNo application, database, financial data or QA requests made by this watchdog.\n`;
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+            console.log(summary);
+          })().catch(() => {
+            const message = 'Production health monitor disabled, missing, failing, or not successful in the past 26 hours. Open Production health, inspect failures and re-enable/run it.';
+            console.error(`::error::${message}`);
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## FAILED\n${message}\n`);
+            process.exitCode = 1;
+          });
+          NODE
