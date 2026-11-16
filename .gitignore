@@ -12,3 +12,9 @@ artifacts/
 .supabase/
 supabase/.temp/
 .vercel
+# Local-only programmer drafts / snapshots — not for GitHub
+CURRENT_SOURCE_SNAPSHOT_*.txt
+docs/OWNER_MESSAGE_*_DRAFT.md
+docs/OWNER_REMAINING_QUESTIONS_DRAFT.md
+docs/BATCH_*_20261116.md
+docs/HANDOFF_CSV_EVIDENCE_INVENTORY_20261116.md
