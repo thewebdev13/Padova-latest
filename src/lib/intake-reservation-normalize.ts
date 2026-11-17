@@ -1,7 +1,7 @@
 /**
  * Turn free-form reservation emails/PDFs into Field: Value lines for parseQuickPaste.
  * Supports Capital One Business Travel, GDS/agency itineraries, United, Amex Travel
- * flights, and Amex Travel hotel stays (Guest Name / Hotel Confirmation #).
+ * flights, Amex/Expedia TAAP/Marriott (St. Regis) hotel confirmations.
  * Only maps evidence in the text — never invents customer, ownership, or paid status.
  * Never uses Padova agency card imprint (e.g. Shmuel Padawer) as Customer.
  */
@@ -176,10 +176,30 @@ function extractAmexPassengers(text: string): string[] {
   return names;
 }
 
-/** Amex / hotel: Guest Name: Abraham Stefansky */
+/** Amex / hotel: Guest Name · Expedia Reserved for · Marriott thank-you / Additional Guests */
 function extractHotelGuests(text: string): string[] {
   const names: string[] = [];
   for (const match of text.matchAll(/Guest Name\s*:\s*([A-Za-z][A-Za-z' .-]{1,80})/gi)) {
+    const name = titleCaseName(match[1].replace(/\s+/g, ' ').trim());
+    if (name.split(/\s+/).length >= 2 && !isAgencyImprintName(name)) names.push(name);
+  }
+  for (const match of text.matchAll(
+    /Reserved for\s+([A-Za-z][A-Za-z' .-]{1,80}?)(?:\s*\n|\s+\d+\s+adults|\s*$)/gi,
+  )) {
+    const name = titleCaseName(match[1].replace(/\s+/g, ' ').trim());
+    if (name.split(/\s+/).length >= 2 && !isAgencyImprintName(name)) names.push(name);
+  }
+  const thanksBooking = text.match(
+    /Thank you for your booking,\s*([A-Za-z][A-Za-z' .-]{2,80}?)\s*\./i,
+  );
+  if (thanksBooking?.[1]) {
+    const name = titleCaseName(thanksBooking[1].replace(/\s+/g, ' ').trim());
+    if (name.split(/\s+/).length >= 2 && !isAgencyImprintName(name)) names.push(name);
+  }
+  // Marriott Gmail print often glues: Additional GuestsZachary Klein
+  for (const match of text.matchAll(
+    /Additional Guests?\s*:?\s*([A-Za-z][A-Za-z' .-]{2,80}?)(?:\s*\n|Number of rooms|Guests per room|$)/gi,
+  )) {
     const name = titleCaseName(match[1].replace(/\s+/g, ' ').trim());
     if (name.split(/\s+/).length >= 2 && !isAgencyImprintName(name)) names.push(name);
   }
@@ -223,6 +243,9 @@ function extractTotalUsd(text: string): string | undefined {
   if (compact) return compact[1].replace(/,/g, '');
   const spaced = text.match(/Total\s*[:\s]+US\s*\$\s*([\d,.]+)/i);
   if (spaced) return spaced[1].replace(/,/g, '');
+  // Expedia TAAP / Gmail print often splits: Total:\n$171.75
+  const multiline = text.match(/\bTotal\s*:?\s*[\r\n]+\s*\$?\s*([\d,]+\.\d{2})\b/i);
+  if (multiline) return multiline[1].replace(/,/g, '');
   // United Gmail print often glues: Total$1,419.36
   const glued = text.match(/\bTotal\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/i);
   if (glued) return glued[1].replace(/,/g, '');
@@ -232,6 +255,21 @@ function extractTotalUsd(text: string): string | undefined {
 }
 
 function extractHotelProperty(text: string): string | undefined {
+  // Expedia TAAP: Stay at Hilton Garden Inn Buffalo Airport
+  const stayAt = text.match(/Stay at\s+([^\n\r]{4,100})/i)?.[1]?.replace(/\s+/g, ' ').trim();
+  if (stayAt && !/^(the property|this hotel)/i.test(stayAt)) return stayAt;
+  // Subject / header: Reservation Confirmation #… for The St. Regis Rome
+  const forProperty = text.match(
+    /Reservation Confirmation\s*#?\s*\d+\s+for\s+([^\n\r]{4,90})/i,
+  )?.[1]?.replace(/\s+/g, ' ').trim();
+  if (forProperty && !isAgencyImprintName(forProperty)) return forProperty;
+  // Marriott / St. Regis only: property name on its own line above Via …
+  if (isMarriottHotelConfirmation(text)) {
+    const marriott = text.match(
+      /\n((?:The\s+)?St\.\s*Regis[^\n]{0,80})\s*\n+Via\s+/i,
+    );
+    if (marriott?.[1]) return marriott[1].replace(/\s+/g, ' ').trim();
+  }
   // Repeated property line above street address (Amex hotel PDF).
   const repeated = text.match(
     /(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+[A-Za-z]+\s+\d{1,2},\s+20\d{2}\s*\n+([A-Z][^\n]{3,90})\s*\n+\1\s*\n+\d{2,5}\s/i,
@@ -248,6 +286,16 @@ function extractHotelProperty(text: string): string | undefined {
 function extractHotelLocation(text: string): string | undefined {
   const tripTo = text.match(/Trip to\s+([A-Za-z][A-Za-z .'-]{2,60})/i)?.[1]?.trim();
   if (tripTo) return tripTo;
+  // Expedia / street address: 4201 Genesee St, Buffalo, NY, 14225
+  const streetCity = text.match(
+    /\d{2,5}\s+[A-Za-z0-9 .'-]+,\s*([A-Za-z][A-Za-z .'-]{2,40}),\s*([A-Z]{2})\s*,?\s*\d{5}/i,
+  );
+  if (streetCity) return `${streetCity[1].trim()}, ${streetCity[2].toUpperCase()}`;
+  // Marriott Italy: Via …, 3 Rome 00185 Italy
+  const romeStyle = text.match(
+    /(?:Via|Viale|Piazza|Calle)\s+[^\n]{3,60}?\b([A-Z][a-z]{2,40})\s+\d{5}\s+Italy/i,
+  );
+  if (romeStyle?.[1]) return romeStyle[1].trim();
   // City line above "FL, United States" / "NY, United States"
   const city = text.match(
     /\n([A-Z][A-Za-z .'-]{2,40})\s*\n+[A-Z]{2},?\s+United States/i,
@@ -257,12 +305,44 @@ function extractHotelLocation(text: string): string | undefined {
 }
 
 function extractHotelConfirmation(text: string): string | undefined {
-  return text.match(/Hotel Confirmation\s*#\s*:?\s*([A-Z0-9-]{6,20})\b/i)?.[1];
+  return (
+    text.match(/Hotel Confirmation\s*#\s*:?\s*([A-Z0-9-]{6,20})\b/i)?.[1] ||
+    text.match(/Confirmation Number\s*:\s*([A-Z0-9-]{6,20})\b/i)?.[1] ||
+    text.match(/Reservation Confirmation\s*#\s*:?\s*([A-Z0-9-]{6,20})\b/i)?.[1] ||
+    text.match(/Itinerary\s*#\s*:?\s*(\d{10,})\b/i)?.[1]
+  );
 }
 
 function extractRoomType(text: string): string | undefined {
-  const m = text.match(/Room Type\s*:\s*([^\n]+)/i)?.[1]?.replace(/\s+/g, ' ').trim();
-  return m || undefined;
+  const labeled = text.match(/Room Type\s*:?\s*([^\n]+)/i)?.[1]?.replace(/\s+/g, ' ').trim();
+  if (labeled && !/^UPGRADE/i.test(labeled)) return labeled.replace(/^Type/i, '').trim() || labeled;
+  // Marriott Gmail glue: Room Type1 King Bed, Superior Guest Room
+  const glued = text.match(
+    /Room Type\s*:?\s*(\d+\s+(?:King|Queen|Double|Twin|Full)[^\n]*?)(?:\n|UPGRADE|$)/i,
+  )?.[1]?.replace(/\s+/g, ' ').trim();
+  if (glued) return glued;
+  // Expedia TAAP: Room\nRoom, 1 King Bed  or plain "Room, 1 King Bed"
+  const taap = text.match(
+    /\bRoom,\s*\d+\s+(?:King|Queen|Double|Twin|Full)(?:\s+Bed)?s?\b/i,
+  )?.[0];
+  if (taap) return taap.replace(/\s+/g, ' ').trim();
+  return undefined;
+}
+
+/** Non-USD stay total — never invent FX into USD sale. */
+function extractForeignStayTotal(
+  text: string,
+): { amount: string; currency: string } | undefined {
+  const m = text.match(
+    /Total for Stay\s*[\r\n]+\s*([\d,]+\.\d{2})\s*(EUR|GBP|CAD|CHF|AUD|JPY|ILS)\b/i,
+  );
+  if (m) return { amount: m[1].replace(/,/g, ''), currency: m[2].toUpperCase() };
+  const inline = text.match(
+    /Total for Stay\s*:?\s*([\d,]+\.\d{2})\s*(EUR|GBP|CAD|CHF|AUD|JPY|ILS)\b/i,
+  );
+  if (inline)
+    return { amount: inline[1].replace(/,/g, ''), currency: inline[2].toUpperCase() };
+  return undefined;
 }
 
 function extractAirlineFlight(text: string): { airline?: string; flight?: string } {
@@ -372,6 +452,31 @@ function collectIsoDates(source: string): string[] {
 }
 
 function extractTravelDates(text: string): { start?: string; end?: string } {
+  // Marriott: Check-In:Sunday, July 5, 202603:00 PM (time may be glued)
+  const checkIn = text.match(
+    /Check-In\s*:\s*(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)?,?\s*(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})/i,
+  );
+  const checkOut = text.match(
+    /Check-Out\s*:\s*(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)?,?\s*(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})/i,
+  );
+  if (checkIn || checkOut) {
+    return {
+      start: checkIn ? toIsoDate(checkIn[1], checkIn[2], checkIn[3]) : undefined,
+      end: checkOut ? toIsoDate(checkOut[1], checkOut[2], checkOut[3]) : undefined,
+    };
+  }
+
+  // Marriott header: Sun, Jul 05, 2026 – Tue, Jul 07, 2026
+  const weekdaySpan = text.match(
+    /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})\s*[-–—]\s*(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})/i,
+  );
+  if (weekdaySpan) {
+    return {
+      start: toIsoDate(weekdaySpan[1], weekdaySpan[2], weekdaySpan[3]),
+      end: toIsoDate(weekdaySpan[4], weekdaySpan[5], weekdaySpan[6]),
+    };
+  }
+
   // GDS header dates sit above PREPARED FOR — check full text first.
   const range = text.match(
     /\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)[A-Z]*\s+(\d{4})\s+(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)[A-Z]*\s+(\d{4})\b/i,
@@ -437,12 +542,15 @@ function extractConfirmations(text: string): {
 } {
   const amexTrip = text.match(/Your trip #([A-Z0-9-]+)\s+is confirmed/i)?.[1];
 
-  // Amex hotel: Hotel Confirmation # is the stay reference; trip # is source.
+  // Amex / Expedia TAAP hotel: stay confirmation or itinerary #; trip # is source when present.
   if (isHotelConfirmation(text)) {
     const hotelConf = extractHotelConfirmation(text);
+    const taapItinerary = text.match(/Itinerary\s*#\s*:?\s*(\d{10,})\b/i)?.[1];
     return {
-      airlinePnr: hotelConf,
-      sourceConf: amexTrip?.toUpperCase(),
+      airlinePnr: hotelConf || taapItinerary,
+      sourceConf: amexTrip?.toUpperCase() || (taapItinerary && hotelConf !== taapItinerary
+        ? taapItinerary
+        : undefined),
     };
   }
 
@@ -519,8 +627,41 @@ function isAmexTravelConfirmation(text: string): boolean {
   return false;
 }
 
-/** Amex (or similar) hotel stay — not a flight itinerary. */
+/** Expedia TAAP / Expedia Partner Solutions hotel confirmation. */
+function isExpediaTaapHotel(text: string): boolean {
+  if (/Flight Number\s*:/i.test(text) || /Airline Confirmation\s*:/i.test(text)) return false;
+  if (/(?:Expedia\s+TAAP|expediataap\.com|Collected by TAAP)/i.test(text)) {
+    if (/Stay at\s+/i.test(text) || /Reserved for\s+/i.test(text) || /Itinerary\s*#/i.test(text))
+      return true;
+  }
+  if (/TAAP travel confirmation/i.test(text) && /Stay at\s+/i.test(text)) return true;
+  return false;
+}
+
+/** Marriott / St. Regis / Bonvoy hotel confirmation email. */
+function isMarriottHotelConfirmation(text: string): boolean {
+  if (/Flight Number\s*:/i.test(text) || /Airline Confirmation\s*:/i.test(text)) return false;
+  if (
+    /(?:res-marriott\.com|Marriott International|Marriott Bonvoy|St\.\s*Regis Reservations)/i.test(
+      text,
+    ) &&
+    (/Confirmation Number\s*:/i.test(text) || /Reservation Confirmation\s*#/i.test(text)) &&
+    (/Check-In\s*:/i.test(text) || /Total for Stay/i.test(text))
+  )
+    return true;
+  if (
+    /Confirmation Number\s*:\s*\d{6,}/i.test(text) &&
+    /Check-In\s*:/i.test(text) &&
+    /Check-Out\s*:/i.test(text) &&
+    /Total for Stay/i.test(text)
+  )
+    return true;
+  return false;
+}
+
+/** Amex / Expedia TAAP / Marriott / similar hotel stay — not a flight itinerary. */
 function isHotelConfirmation(text: string): boolean {
+  if (isExpediaTaapHotel(text) || isMarriottHotelConfirmation(text)) return true;
   if (/Hotel Confirmation\s*#/i.test(text)) return true;
   if (
     /Guest Name\s*:/i.test(text) &&
@@ -591,6 +732,15 @@ function extractCustomer(
       return { name: accountName, source: 'account' };
   }
 
+  // Marriott: Thank you for your booking, Martin Mittelman.
+  const thanksBooking = text.match(
+    /Thank you for your booking,\s*([A-Za-z][A-Za-z' .-]{2,80}?)\s*\./i,
+  );
+  if (thanksBooking?.[1]) {
+    const name = titleCaseName(thanksBooking[1].replace(/\s+/g, ' ').trim());
+    if (!isAgencyImprintName(name)) return { name, source: 'thanks' };
+  }
+
   // United: Thanks Shoshana for choosing United!
   const thanks = text.match(/Thanks\s+([A-Za-z][A-Za-z'-]{1,40})\s+for choosing/i);
   if (thanks?.[1]) {
@@ -641,6 +791,7 @@ export function normalizeReservationProseToPaste(raw: string): string {
   const passengers = extractPassengers(text);
   const tickets = extractTickets(text);
   const total = extractTotalUsd(text);
+  const foreignTotal = hotel ? extractForeignStayTotal(text) : undefined;
   const { airlinePnr, sourceConf } = extractConfirmations(text);
   const customer = extractCustomer(text, passengers);
   const property = hotel ? extractHotelProperty(text) : undefined;
@@ -689,7 +840,10 @@ export function normalizeReservationProseToPaste(raw: string): string {
     lines.push('Booked Through: Capital One Business Travel');
   if (/American Express Travel/i.test(text) || isAmexTravelConfirmation(text))
     lines.push('Booked Through: American Express Travel');
+  if (isExpediaTaapHotel(text)) lines.push('Booked Through: Expedia TAAP');
+  if (isMarriottHotelConfirmation(text)) lines.push('Booked Through: Marriott');
   const pointsUsed = text.match(/Points used:\s*([\d,]+)/i)?.[1];
+  const commissionable = /rate is commissionable/i.test(text);
   const customerNote =
     customer.source === 'primary_traveler'
       ? hotel
@@ -700,11 +854,20 @@ export function normalizeReservationProseToPaste(raw: string): string {
         : customer.source === 'thanks'
           ? 'Customer set from confirmation greeting — confirm billed-to before Save.'
           : '';
-  if (total) {
+  if (total && !foreignTotal) {
     lines.push(`Total: ${total}`);
     const bits = [
       'Total from reservation receipt — confirm customer price vs card/points charge before Save.',
       pointsUsed ? `Points used: ${pointsUsed}.` : '',
+      commissionable ? 'Confirmation says rate is commissionable.' : '',
+      customerNote,
+    ].filter(Boolean);
+    lines.push(`Notes: ${bits.join(' ')}`);
+  } else if (foreignTotal) {
+    // Do not invent USD from EUR/GBP — staff enter customer price after FX review.
+    const bits = [
+      `Total for Stay ${foreignTotal.amount} ${foreignTotal.currency} on confirmation — not posted as USD; confirm customer price / FX before Save.`,
+      commissionable ? 'Confirmation says rate is commissionable.' : '',
       customerNote,
     ].filter(Boolean);
     lines.push(`Notes: ${bits.join(' ')}`);

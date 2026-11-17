@@ -205,3 +205,86 @@ test('client Amex Sunny Isles Beach hotel PDF extracts and maps', async () => {
   assert.match(String(paste.fields.property || ''), /Acqualina/i);
   assert.equal(paste.fields.sale, '960.50');
 });
+
+test('Expedia TAAP Hilton Buffalo hotel maps guest, stay, itinerary, total', () => {
+  const raw = readFileSync(
+    new URL('../testdata/intake-samples/taap-hilton-buffalo-airport.txt', import.meta.url),
+    'utf8',
+  );
+  assert.equal(isReservationProse(raw), true);
+  const paste = parseQuickPaste(raw);
+  assert.equal(paste.fields.product, 'Hotel');
+  assert.match(String(paste.fields.property), /Hilton Garden Inn Buffalo Airport/i);
+  assert.match(String(paste.fields.route || paste.fields.location || ''), /Buffalo/i);
+  assert.equal(paste.fields.travel_start, '2026-01-30');
+  assert.equal(paste.fields.travel_end, '2026-01-31');
+  assert.equal(paste.fields.primary_reference, '73360715600284');
+  assert.equal(paste.fields.customer, 'Enmanuel Nunez');
+  assert.equal(paste.fields.traveler, 'Enmanuel Nunez');
+  assert.match(String(paste.fields.room_type || ''), /King/i);
+  assert.equal(paste.fields.sale, '171.75');
+  assert.equal(paste.fields.method, 'Expedia TAAP');
+  assert.equal(paste.fields.flight_numbers, undefined);
+});
+
+test('client Expedia TAAP Buffalo hotel PDF extracts and maps', async () => {
+  const buf = readFileSync(
+    new URL('../testdata/intake-samples/taap-hilton-buffalo-airport.pdf', import.meta.url),
+  );
+  const extracted = await extractBinaryIntakeText(
+    'application/pdf',
+    buf,
+    'taap-hilton-buffalo-airport.pdf',
+  );
+  assert.equal(extracted.extractable, true);
+  const paste = parseQuickPaste(extracted.text);
+  assert.equal(paste.fields.product, 'Hotel');
+  assert.equal(paste.fields.customer, 'Enmanuel Nunez');
+  assert.equal(paste.fields.primary_reference, '73360715600284');
+  assert.match(String(paste.fields.property || ''), /Hilton Garden Inn/i);
+  assert.equal(paste.fields.sale, '171.75');
+  assert.equal(paste.fields.method, 'Expedia TAAP');
+});
+
+test('Marriott St. Regis Rome maps stay without inventing EUR as USD', () => {
+  const raw = readFileSync(
+    new URL('../testdata/intake-samples/st-regis-rome-71983299.txt', import.meta.url),
+    'utf8',
+  );
+  assert.equal(isReservationProse(raw), true);
+  const paste = parseQuickPaste(raw);
+  assert.equal(paste.fields.product, 'Hotel');
+  assert.match(String(paste.fields.property), /St\.\s*Regis Rome/i);
+  assert.match(String(paste.fields.route || ''), /Rome/i);
+  assert.equal(paste.fields.travel_start, '2026-07-05');
+  assert.equal(paste.fields.travel_end, '2026-07-07');
+  assert.equal(paste.fields.primary_reference, '71983299');
+  assert.equal(paste.fields.customer, 'Martin Mittelman');
+  assert.match(String(paste.fields.traveler), /Martin Mittelman/);
+  assert.match(String(paste.fields.traveler), /Zachary Klein/);
+  assert.match(String(paste.fields.room_type || ''), /King Bed.*Superior/i);
+  assert.equal(paste.fields.method, 'Marriott');
+  // EUR total must not become USD sale.
+  assert.equal(paste.fields.sale, undefined);
+  assert.match(String(paste.fields.notes || ''), /2,?130\.00 EUR/i);
+  assert.match(String(paste.fields.notes || ''), /commissionable/i);
+  assert.equal(paste.fields.flight_numbers, undefined);
+});
+
+test('client Marriott St. Regis Rome PDF extracts and maps', async () => {
+  const buf = readFileSync(
+    new URL('../testdata/intake-samples/st-regis-rome-71983299.pdf', import.meta.url),
+  );
+  const extracted = await extractBinaryIntakeText(
+    'application/pdf',
+    buf,
+    'st-regis-rome-71983299.pdf',
+  );
+  assert.equal(extracted.extractable, true);
+  const paste = parseQuickPaste(extracted.text);
+  assert.equal(paste.fields.product, 'Hotel');
+  assert.equal(paste.fields.customer, 'Martin Mittelman');
+  assert.equal(paste.fields.primary_reference, '71983299');
+  assert.match(String(paste.fields.property || ''), /St\.\s*Regis/i);
+  assert.equal(paste.fields.sale, undefined);
+});
