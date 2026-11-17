@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     if (!actor && !bridge) throw new AccessError('Sign in required', 401);
 
     const body = await readJSON(request);
-    const built = prepareWhatsAppIntakeDraft({
+    const built = await prepareWhatsAppIntakeDraft({
       session_label: body.session_label ? String(body.session_label) : undefined,
       chat_name: body.chat_name ? String(body.chat_name) : undefined,
       from_number: body.from_number ? String(body.from_number) : undefined,

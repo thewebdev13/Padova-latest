@@ -10,7 +10,7 @@ import { draftKind } from '@/lib/draft-kind';
 import { transactionList, transactionIndicators } from '@/lib/transaction-list';
 import { dateLabel } from '@/lib/display-date';
 import { incompleteProfitReason, supplierCostIncomplete } from '@/lib/financial-display';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import CommandForm from '@/components/command-form';
 import HistoricalDraftDetails from '@/components/historical-draft-details';
 import HistoricalRecordEditor from '@/components/historical-record-editor';
@@ -21,7 +21,7 @@ import { travelsBetween, upcomingBookings, nextTravelDate } from '@/lib/travel-s
 import { assetUnit, formatQuantity, refundQuantityUnit } from '@/lib/asset-units';
 import { latestCreditRequests, sourceConfirmationLabel } from '@/lib/v1-entry';
 import AuthScreen from '@/components/auth-screen';
-import CommissionPayables from '@/components/commission-payables';
+import CommissionsPage from '@/components/commissions-page';
 import OperationalViews from '@/components/operational-views';
 import {
   clearBookingRecovery,
@@ -43,6 +43,15 @@ import {
   intakeChannelBadge,
   intakeChannelFilterKey,
 } from '@/lib/intake-channel-label';
+import {
+  applyIntakeFieldOverrides,
+  buildIntakeMappingPreview,
+  INTAKE_REQUIRED_ROWS,
+  INTAKE_SAMPLE_PASTE,
+  UNREAD_FILE_MESSAGE,
+  type IntakeFieldOverrides,
+  type IntakeMappingPreview,
+} from '@/lib/intake-preview';
 import {
   expectedCommissionDisplay,
   receivableCommissionLabel,
@@ -234,6 +243,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [intakeOpen, setIntakeOpen] = useState(false),
     [intakeText, setIntakeText] = useState(''),
     [intakeFile, setIntakeFile] = useState<File | null>(null),
+    [intakePreview, setIntakePreview] = useState<IntakeMappingPreview | null>(null),
+    [intakeOverrides, setIntakeOverrides] = useState<IntakeFieldOverrides>({}),
+    [intakeRemapRow, setIntakeRemapRow] = useState<string | null>(null),
     [intakeStatus, setIntakeStatus] = useState(''),
     [intakeBusy, setIntakeBusy] = useState(false),
     [intakeDrag, setIntakeDrag] = useState(false),
@@ -259,6 +271,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [draftPage, setDraftPage] = useState(1);
   const resetIntakeChannels = (clearText = false) => {
     setIntakeFile(null);
+    setIntakePreview(null);
+    setIntakeOverrides({});
+    setIntakeRemapRow(null);
     setIntakeDrag(false);
     setIntakeProgress(null);
     setIntakeStatus('');
@@ -287,22 +302,90 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [intakeOpen, intakeBusy]);
+  // Keep unread preview from binary extract until staff pastes real text.
+  useEffect(() => {
+    if (!intakeOpen) return;
+    if (intakeText.trim() && intakePreview?.unread) {
+      setIntakePreview(
+        buildIntakeMappingPreview(intakeText, {
+          parties: s?.parties ?? [],
+          overrides: intakeOverrides,
+        }),
+      );
+    }
+  }, [intakeOpen, intakeText, intakePreview?.unread, intakeOverrides, s?.parties]);
+  const liveIntakePreview = useMemo(() => {
+    if (!intakeOpen) return null;
+    if (intakePreview?.unread && !intakeText.trim()) return intakePreview;
+    return buildIntakeMappingPreview(intakeText, {
+      parties: s?.parties ?? [],
+      overrides: intakeOverrides,
+    });
+  }, [intakeOpen, intakeText, intakeOverrides, intakePreview, s?.parties]);
   const chooseIntakeFile = async (file: File | null) => {
     setIntakeFile(file);
+    setIntakeOverrides({});
     setIntakeStatus('');
-    if (!file || !/\.eml$/i.test(file.name)) return;
+    if (!file) {
+      setIntakePreview(null);
+      return;
+    }
+    const binary =
+      !/\.(txt|csv|md|eml|json)$/i.test(file.name) && !/^text\//i.test(file.type || '');
+    if (binary) {
+      setIntakeBusy(true);
+      try {
+        const data = new FormData();
+        data.append('preview_only', '1');
+        data.append('source', 'staff_upload');
+        data.append('file', file);
+        const response = await fetch('/api/booking-intake', { method: 'POST', body: data });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || UNREAD_FILE_MESSAGE);
+        if (result.unread) {
+          setIntakePreview(
+            buildIntakeMappingPreview('', {
+              unread: true,
+              unreadMessage: result.unread_message || UNREAD_FILE_MESSAGE,
+            }),
+          );
+        } else {
+          const extracted = String(result.text || '');
+          if (extracted.trim()) setIntakeText(extracted);
+          setIntakePreview(
+            result.mapping ||
+              buildIntakeMappingPreview(extracted, { parties: s?.parties ?? [] }),
+          );
+        }
+      } catch (err) {
+        setIntakeStatus(err instanceof Error ? err.message : UNREAD_FILE_MESSAGE);
+        setIntakePreview(
+          buildIntakeMappingPreview('', {
+            unread: true,
+            unreadMessage: UNREAD_FILE_MESSAGE,
+          }),
+        );
+      } finally {
+        setIntakeBusy(false);
+      }
+      return;
+    }
     try {
       const raw = await file.text();
-      const envelope = parseEmlEnvelope(raw);
-      const body = extractTextFromEml(raw);
-      setIntakeAsEmail(true);
-      setIntakeAsWhatsApp(false);
-      if (envelope.mailbox) setIntakeMailbox(envelope.mailbox);
-      if (envelope.from_address) setIntakeEmailFrom(envelope.from_address);
-      if (envelope.subject) setIntakeEmailSubject(envelope.subject);
-      if (body.trim()) setIntakeText((prev) => (prev.trim() ? prev : body));
+      if (/\.eml$/i.test(file.name) || file.type === 'message/rfc822') {
+        const envelope = parseEmlEnvelope(raw);
+        const body = extractTextFromEml(raw);
+        setIntakeAsEmail(true);
+        setIntakeAsWhatsApp(false);
+        if (envelope.mailbox) setIntakeMailbox(envelope.mailbox);
+        if (envelope.from_address) setIntakeEmailFrom(envelope.from_address);
+        if (envelope.subject) setIntakeEmailSubject(envelope.subject);
+        setIntakeText(body.trim() || raw);
+      } else {
+        setIntakeText(raw);
+      }
     } catch {
-      setIntakeStatus('Could not read that .eml file. Paste the email body instead.');
+      setIntakeStatus('Could not read that file. Paste the text instead.');
     }
   };
   const stateRevision = useRef('');
@@ -2331,7 +2414,13 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           )}
           {(canCommissions || canRefunds) && (
             <div className="detail-section">
-              <Card title="Commissions, referrals & refunds">
+              <Card
+                title="Commissions, referrals & refunds"
+                action={
+                  canAction('commission') &&
+                  newButton('Add commission', 'commission', { booking_id: b.id })
+                }
+              >
                 <div className="section-body">
                   <ul className="plain-list">
                     {s.commissions
@@ -4175,107 +4264,22 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     );
   } else if (page === 'Commissions') {
     view = (
-      <>
-        {heading(
-          'Commissions',
-          'Commissions receivable and commissions owed to other people or companies.',
-          can('manage_commissions') && newButton('Add commission', 'commission'),
-        )}
-        <Card title="Commission receivables" count={s.commissions.length}>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Booking</th>
-                  <th>Payer / collecting agency</th>
-                  <th className="money">Gross</th>
-                  <th className="money">Retained</th>
-                  <th className="money">Padova net</th>
-                  <th className="money">Received</th>
-                  <th className="money">Outstanding</th>
-                  <th>Expected date</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {pageSlice<R>(s.commissions, tablePage, 20).items.map((c: R) => (
-                  <tr key={c.id}>
-                    <td>
-                      <button
-                        className="booking-code"
-                        onClick={() => openRecord('booking', c.booking_id)}
-                      >
-                        {c.code}
-                      </button>
-                    </td>
-                    <td>
-                      {c.payer}
-                      <small>{c.collector ? `Paid through ${c.collector}` : 'Paid directly'}</small>
-                    </td>
-                    <td className="money">{money(c.gross)}</td>
-                    <td className="money">{money(c.retained)}</td>
-                    <td className="money">{money(Number(c.gross) - Number(c.retained))}</td>
-                    <td className="money">{money(c.received)}</td>
-                    <td className="money">
-                      {money(Number(c.gross) - Number(c.retained) - Number(c.received))}
-                    </td>
-                    <td>{dateLabel(c.due_on)}</td>
-                    <td>
-                      {can('manage_commissions') && can('edit_payments') && (
-                        <button
-                          className="btn small"
-                          onClick={() =>
-                            action('payment', {
-                              direction: 'commission',
-                              party_id: c.collector_id ?? c.payer_id,
-                              commission_id: c.id,
-                            })
-                          }
-                        >
-                          Record receipt
-                        </button>
-                      )}
-                      {can('manage_commissions') && (
-                        <button
-                          className="btn small"
-                          onClick={() => action('commission_receipt', { commission_id: c.id })}
-                        >
-                          Allocate receipt
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(() => {
-            const commissionPager = pageSlice<R>(s.commissions, tablePage, 20);
-            return (
-              <ListPager
-                page={commissionPager.page}
-                totalPages={commissionPager.totalPages}
-                total={commissionPager.total}
-                from={commissionPager.from}
-                to={commissionPager.to}
-                onPage={setTablePage}
-                label="commissions"
-              />
-            );
-          })()}
-        </Card>
-        <div style={{ marginTop: 22 }}>
-          <CommissionPayables
-            rows={s.referrals}
-            payments={s.referralPayments ?? []}
-            history={s.referralTerms ?? []}
-            adjustments={s.referralPaymentAdjustments ?? []}
-            canManage={can('manage_commissions')}
-            enabled={s.payableTermsEnabled}
-            action={action}
-          />
-        </div>
-      </>
+      <CommissionsPage
+        commissions={s.commissions}
+        referrals={s.referrals}
+        referralPayments={s.referralPayments ?? []}
+        referralTerms={s.referralTerms ?? []}
+        referralPaymentAdjustments={s.referralPaymentAdjustments ?? []}
+        canManage={can('manage_commissions')}
+        canEditPayments={can('edit_payments')}
+        payableTermsEnabled={s.payableTermsEnabled}
+        today={s.today}
+        action={action}
+        openBooking={(id) => openRecord('booking', id)}
+        newCommissionButton={
+          can('manage_commissions') && newButton('Add commission', 'commission')
+        }
+      />
     );
   } else if (page === 'Refunds') {
     view = (
@@ -5223,18 +5227,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           onClick={() => closeIntake()}
         >
           <div
-            className="modal intake-modal"
+            className="modal intake-modal intake-modal-client"
             role="dialog"
             aria-modal="true"
             aria-labelledby="intake-draft-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-head">
+            <div className="modal-head intake-modal-head">
               <div>
                 <h2 id="intake-draft-title">Intake draft</h2>
                 <p>
-                  Paste reservation details or drop a file. Draft only — review before Save Booking.
-                  Nothing posts money from here.
+                  Paste reservation details or drop a file. We fill in what we can – you review
+                  before saving.
                 </p>
               </div>
               <button
@@ -5248,39 +5252,240 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </button>
             </div>
             <div className="modal-body intake-modal-body">
-              {intakeChannelStatus && (
-                <div className="intake-hint" role="status">
-                  <strong>Channel status</strong>
-                  <span>{intakeChannelStatus.email}</span>
-                  <span>{intakeChannelStatus.whatsapp}</span>
-                </div>
-              )}
-              <div className="intake-hint" role="note">
-                <strong>WhatsApp</strong>
-                <span>
-                  Paste chat as Field:Value here, or on a PC run the read-only bridge watcher
-                  (`npm run intake:whatsapp-bridge`). Incoming only — never sends. Drafts still need
-                  staff approve.
-                </span>
-              </div>
-              <section className="intake-panel">
-                <div className="intake-panel-head">
-                  <FileText size={16} aria-hidden />
-                  <div>
-                    <h3>Paste reservation text</h3>
-                    <p>Field: Value lines work best. Unknown stays Unknown.</p>
+              <section className="intake-preview intake-preview-client" aria-live="polite">
+                <div className="intake-preview-grid">
+                  <div className="intake-preview-left">
+                    <div
+                      className={`intake-paste-box${intakeDrag ? ' is-dragging' : ''}`}
+                      onDragEnter={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!intakeBusy) setIntakeDrag(true);
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!intakeBusy) setIntakeDrag(true);
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setIntakeDrag(false);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setIntakeDrag(false);
+                        if (intakeBusy) return;
+                        const file = e.dataTransfer.files?.[0] ?? null;
+                        if (file) void chooseIntakeFile(file);
+                      }}
+                    >
+                      <div className="intake-panel-head-row">
+                        <h3>What you pasted</h3>
+                      </div>
+                      <textarea
+                        id="intake-text"
+                        className="intake-preview-raw intake-preview-editable"
+                        rows={12}
+                        value={intakeText}
+                        disabled={intakeBusy}
+                        aria-label="What you pasted"
+                        placeholder="Paste Field: Value lines here…"
+                        onChange={(e) => {
+                          setIntakeText(e.target.value);
+                          setIntakeOverrides({});
+                          setIntakeRemapRow(null);
+                        }}
+                      />
+                      <div className="intake-paste-actions">
+                        <label className="intake-file-link" htmlFor="intake-file">
+                          <Upload size={14} aria-hidden />
+                          Drop a file or browse
+                          <input
+                            id="intake-file"
+                            type="file"
+                            className="intake-file-input"
+                            disabled={intakeBusy}
+                            accept=".txt,.csv,.md,.eml,.json,.pdf,.png,.jpg,.jpeg,text/plain,text/csv,message/rfc822,application/pdf,image/png,image/jpeg"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ?? null;
+                              void chooseIntakeFile(file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="intake-sample-btn"
+                          disabled={intakeBusy}
+                          onClick={() => {
+                            setIntakeText(INTAKE_SAMPLE_PASTE);
+                            setIntakeOverrides({});
+                            setIntakeRemapRow(null);
+                            setIntakeFile(null);
+                            setIntakePreview(null);
+                          }}
+                        >
+                          Use sample
+                        </button>
+                        {intakeFile && (
+                          <span className="intake-file-chip">
+                            {intakeFile.name}
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              disabled={intakeBusy}
+                              onClick={() => {
+                                setIntakeFile(null);
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="intake-preview-right">
+                    <div className="intake-preview-right-head">
+                      <h3>What we’ll fill in</h3>
+                      {liveIntakePreview &&
+                        !liveIntakePreview.unread &&
+                        Boolean(intakeText.trim()) && (
+                          <span className="intake-preview-count">
+                            {liveIntakePreview.found} found
+                            {liveIntakePreview.missing
+                              ? ` · ${liveIntakePreview.missing} missing`
+                              : ''}
+                          </span>
+                        )}
+                    </div>
+                    <div className="intake-preview-scroll">
+                      {liveIntakePreview?.unread ? (
+                        <p className="intake-preview-unread" role="alert">
+                          {liveIntakePreview.unreadMessage || UNREAD_FILE_MESSAGE}
+                        </p>
+                      ) : !intakeText.trim() ? (
+                        <div className="intake-preview-empty-state">
+                          <p>Mapping shows here after you paste or drop a file.</p>
+                        </div>
+                      ) : liveIntakePreview ? (
+                        <ul className="intake-preview-rows">
+                          {liveIntakePreview.rows.map((row) => {
+                            const selected =
+                              row.id in intakeOverrides
+                                ? intakeOverrides[row.id]
+                                : undefined;
+                            const remapping = intakeRemapRow === row.id;
+                            const remapped = selected !== undefined;
+                            const required = INTAKE_REQUIRED_ROWS.has(row.id);
+                            const needsAttention = row.status === 'missing' && required;
+                            return (
+                              <li
+                                key={row.id}
+                                className={`${row.status}${remapped ? ' is-remapped' : ''}${remapping ? ' is-open' : ''}${needsAttention ? ' is-required-missing' : ''}`}
+                              >
+                                <div className="intake-preview-main">
+                                  <div className="intake-preview-meta">
+                                    <strong>
+                                      {row.fieldLabel}
+                                      {required ? (
+                                        <span className="intake-required-tag">Required</span>
+                                      ) : null}
+                                    </strong>
+                                    {(row.sourceLabel || row.sourceHint) &&
+                                    row.status === 'found' ? (
+                                      <small>
+                                        {row.sourceLabel ? `from “${row.sourceLabel}”` : ''}
+                                        {row.sourceLabel && row.sourceHint ? ' · ' : ''}
+                                        {row.sourceHint || ''}
+                                      </small>
+                                    ) : null}
+                                  </div>
+                                  <div className="intake-preview-result">
+                                    <span className="intake-preview-value">{row.value}</span>
+                                    <span
+                                      className="intake-preview-mark"
+                                      aria-label={
+                                        row.status === 'found' ? 'Found' : 'Missing'
+                                      }
+                                    >
+                                      {row.status === 'found' ? '✓' : '!'}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="intake-remap-toggle"
+                                      disabled={
+                                        intakeBusy || !liveIntakePreview.lines.length
+                                      }
+                                      aria-expanded={remapping}
+                                      onClick={() =>
+                                        setIntakeRemapRow(remapping ? null : row.id)
+                                      }
+                                    >
+                                      {remapped ? 'Mapped' : 'Map'}
+                                    </button>
+                                  </div>
+                                </div>
+                                {remapping && (
+                                  <label className="intake-remap">
+                                    <span>Use paste line</span>
+                                    <select
+                                      autoFocus
+                                      value={
+                                        selected === undefined
+                                          ? '__auto__'
+                                          : selected || '__clear__'
+                                      }
+                                      disabled={intakeBusy}
+                                      aria-label={`Map ${row.fieldLabel}`}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setIntakeOverrides((prev) => {
+                                          const next = { ...prev };
+                                          if (v === '__auto__') delete next[row.id];
+                                          else if (v === '__clear__') next[row.id] = '';
+                                          else next[row.id] = v;
+                                          return next;
+                                        });
+                                        setIntakeRemapRow(null);
+                                      }}
+                                    >
+                                      <option value="__auto__">
+                                        {row.sourceLabel
+                                          ? `Auto · ${row.sourceLabel}`
+                                          : 'Auto-detect'}
+                                      </option>
+                                      <option value="__clear__">Clear · add after</option>
+                                      {liveIntakePreview.lines.map((line) => (
+                                        <option key={line.id} value={line.id}>
+                                          {line.label}: {line.value.slice(0, 56)}
+                                          {line.value.length > 56 ? '…' : ''}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-                <textarea
-                  id="intake-text"
-                  className="intake-textarea"
-                  rows={7}
-                  value={intakeText}
-                  disabled={intakeBusy}
-                  aria-label="Reservation text"
-                  placeholder={`Product: Hotel\nRoute: Miami\nCheck-in: 2027-03-01\nPNR: TEST01\nSummary: Local intake test`}
-                  onChange={(e) => setIntakeText(e.target.value)}
-                />
+              </section>
+
+              <details className="intake-advanced">
+                <summary>Email / WhatsApp options</summary>
+                {intakeChannelStatus && (
+                  <div className="intake-hint" role="status">
+                    <strong>Channel status</strong>
+                    <span>{intakeChannelStatus.email}</span>
+                    <span>{intakeChannelStatus.whatsapp}</span>
+                  </div>
+                )}
                 <label className="intake-email-toggle">
                   <input
                     type="checkbox"
@@ -5330,10 +5535,6 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         onChange={(e) => setIntakeEmailSubject(e.target.value)}
                       />
                     </label>
-                    <p className="intake-hint">
-                      Automatic mailbox poll still waits on Owner Workspace access. This path is
-                      staff forward → draft only.
-                    </p>
                   </div>
                 )}
                 <label className="intake-email-toggle">
@@ -5369,109 +5570,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         onChange={(e) => setIntakeWaFrom(e.target.value)}
                       />
                     </label>
-                    <p className="intake-hint">
-                      Paste the reservation facts as Field: Value. Draft only — staff must approve
-                      before Save Booking.
-                    </p>
                   </div>
                 )}
-              </section>
-
-              <div className="intake-or" aria-hidden>
-                <span>or</span>
-              </div>
-
-              <section className="intake-panel">
-                <div className="intake-panel-head">
-                  <Upload size={16} aria-hidden />
-                  <div>
-                    <h3>Upload a file</h3>
-                    <p>
-                      Drag and drop, or choose a file (TXT/CSV/EML). Text/CSV supports up to{' '}
-                      {INTAKE_MAX_ENTRIES.toLocaleString()} bookings in batches of{' '}
-                      {INTAKE_BATCH_SIZE}.
-                    </p>
-                  </div>
-                </div>
-                <label
-                  className={`intake-dropzone${intakeDrag ? ' is-dragging' : ''}${intakeFile ? ' has-file' : ''}`}
-                  htmlFor="intake-file"
-                  onDragEnter={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!intakeBusy) setIntakeDrag(true);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!intakeBusy) setIntakeDrag(true);
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setIntakeDrag(false);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setIntakeDrag(false);
-                    if (intakeBusy) return;
-                    const file = e.dataTransfer.files?.[0] ?? null;
-                    if (!file) return;
-                    void chooseIntakeFile(file);
-                  }}
-                >
-                  <input
-                    id="intake-file"
-                    type="file"
-                    className="intake-file-input"
-                    disabled={intakeBusy}
-                    accept=".txt,.csv,.md,.eml,.json,.pdf,.png,.jpg,.jpeg,text/plain,text/csv,message/rfc822,application/pdf,image/png,image/jpeg"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] ?? null;
-                      void chooseIntakeFile(file);
-                      e.target.value = '';
-                    }}
-                  />
-                  {intakeFile ? (
-                    <div className="intake-file-chosen">
-                      <FileText size={22} aria-hidden />
-                      <div>
-                        <strong>{intakeFile.name}</strong>
-                        <span>
-                          {intakeFile.size < 1024
-                            ? `${intakeFile.size} B`
-                            : `${Math.max(1, Math.round(intakeFile.size / 1024))} KB`}
-                          · ready to attach
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn small"
-                        disabled={intakeBusy}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setIntakeFile(null);
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="intake-drop-prompt">
-                      <span className="intake-drop-icon" aria-hidden>
-                        <Upload size={22} />
-                      </span>
-                      <strong>Drop file here</strong>
-                      <span>
-                        or click to browse · TXT, CSV, EML preferred (include Customer column) ·
-                        PDF/image as provenance
-                      </span>
-                    </div>
-                  )}
-                </label>
-              </section>
+              </details>
 
               {intakeProgress && (
                 <div className="intake-progress" role="status" aria-live="polite">
@@ -5517,57 +5618,87 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </p>
               )}
             </div>
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="btn"
-                disabled={intakeBusy}
-                onClick={() => closeIntake()}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={intakeBusy || (!intakeText.trim() && !intakeFile)}
-                onClick={() => {
-                  void (async () => {
-                    setIntakeBusy(true);
-                    setIntakeStatus('');
-                    setIntakeProgress(null);
-                    setError('');
-                    try {
+            <div className="modal-footer intake-modal-footer">
+              <p className="intake-preview-summary">
+                {liveIntakePreview?.unread
+                  ? 'Could not read — paste text instead'
+                  : !intakeText.trim()
+                    ? 'Paste text or Use sample to map fields'
+                    : liveIntakePreview
+                      ? `${liveIntakePreview.found} found · ${liveIntakePreview.missing} to add yourself`
+                      : 'Paste or drop a file to preview'}
+              </p>
+              <div className="intake-footer-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={intakeBusy}
+                  onClick={() => closeIntake()}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={
+                    intakeBusy ||
+                    (!intakeText.trim() && !intakeFile) ||
+                    Boolean(liveIntakePreview?.unread) ||
+                    !liveIntakePreview ||
+                    liveIntakePreview.found === 0
+                  }
+                  onClick={() => {
+                    void (async () => {
+                      setIntakeStatus('');
+                      setError('');
+                      try {
+                        const emlFile = Boolean(
+                          intakeFile &&
+                            (/\.eml$/i.test(intakeFile.name) ||
+                              intakeFile.type === 'message/rfc822'),
+                        );
+                        const mailbox = String(intakeMailbox || '').trim() || undefined;
+                        const asEmail = Boolean(intakeAsEmail || (emlFile && mailbox));
+                        const asWhatsApp = Boolean(intakeAsWhatsApp && !asEmail);
+                        const fromAddress = asWhatsApp
+                          ? intakeWaFrom.trim() || undefined
+                          : intakeEmailFrom.trim() || undefined;
+                        const subject = asWhatsApp
+                          ? intakeWaChat.trim() || undefined
+                          : intakeEmailSubject.trim() || undefined;
+
+                        const binary =
+                          !asEmail &&
+                          !asWhatsApp &&
+                          intakeFile &&
+                          !/\.(txt|csv|md|eml|json)$/i.test(intakeFile.name) &&
+                          !/^text\//i.test(intakeFile.type || '');
+
+                        if (!liveIntakePreview || liveIntakePreview.unread)
+                          throw new Error('Review the mapping before creating a draft');
+                        if (!intakeText.trim() && !intakeFile)
+                          throw new Error('Paste reservation text or drop a file first');
+
+                        const mappedText = applyIntakeFieldOverrides(
+                          intakeText,
+                          liveIntakePreview.rows,
+                          intakeOverrides,
+                          liveIntakePreview.lines,
+                        );
+
+                        setIntakeBusy(true);
+                      setIntakeProgress(null);
                       let created = 0;
                       let lastTitle = '';
-                      const emlFile = Boolean(
-                        intakeFile &&
-                          (/\.eml$/i.test(intakeFile.name) ||
-                            intakeFile.type === 'message/rfc822'),
-                      );
-                      const mailbox = String(intakeMailbox || '').trim() || undefined;
-                      const asEmail = Boolean(intakeAsEmail || (emlFile && mailbox));
-                      const asWhatsApp = Boolean(intakeAsWhatsApp && !asEmail);
-                      const fromAddress = asWhatsApp
-                        ? intakeWaFrom.trim() || undefined
-                        : intakeEmailFrom.trim() || undefined;
-                      const subject = asWhatsApp
-                        ? intakeWaChat.trim() || undefined
-                        : intakeEmailSubject.trim() || undefined;
-
-                      const binary =
-                        !asEmail &&
-                        !asWhatsApp &&
-                        intakeFile &&
-                        !/\.(txt|csv|md|eml|json)$/i.test(intakeFile.name) &&
-                        !/^text\//i.test(intakeFile.type || '');
 
                       if (binary && intakeFile) {
+                        if (!mappedText.trim()) throw new Error(UNREAD_FILE_MESSAGE);
                         setIntakeProgress({ processed: 0, total: 1, remaining: 1 });
                         const data = new FormData();
                         data.append('command_id', crypto.randomUUID());
                         data.append('file', intakeFile);
                         data.append('source', 'staff_upload');
-                        if (intakeText.trim()) data.append('text', intakeText);
+                        data.append('text', mappedText);
                         if (fromAddress) data.append('from_address', fromAddress);
                         if (subject) data.append('subject', subject);
                         if (mailbox) data.append('mailbox', mailbox);
@@ -5581,15 +5712,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         lastTitle = String(result.title || '');
                         setIntakeProgress({ processed: created, total: created, remaining: 0 });
                       } else {
-                        let raw = intakeText;
-                        if (intakeFile && !asWhatsApp) {
+                        let raw = mappedText;
+                        if (intakeFile && !asWhatsApp && !mappedText.trim()) {
                           const fileText = await intakeFile.text();
                           const stripped =
                             looksLikeEml(fileText, intakeFile.name) ||
                             /\.eml$/i.test(intakeFile.name)
                               ? extractTextFromEml(fileText)
                               : fileText;
-                          raw = `${raw ? `${raw}\n\n` : ''}${stripped}`;
+                          raw = stripped;
                         }
                         if (asEmail && !raw.trim())
                           throw new Error(
@@ -5680,6 +5811,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     : 'Saving draft…'
                   : 'Create intake draft'}
               </button>
+              </div>
             </div>
           </div>
         </div>
@@ -5704,10 +5836,20 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             const r = await command(modal.kind, data, modal.key);
             await refresh();
             setModal(null);
-            setToast('Saved. Linked balances and history updated.');
-            if (modal.kind === 'booking') await openRecord('booking', r.id);
-            else if (modal.kind === 'party') await openRecord('person', r.id);
-            else if (selected) await openRecord(selected.type, selected.id);
+            if (modal.kind === 'booking') {
+              await openRecord('booking', r.id);
+              if (canAction('commission')) {
+                setToast(
+                  'Booking saved. Use Add commission for who owes Padova (IATA / secondary).',
+                );
+              } else {
+                setToast('Saved. Linked balances and history updated.');
+              }
+            } else {
+              setToast('Saved. Linked balances and history updated.');
+              if (modal.kind === 'party') await openRecord('person', r.id);
+              else if (selected) await openRecord(selected.type, selected.id);
+            }
           }}
         />
       )}

@@ -19,8 +19,8 @@ import {
 } from '../src/lib/intake-channel-label';
 import { prepareWhatsAppIntakeDraft, whatsappIntakeStatus } from '../src/lib/whatsapp-intake';
 
-test('plain text Field: Value builds a booking-shaped draft without posting signals', () => {
-  const built = buildIntakeDraft({
+test('plain text Field: Value builds a booking-shaped draft without posting signals', async () => {
+  const built = await buildIntakeDraft({
     source: 'staff_paste',
     text: `Customer: Sample Co
 Product: Hotel
@@ -49,7 +49,7 @@ Notes: Intake unit test`,
   assert.match(built.title, /Sample Co/);
 });
 
-test('multi-entry --- file creates one draft per booking block', () => {
+test('multi-entry --- file creates one draft per booking block', async () => {
   const text = `Customer: Alpha Corp
 Product: Hotel
 Route: Miami
@@ -66,7 +66,7 @@ Departure: 2027-04-01
 PNR: B2
 Summary: Second`;
   assert.equal(splitIntakeEntries(text).length, 2);
-  const drafts = buildIntakeDrafts({ source: 'staff_upload', text, filename: 'multi.txt' });
+  const drafts = await buildIntakeDrafts({ source: 'staff_upload', text, filename: 'multi.txt' });
   assert.equal(drafts.length, 2);
   assert.equal((drafts[0].entry as any).intake_customer_label, 'Alpha Corp');
   assert.equal((drafts[0].entry as any).product, 'Hotel');
@@ -74,11 +74,11 @@ Summary: Second`;
   assert.equal((drafts[1].entry as any).product, 'Flight');
 });
 
-test('CSV rows become separate intake drafts', () => {
+test('CSV rows become separate intake drafts', async () => {
   const csv = `Product,Route,Departure,PNR,Customer,Customer Price,Summary
 Hotel,Miami,2027-03-01,H1,Alpha,450.00,Row one
 Flight,JFK-ATL,2027-09-01,F2,Beta,612.00,Row two`;
-  const drafts = buildIntakeDrafts({
+  const drafts = await buildIntakeDrafts({
     source: 'staff_upload',
     text: csv,
     filename: 'two.csv',
@@ -91,16 +91,16 @@ Flight,JFK-ATL,2027-09-01,F2,Beta,612.00,Row two`;
   assert.equal((drafts[0].entry as any).sale, '450.00');
 });
 
-test('Customer Name alias fills intake customer label', () => {
-  const built = buildIntakeDraft({
+test('Customer Name alias fills intake customer label', async () => {
+  const built = await buildIntakeDraft({
     source: 'staff_paste',
     text: `Customer Name: Jordan Guest\nProduct: Hotel\nRoute: Miami\nPNR: JG01`,
   });
   assert.equal((built.entry as any).intake_customer_label, 'Jordan Guest');
 });
 
-test('confirmation location and check-in aliases map without inventing money', () => {
-  const built = buildIntakeDraft({
+test('confirmation location and check-in aliases map without inventing money', async () => {
+  const built = await buildIntakeDraft({
     source: 'staff_paste',
     text: `Customer: Alias Guest
 Product: Hotel
@@ -119,8 +119,8 @@ Summary: Alias hotel stay`,
   assert.equal(entry.sale, undefined);
 });
 
-test('referring organization aliases are recognized without inventing money or org id', () => {
-  const built = buildIntakeDraft({
+test('referring organization aliases are recognized without inventing money or org id', async () => {
+  const built = await buildIntakeDraft({
     source: 'staff_paste',
     text: `Customer: Referral Guest
 Product: Flight
@@ -139,11 +139,11 @@ Summary: Referral sample`,
   assert.equal(entry.sale, '400.00');
 });
 
-test('quoted CSV commas stay inside field values', () => {
+test('quoted CSV commas stay inside field values', async () => {
   const csv = `Product,Customer,Route,PNR,Customer Price,Summary
 Hotel,"Guest, Jr.",Miami,Q1,"450.00","Stay, ocean view"
 Flight,Beta,"JFK, ATL",F2,612.00,Row two`;
-  const drafts = buildIntakeDrafts({
+  const drafts = await buildIntakeDrafts({
     source: 'staff_upload',
     text: csv,
     filename: 'quoted.csv',
@@ -155,39 +155,64 @@ Flight,Beta,"JFK, ATL",F2,612.00,Row two`;
   assert.equal((drafts[1].entry as any).route, 'JFK, ATL');
 });
 
-test('PDF bytes create provenance draft without inventing amounts', () => {
+test('unread PDF bytes do not create a silent empty draft', async () => {
   const bytes = Buffer.from('%PDF-1.4 fake content');
-  const built = buildIntakeDraft({
-    source: 'staff_upload',
-    filename: 'conf.pdf',
-    mimeType: 'application/pdf',
+  await assert.rejects(
+    () =>
+      buildIntakeDraft({
+        source: 'staff_upload',
+        filename: 'conf.pdf',
+        mimeType: 'application/pdf',
+        bytes,
+      }),
+    /couldn't read this file/i,
+  );
+  const extracted = await extractIntakeText(
+    'application/pdf',
     bytes,
-  });
-  const entry = built.entry as Record<string, any>;
-  assert.equal(entry.product, '');
-  assert.equal(entry.intake_provenance.text_extractable, false);
-  assert.equal(entry.intake_provenance.filename, 'conf.pdf');
-  assert.equal(entry.intake_provenance.sha256?.length, 64);
-  assert.ok(String(entry.intake_provenance.extract_note).includes('PDF'));
-  assert.ok(!('sale' in entry) || entry.sale === undefined || entry.sale === '');
+    'conf.pdf',
+  );
+  assert.equal(extracted.extractable, false);
+  assert.match(String(extracted.note), /couldn't read this file/i);
 });
 
-test('extractIntakeText accepts utf8 text and rejects null bytes', () => {
-  const ok = extractIntakeText('text/plain', Buffer.from('Product: Flight\n'), 'a.txt');
+test('booking reference number and Price $ map; Guest is traveler not customer', async () => {
+  const built = await buildIntakeDraft({
+    source: 'staff_paste',
+    text: `Customer: QA Alex Morgan
+Guest: Minindy Quirona
+Product: Hotel
+Location: Miami
+Booking reference number: 123456003
+Price: $200`,
+  });
+  const entry = built.entry as Record<string, any>;
+  assert.equal(entry.product, 'Hotel');
+  assert.equal(entry.location, 'Miami');
+  assert.equal(entry.primary_reference, '123456003');
+  assert.equal(entry.sale, '200');
+  assert.equal(entry.intake_customer_label, 'QA Alex Morgan');
+  assert.equal(entry.intake_traveler_label, 'Minindy Quirona');
+  assert.equal(entry.intake_party_hints.traveler, 'Minindy Quirona');
+  assert.equal(entry.intake_party_hints.customer, 'QA Alex Morgan');
+});
+
+test('extractIntakeText accepts utf8 text and rejects null bytes', async () => {
+  const ok = await extractIntakeText('text/plain', Buffer.from('Product: Flight\n'), 'a.txt');
   assert.equal(ok.extractable, true);
   assert.match(ok.text, /Product: Flight/);
-  const bad = extractIntakeText('text/plain', Buffer.from('a\0b'), 'x.txt');
+  const bad = await extractIntakeText('text/plain', Buffer.from('a\0b'), 'x.txt');
   assert.equal(bad.extractable, false);
 });
 
-test('email intake mailboxes are limited to the two Owner-approved addresses', () => {
+test('email intake mailboxes are limited to the two Owner-approved addresses', async () => {
   assert.deepEqual([...INTAKE_EMAIL_MAILBOXES], [
     'shmuel@padovatravel.com',
     'mindy@padovatravel.com',
   ]);
   assert.equal(assertAllowedIntakeMailbox('Mindy@padovatravel.com'), 'mindy@padovatravel.com');
   assert.throws(() => assertAllowedIntakeMailbox('other@padovatravel.com'), /limited/);
-  assert.throws(
+  await assert.rejects(
     () =>
       prepareEmailIntakeDraft({
         mailbox: 'other@example.com',
@@ -195,7 +220,7 @@ test('email intake mailboxes are limited to the two Owner-approved addresses', (
       }),
     /limited/,
   );
-  const emailDraft = prepareEmailIntakeDraft({
+  const emailDraft = await prepareEmailIntakeDraft({
     mailbox: 'Shmuel@padovatravel.com',
     from_address: 'client@example.com',
     subject: 'Conf ABC',
@@ -208,7 +233,7 @@ test('email intake mailboxes are limited to the two Owner-approved addresses', (
   assert.equal(emailIntakeStatus().polling_configured, false);
 });
 
-test('eml extract prefers text/plain and keeps Field: Value lines', () => {
+test('eml extract prefers text/plain and keeps Field: Value lines', async () => {
   const eml = `From: desk@example.com
 To: mindy@padovatravel.com
 Subject: Conf
@@ -235,9 +260,9 @@ Content-Type: text/html; charset=utf-8
   assert.equal(envelope.from_address, 'desk@example.com');
   assert.equal(envelope.subject, 'Conf');
   assert.equal(envelope.mailbox, 'mindy@padovatravel.com');
-  const extracted = extractIntakeText('message/rfc822', Buffer.from(eml), 'conf.eml');
+  const extracted = await extractIntakeText('message/rfc822', Buffer.from(eml), 'conf.eml');
   assert.equal(extracted.extractable, true);
-  const built = buildIntakeDraft({
+  const built = await buildIntakeDraft({
     source: 'email',
     mailbox: 'mindy@padovatravel.com',
     text: extracted.text,
@@ -265,7 +290,7 @@ PNR: ENV01
   assert.equal(envelope.subject, 'Fwd: Hold for review');
 });
 
-test('batch text .eml entry strips headers before Field: Value parse', () => {
+test('batch text .eml entry strips headers before Field: Value parse', async () => {
   const eml = `From: a@example.com
 To: mindy@padovatravel.com
 MIME-Version: 1.0
@@ -276,7 +301,7 @@ Product: Flight
 Route: JFK-MIA
 PNR: BEML1
 `;
-  const drafts = buildIntakeDrafts({
+  const drafts = await buildIntakeDrafts({
     source: 'staff_upload',
     text: eml,
     filename: 'batch.eml',
@@ -289,7 +314,7 @@ PNR: BEML1
   assert.equal((drafts[0].entry as any).intake_provenance.mailbox, 'mindy@padovatravel.com');
 });
 
-test('eml bytes-only upload fills envelope without UI prefill', () => {
+test('eml bytes-only upload fills envelope without UI prefill', async () => {
   const eml = `From: reservations@example-hotel.com
 To: mindy@padovatravel.com
 Subject: Hotel confirmation EML01
@@ -302,7 +327,7 @@ Route: Miami Beach
 PNR: EML01
 Customer Price: 380.00
 `;
-  const drafts = buildIntakeDrafts({
+  const drafts = await buildIntakeDrafts({
     source: 'staff_upload',
     text: '',
     filename: '08-reservation.eml',
@@ -335,8 +360,8 @@ test('intake channel labels distinguish email WhatsApp and staff', () => {
   );
 });
 
-test('WhatsApp intake is read-only draft provenance and never claims send', () => {
-  const built = prepareWhatsAppIntakeDraft({
+test('WhatsApp intake is read-only draft provenance and never claims send', async () => {
+  const built = await prepareWhatsAppIntakeDraft({
     chat_name: 'Client chat',
     from_number: '+10000000000',
     text: 'Product: Car\nRoute: MIA airport\nNotes: WA paste test',

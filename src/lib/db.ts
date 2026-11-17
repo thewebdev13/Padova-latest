@@ -204,6 +204,7 @@ export async function migrate(db: Database) {
       '021_partnerships',
       '022_partnership_refresh',
       '023_hotel_directory',
+      '024_commission_iata_partner',
     ]) {
       if (
         !(await tx.query('SELECT version FROM schema_migrations WHERE version=$1', [version])).rows

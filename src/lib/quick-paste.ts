@@ -3,16 +3,25 @@ import { eligibleParty, type DirectoryRole } from './directory-eligibility';
 import { redactOperationalText } from './operational-redaction';
 import type { PaymentStatus } from './booking-entry-state';
 type R = Record<string, any>;
+
+/** Flexible Field: Value labels (Mindy Site Feedback 3). Longer keys win via sort. */
 const labels: Record<string, string> = {
   customer: 'customer',
   'customer name': 'customer',
   client: 'customer',
   'client name': 'customer',
-  guest: 'customer',
-  'guest name': 'customer',
+  'booked by': 'customer',
+  'bill to': 'customer',
   traveler: 'traveler',
   'traveler name': 'traveler',
   passenger: 'traveler',
+  passengers: 'traveler',
+  'passenger name': 'traveler',
+  pax: 'traveler',
+  guest: 'traveler',
+  guests: 'traveler',
+  'guest name': 'traveler',
+  driver: 'traveler',
   product: 'product',
   'trip type': 'trip_type',
   airline: 'airline',
@@ -21,15 +30,36 @@ const labels: Record<string, string> = {
   route: 'route',
   location: 'route',
   city: 'route',
+  destination: 'route',
+  'from - to': 'route',
+  'from – to': 'route',
+  'from to': 'route',
+  'hotel address': 'route',
   departure: 'travel_start',
   return: 'travel_end',
   'check-in': 'travel_start',
   'check in': 'travel_start',
   'check-out': 'travel_end',
   'check out': 'travel_end',
+  'travel date': 'travel_start',
+  // Client date aliases (location forms keep longer “pickup location” / “drop-off location”).
+  'pick-up': 'travel_start',
+  'pick up': 'travel_start',
+  'pickup date': 'travel_start',
+  'pick-up date': 'travel_start',
+  'drop-off': 'travel_end',
+  'drop off': 'travel_end',
+  'dropoff date': 'travel_end',
+  'drop-off date': 'travel_end',
   pnr: 'primary_reference',
   confirmation: 'primary_reference',
   'confirmation number': 'primary_reference',
+  'confirmation #': 'primary_reference',
+  'conf #': 'primary_reference',
+  'booking reference': 'primary_reference',
+  'booking reference number': 'primary_reference',
+  'booking ref': 'primary_reference',
+  'reservation number': 'primary_reference',
   'record locator': 'primary_reference',
   'booked through': 'method',
   'referring organization': 'referring_organization',
@@ -46,8 +76,13 @@ const labels: Record<string, string> = {
   taxes: 'tax_amount',
   'taxes paid by': 'tax_bearer',
   card: 'account',
-  // Longer “customer price” must win over “customer” via sort-by-length below.
+  // Longer “customer price” / “seller cost” win over short “price” / “cost”.
   'customer price': 'sale',
+  price: 'sale',
+  total: 'sale',
+  amount: 'sale',
+  rate: 'sale',
+  cost: 'sale',
   'customer paid': 'customer_paid',
   'amount received': 'received',
   'customer received': 'received',
@@ -58,9 +93,8 @@ const labels: Record<string, string> = {
   'room type': 'room_type',
   pickup: 'pickup_location',
   'pickup location': 'pickup_location',
-  'drop-off': 'dropoff_location',
-  'drop off': 'dropoff_location',
   'dropoff location': 'dropoff_location',
+  'drop-off location': 'dropoff_location',
   notes: 'notes',
   summary: 'reservation_summary',
   'what is it': 'description',
@@ -70,14 +104,35 @@ const labels: Record<string, string> = {
   'agreed rate': 'quoted_rate',
   'rate unit': 'rate_unit',
 };
+
+const MONEY_KEYS = new Set([
+  'sale',
+  'seller_cost',
+  'tax_amount',
+  'received',
+  'seller_amount_paid',
+  'quoted_rate',
+]);
+
+/** Strip $ / commas for paste money; do not invent amounts. */
+export function normalizePasteMoney(value: string): string {
+  const trimmed = value.trim();
+  if (!/^\$?\s*-?\d/.test(trimmed)) return trimmed;
+  return trimmed.replace(/^\$\s*/, '').replace(/,/g, '').trim();
+}
+
 export type PastePreview = {
   fields: R;
+  /** Canonical field key → original label that set it (for intake preview). */
+  fieldSources: Record<string, string>;
   unknown: { label: string; value: string }[];
   issues: string[];
 };
+
 /** Deterministic Field: Value protocol. No network/AI, creation or posting. */
 export function parseQuickPaste(raw: string): PastePreview {
   const fields: R = {},
+    fieldSources: Record<string, string> = {},
     unknown: PastePreview['unknown'] = [],
     issues: string[] = [];
   const input = redactOperationalText(raw).slice(0, 20000);
@@ -89,7 +144,7 @@ export function parseQuickPaste(raw: string): PastePreview {
     const matches = [...line.matchAll(new RegExp(`(?:^|\\s+)(${known}):[ \\t]*`, 'gi'))];
     const prefix = line.slice(0, matches[0]?.index ?? line.length).trim();
     if (prefix) {
-      const named = prefix.match(/^([A-Za-z][A-Za-z -]{0,40}):\s*(.*)$/);
+      const named = prefix.match(/^([A-Za-z][A-Za-z #/.-]{0,40}):\s*(.*)$/);
       unknown.push(
         named
           ? { label: named[1], value: named[2] }
@@ -99,12 +154,16 @@ export function parseQuickPaste(raw: string): PastePreview {
     for (let i = 0; i < matches.length; i++) {
       const m = matches[i],
         label = m[1].trim(),
-        value = line.slice(m.index! + m[0].length, matches[i + 1]?.index ?? line.length).trim(),
+        rawValue = line.slice(m.index! + m[0].length, matches[i + 1]?.index ?? line.length).trim(),
         key = labels[label.toLowerCase()];
+      const value = MONEY_KEYS.has(key) ? normalizePasteMoney(rawValue) : rawValue;
       if (fields[key] !== undefined) {
         issues.push(`Repeated ${label}; review before applying`);
-        unknown.push({ label: `Repeated ${label} / Needs Review`, value });
-      } else if (!/^(unknown|not applicable|n\/a)$/i.test(value)) fields[key] = value;
+        unknown.push({ label: `Repeated ${label} / Needs Review`, value: rawValue });
+      } else if (!/^(unknown|not applicable|n\/a)$/i.test(value)) {
+        fields[key] = value;
+        fieldSources[key] = label;
+      }
     }
   }
   for (const [key, label, amount] of [
@@ -132,7 +191,7 @@ export function parseQuickPaste(raw: string): PastePreview {
     issues.push(
       'Contradiction: One Way with Return Date. Return is not applied; review the Trip Type and Return line.',
     );
-  return { fields, unknown, issues };
+  return { fields, fieldSources, unknown, issues };
 }
 export const normalizePasteValue = (value: string) =>
   value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -212,6 +271,7 @@ Route: Unknown
 Departure: Unknown
 Return: Unknown
 PNR: Unknown
+Confirmation #: Unknown
 Flight Numbers: Unknown
 Booked Through: Unknown
 Referring Organization: Unknown

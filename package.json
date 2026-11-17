@@ -47,16 +47,20 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.12",
+    "@napi-rs/canvas": "^0.1.65",
     "@vercel/functions": "3.10.6",
     "@whiskeysockets/baileys": "^6.7.18",
     "lucide-react": "0.548.0",
     "next": "16.4.3",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^4.10.38",
     "pg": "8.16.3",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
+    "tesseract.js": "^5.1.1",
     "zod": "4.6.7"
   },
   "devDependencies": {

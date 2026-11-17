@@ -4,6 +4,7 @@ import {
   assertAllowedIntakeMailbox,
   buildIntakeDrafts,
   buildIntakeDraftsFromEntries,
+  extractIntakeText,
   looksLikeEml,
   parseEmlEnvelope,
   INTAKE_BATCH_SIZE,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/booking-intake';
 import { database } from '@/lib/db';
 import { execute } from '@/lib/finance';
+import { buildIntakeMappingPreview, UNREAD_FILE_MESSAGE } from '@/lib/intake-preview';
 import { redactOperationalText } from '@/lib/operational-redaction';
 import { databaseUnavailable, temporarilyUnavailable } from '@/lib/service-errors';
 import { AccessError } from '@/lib/users';
@@ -36,6 +38,7 @@ export async function POST(request: Request) {
     let entries: string[] | undefined;
     let entryOffset = 0;
     let entryTotal: number | undefined;
+    let previewOnly = false;
 
     if (contentType.includes('multipart/form-data')) {
       const limit = 11 * 1024 * 1024;
@@ -65,6 +68,9 @@ export async function POST(request: Request) {
       subject = String(data.get('subject') || '') || undefined;
       mailbox = String(data.get('mailbox') || '') || undefined;
       commandId = String(data.get('command_id') || commandId);
+      previewOnly =
+        String(data.get('preview_only') || '') === '1' ||
+        String(data.get('preview_only') || '').toLowerCase() === 'true';
       const file = data.get('file');
       if (file instanceof File) {
         filename = file.name;
@@ -82,6 +88,7 @@ export async function POST(request: Request) {
       subject = body.subject ? String(body.subject) : undefined;
       mailbox = body.mailbox ? String(body.mailbox) : undefined;
       commandId = String(body.command_id || commandId);
+      previewOnly = Boolean(body.preview_only);
       filename = body.filename ? String(body.filename) : undefined;
       mimeType = body.mime_type ? String(body.mime_type) : undefined;
       entryOffset = Math.max(0, Number(body.entry_offset) || 0);
@@ -128,8 +135,46 @@ export async function POST(request: Request) {
     if (!entries?.length && !text.trim() && !bytes?.length)
       throw new Error('Provide intake text and/or a file; drafts never post money');
 
+    // Preview only: extract PDF text-layer / image OCR, return mapping — never writes.
+    if (previewOnly) {
+      let previewText = text;
+      let unread = false;
+      let unreadMessage: string | undefined;
+      if (bytes?.length) {
+        const extracted = await extractIntakeText(
+          mimeType || 'application/octet-stream',
+          bytes,
+          filename || 'upload',
+        );
+        if (extracted.extractable) {
+          previewText = previewText.trim()
+            ? `${previewText.trim()}\n\n${extracted.text}`
+            : extracted.text;
+        } else if (!previewText.trim()) {
+          unread = true;
+          unreadMessage = UNREAD_FILE_MESSAGE;
+        }
+      }
+      if (!unread && !previewText.trim()) {
+        unread = true;
+        unreadMessage = UNREAD_FILE_MESSAGE;
+      }
+      const mapping = buildIntakeMappingPreview(previewText, {
+        unread,
+        unreadMessage,
+      });
+      return NextResponse.json({
+        preview: true,
+        posted: false,
+        text: unread ? '' : previewText,
+        unread,
+        unread_message: unreadMessage,
+        mapping,
+      });
+    }
+
     const builtList = entries?.length
-      ? buildIntakeDraftsFromEntries(entries, {
+      ? await buildIntakeDraftsFromEntries(entries, {
           source,
           filename,
           fromAddress,
@@ -138,7 +183,7 @@ export async function POST(request: Request) {
           entryOffset,
           entryTotal: entryTotal || entries.length + entryOffset,
         })
-      : buildIntakeDrafts({
+      : await buildIntakeDrafts({
           text,
           source,
           filename,

@@ -6,7 +6,13 @@ const config: NextConfig = {
       : process.env.PADOVA_REVIEW_BUILD === '1'
         ? '.next-review'
         : '.next',
-  serverExternalPackages: ['@electric-sql/pglite', 'pg'],
+  serverExternalPackages: [
+    '@electric-sql/pglite',
+    'pg',
+    '@napi-rs/canvas',
+    'pdfjs-dist',
+    'tesseract.js',
+  ],
   devIndicators: false,
   agentRules: false,
   async headers() {

@@ -367,15 +367,98 @@ const schemas = {
     expires_on: day.optional(),
     ownership: z.enum(['Padova', 'Customer']).default('Customer'),
   }),
-  commission: z.object({
-    booking_id: id,
-    payer_id: id,
-    collector_id: optionalID,
-    gross: positive,
-    retained: money.default(0),
-    due_on: day,
-    date: day,
-  }),
+  commission: z
+    .object({
+      booking_id: id,
+      date: day,
+      // Legacy single-payer shape (still accepted).
+      payer_id: optionalID,
+      collector_id: optionalID,
+      gross: positive.optional(),
+      retained: money.default(0),
+      due_on: day.optional(),
+      is_iata_partner: z.boolean().default(false),
+      // Site Feedback 3 Phase 2: multi-payer + optional referrer in one atomic save.
+      payers: z
+        .array(
+          z.object({
+            payer_id: id,
+            collector_id: optionalID,
+            gross: positive,
+            retained: money.default(0),
+            due_on: day.optional(),
+            is_iata_partner: z.boolean().default(false),
+          }),
+        )
+        .max(10)
+        .optional(),
+      referral: z
+        .object({
+          referrer_id: id,
+          basis: z.enum(['profit', 'percentage', 'fixed']),
+          rate_bps: z.number().int().min(0).max(10000).default(0),
+          fixed_amount: money.default(0),
+          due_on: day.optional(),
+          after_receipt: z.boolean().default(true),
+          cancellation_rule: z
+            .enum(['Realized economics', 'Retain agreed amount'])
+            .default('Realized economics'),
+          reason: text.optional(),
+          percentage_basis: z
+            .enum(['profit', 'sale', 'commission', 'commission_received', 'agreed_amount'])
+            .optional(),
+          agreed_basis: money.nullish(),
+          earned: z.boolean().optional(),
+          payable_when: z
+            .enum([
+              'When earned',
+              'After travel',
+              'After customer paid',
+              'After commission received',
+              'On date',
+            ])
+            .optional(),
+        })
+        .optional(),
+    })
+    .superRefine((v, ctx) => {
+      const fromLegacy =
+        v.payer_id && v.gross != null
+          ? [
+              {
+                payer_id: v.payer_id,
+                collector_id: v.collector_id,
+                gross: v.gross,
+                retained: v.retained ?? 0,
+                due_on: v.due_on,
+                is_iata_partner: v.is_iata_partner ?? false,
+              },
+            ]
+          : [];
+      const payers = v.payers?.length ? v.payers : fromLegacy;
+      if (!payers.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Add at least one commission payer with an exact dollar amount',
+        });
+      }
+      const seen = new Set<string>();
+      for (const p of payers) {
+        if (seen.has(p.payer_id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Each commission payer can appear once per save; do not double-post',
+          });
+        }
+        seen.add(p.payer_id);
+        if (p.retained > p.gross) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Collector retention exceeds commission',
+          });
+        }
+      }
+    }),
   commission_receipt: z.object({ payment_id: id, commission_id: id, amount: positive, date: day }),
   referral: z.object({
     booking_id: id,
@@ -565,6 +648,22 @@ function knownBasis(value: number | null): number {
       'Acquisition basis remains Unknown; resolve it before this inventory operation.',
     );
   return value;
+}
+/** Hosted: only after reviewed `20261117_commission_iata_partner`. Local: column from 024. */
+async function commissionIataPartnerReady(tx: SQL): Promise<boolean> {
+  if (tx.storage === 'padova') {
+    const r = await tx.query(
+      `SELECT 1 AS ok FROM app_schema_versions WHERE version=$1 LIMIT 1`,
+      ['20261117_commission_iata_partner'],
+    );
+    return Boolean(r.rows[0]);
+  }
+  const r = await tx.query(
+    `SELECT 1 AS ok FROM information_schema.columns
+     WHERE table_schema=current_schema() AND table_name='commissions'
+       AND column_name='is_iata_partner' LIMIT 1`,
+  );
+  return Boolean(r.rows[0]);
 }
 async function insert(tx: SQL, table: string, data: Row) {
   if (
@@ -1581,12 +1680,24 @@ async function postOperationalHotelCommission(
   if (commission.received && gross === 0)
     throw new Error(`Expected ${title.toLowerCase()} must cover the actual receipt`);
   if (gross <= 0) return;
+  const priorSamePayer = (
+    await tx.query('SELECT id FROM commissions WHERE booking_id=$1 AND payer_id=$2', [
+      bookingId,
+      commission.payer_id,
+    ])
+  ).rows;
+  if (priorSamePayer.length)
+    throw new Error(
+      `${title} payer already has a receivable on this booking; do not double-post from Add commission and New Booking`,
+    );
+  const iataReady = await commissionIataPartnerReady(tx);
   const c = await insert(tx, 'commissions', {
     booking_id: bookingId,
     payer_id: commission.payer_id,
     gross,
     retained: 0,
     due_on: commission.due_on ?? date,
+    ...(iataReady ? { is_iata_partner: label === 'primary' } : {}),
     command_id,
   });
   const noteBody = [
@@ -4520,33 +4631,124 @@ export async function execute(
         break;
       }
       case 'commission': {
-        if (d.retained > d.gross) throw new Error('Collector retention exceeds commission');
-        result = await insert(tx, 'commissions', {
-          booking_id: d.booking_id,
-          payer_id: d.payer_id,
-          collector_id: d.collector_id,
-          gross: d.gross,
-          retained: d.retained,
-          due_on: d.due_on,
-          command_id,
-        });
-        await movement(
-          tx,
-          command_id,
-          date,
-          'commission_accrual',
-          d.gross - d.retained,
-          d.booking_id,
-        );
-        await line(
-          tx,
-          command_id,
-          date,
-          'commission_receivable',
-          'commission_revenue',
-          d.gross - d.retained,
-          d.booking_id,
-        );
+        const payers = (
+          d.payers?.length
+            ? d.payers
+            : d.payer_id && d.gross != null
+              ? [
+                  {
+                    payer_id: d.payer_id,
+                    collector_id: d.collector_id,
+                    gross: d.gross,
+                    retained: d.retained ?? 0,
+                    due_on: d.due_on,
+                    is_iata_partner: d.is_iata_partner ?? false,
+                  },
+                ]
+              : []
+        ) as Row[];
+        if (!payers.length) throw new Error('Add at least one commission payer');
+        const iataReady = await commissionIataPartnerReady(tx);
+        const existing = (
+          await tx.query('SELECT payer_id FROM commissions WHERE booking_id=$1', [d.booking_id])
+        ).rows as Row[];
+        const posted: Row[] = [];
+        for (const p of payers) {
+          if (p.retained > p.gross) throw new Error('Collector retention exceeds commission');
+          if (existing.some((e) => e.payer_id === p.payer_id))
+            throw new Error(
+              'Commission receivable for this payer already exists on the booking; do not double-post',
+            );
+          const row = await insert(tx, 'commissions', {
+            booking_id: d.booking_id,
+            payer_id: p.payer_id,
+            collector_id: p.collector_id,
+            gross: p.gross,
+            retained: p.retained ?? 0,
+            due_on: p.due_on ?? date,
+            ...(iataReady ? { is_iata_partner: Boolean(p.is_iata_partner) } : {}),
+            command_id,
+          });
+          posted.push(row);
+          existing.push({ payer_id: p.payer_id });
+          const net = p.gross - (p.retained ?? 0);
+          await movement(tx, command_id, date, 'commission_accrual', net, d.booking_id);
+          await line(
+            tx,
+            command_id,
+            date,
+            'commission_receivable',
+            'commission_revenue',
+            net,
+            d.booking_id,
+          );
+          if (p.is_iata_partner) {
+            await insert(tx, 'notes', {
+              record_type: 'booking',
+              record_id: d.booking_id,
+              actor: actor.id,
+              body: '[primary] Primary IATA / partner commission receivable.',
+            });
+          }
+        }
+        if (d.referral) {
+          await requirePayableTerms(tx);
+          const priorReferral = (
+            await tx.query('SELECT id FROM referrals WHERE booking_id=$1', [d.booking_id])
+          ).rows;
+          if (priorReferral.length)
+            throw new Error(
+              'Commission Payable already exists on this booking; do not double-post the referrer',
+            );
+          await one(tx, 'SELECT id FROM parties WHERE id=$1 AND archived_at IS NULL', [
+            d.referral.referrer_id,
+          ]);
+          if (
+            !d.referral.reason &&
+            (d.referral.payable_when ||
+              d.referral.percentage_basis ||
+              d.referral.earned !== undefined)
+          )
+            throw new Error('Commission Payable terms require their reason/source');
+          if (
+            d.referral.basis !== 'fixed' &&
+            d.referral.percentage_basis === 'agreed_amount' &&
+            d.referral.agreed_basis == null
+          )
+            throw new Error('Enter the agreed percentage basis amount; Unknown is not zero');
+          const referralDue = d.referral.due_on ?? date;
+          const referralRow = await insert(tx, 'referrals', {
+            booking_id: d.booking_id,
+            referrer_id: d.referral.referrer_id,
+            basis: d.referral.basis === 'fixed' ? 'fixed' : 'profit',
+            rate_bps: d.referral.rate_bps,
+            fixed_amount: d.referral.fixed_amount,
+            after_receipt: d.referral.after_receipt,
+            due_on: referralDue,
+            command_id,
+          });
+          if (d.referral.reason)
+            await insert(tx, 'commission_payable_revisions', {
+              referral_id: referralRow.id,
+              revision: 1,
+              calculation: d.referral.basis === 'fixed' ? 'fixed' : 'percentage',
+              percentage_basis: d.referral.percentage_basis ?? 'profit',
+              rate_bps: d.referral.rate_bps,
+              fixed_amount: d.referral.fixed_amount,
+              agreed_basis: d.referral.agreed_basis,
+              earned: d.referral.earned ?? true,
+              earned_on: (d.referral.earned ?? true) ? date : undefined,
+              payable_when: d.referral.payable_when ?? 'After travel',
+              due_on: referralDue,
+              cancellation_rule: d.referral.cancellation_rule,
+              reason: d.referral.reason,
+              effective_on: date,
+              command_id,
+            });
+          posted.push({ referral_id: referralRow.id });
+        }
+        result = posted[0];
+        touched.add(d.booking_id);
         break;
       }
       case 'commission_receipt': {

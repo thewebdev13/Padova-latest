@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     if (!actor) throw new AccessError('Sign in required', 401);
     validateOrigin(request);
     const body = await readJSON(request);
-    const built = prepareEmailIntakeDraft({
+    const built = await prepareEmailIntakeDraft({
       mailbox: String(body.mailbox || ''),
       from_address: body.from_address ? String(body.from_address) : undefined,
       subject: body.subject ? String(body.subject) : undefined,

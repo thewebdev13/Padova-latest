@@ -818,8 +818,6 @@ export default function BookingEntry(props: Props) {
       window.removeEventListener('scroll', place, true);
     };
   }, [showTravelerMatches, traveler, matches.length]);
-  const commissionExpected = v.commission_expected ?? 'Unknown';
-  const secondaryCommissionExpected = v.secondary_commission_expected ?? 'No';
   async function applyPaste(rawText?: string) {
     let sourceText = rawText ?? paste;
     if (looksLikeEml(sourceText)) {
@@ -1426,80 +1424,10 @@ export default function BookingEntry(props: Props) {
           sale_known: baseSale !== undefined,
           additional_charge: extraCharge,
           components: componentInput,
-          commission:
-            v.product === 'Hotel' && can('manage_commissions')
-              ? {
-                  expected: commissionExpected,
-                  amount: commissionExpected === 'Yes' ? usd(v.commission_amount) : undefined,
-                  percentage_bps:
-                    commissionExpected === 'Yes' && v.commission_percent
-                      ? decimalUnits(v.commission_percent)
-                      : undefined,
-                  basis_kind:
-                    commissionExpected === 'Yes' &&
-                    v.commission_mode === 'Percentage of provider / other amount'
-                      ? 'Provider amount'
-                      : undefined,
-                  basis_amount:
-                    commissionExpected === 'Yes' &&
-                    v.commission_mode === 'Percentage of provider / other amount'
-                      ? usd(v.commission_basis_amount)
-                      : undefined,
-                  basis_description:
-                    commissionExpected === 'Yes' &&
-                    v.commission_mode === 'Percentage of provider / other amount'
-                      ? v.commission_basis_description
-                      : undefined,
-                  payer_id: v.commission_payer_id || null,
-                  due_on: v.commission_due || undefined,
-                  received: commissionExpected === 'Yes' ? usd(v.commission_received) : undefined,
-                  received_on: v.commission_received_on || undefined,
-                  method: v.commission_method || undefined,
-                  account_id: v.commission_account_id || undefined,
-                  notes: v.commission_notes ?? '',
-                }
-              : undefined,
-          secondary_commission:
-            v.product === 'Hotel' && can('manage_commissions')
-              ? secondaryCommissionExpected === 'Yes'
-                ? {
-                    expected: 'Yes' as const,
-                    amount:
-                      v.secondary_commission_mode === 'Percentage of Customer Sale Price' ||
-                      v.secondary_commission_mode === 'Percentage of provider / other amount'
-                        ? undefined
-                        : usd(v.secondary_commission_amount),
-                    percentage_bps:
-                      (v.secondary_commission_mode === 'Percentage of Customer Sale Price' ||
-                        v.secondary_commission_mode ===
-                          'Percentage of provider / other amount') &&
-                      v.secondary_commission_percent
-                        ? decimalUnits(v.secondary_commission_percent)
-                        : undefined,
-                    basis_kind:
-                      v.secondary_commission_mode === 'Percentage of provider / other amount'
-                        ? ('Provider amount' as const)
-                        : undefined,
-                    basis_amount:
-                      v.secondary_commission_mode === 'Percentage of provider / other amount'
-                        ? usd(v.secondary_commission_basis_amount)
-                        : undefined,
-                    basis_description:
-                      v.secondary_commission_mode === 'Percentage of provider / other amount'
-                        ? v.secondary_commission_basis_description
-                        : undefined,
-                    payer_id: v.secondary_commission_payer_id || null,
-                    due_on: v.secondary_commission_due || undefined,
-                    received: usd(v.secondary_commission_received),
-                    received_on: v.secondary_commission_received_on || undefined,
-                    method: v.secondary_commission_method || undefined,
-                    account_id: v.secondary_commission_account_id || undefined,
-                    notes: v.secondary_commission_notes ?? '',
-                  }
-                : {
-                    expected: secondaryCommissionExpected as 'No' | 'Unknown',
-                  }
-              : undefined,
+          // Soft-merge C: IATA / secondary receivables only via Add commission.
+          // Referring org on booking still applies the accepted partnership payable once.
+          commission: undefined,
+          secondary_commission: undefined,
           referring_organization_id: can('manage_commissions')
             ? v.referring_organization_id || null
             : undefined,
@@ -1771,7 +1699,7 @@ export default function BookingEntry(props: Props) {
                 <details className="optional-block" open={Boolean(v.referring_organization_id)}>
                   <OptionalSummary
                     title="Referring organization (affiliate)"
-                    hint="Optional — creates Commission Payable Padova owes that org"
+                    hint="Optional — applies that org’s accepted deal as Commission Payable"
                     filled={v.referring_organization_id ? 1 : 0}
                   />
                   <Field label="Referring organization (affiliate)" full>
@@ -1798,8 +1726,9 @@ export default function BookingEntry(props: Props) {
                       hideCount
                     />
                     <small>
-                      Separate from IATA-partner receivable and secondary commission. Manual
-                      quarterly payout.
+                      Marks who referred this booking and creates the payable Padova owes that org
+                      (manual quarterly). Who owes Padova (IATA / secondary) is added after Save via
+                      Add commission — not duplicated here.
                       {!state.partnershipsEnabled
                         ? ' Partnerships CRM is not installed in this database.'
                         : !(state.referralOrganizations ?? []).length
@@ -2373,11 +2302,9 @@ export default function BookingEntry(props: Props) {
               ) : (
                 text(
                   'primary_reference',
-                  v.product === 'Hotel'
-                    ? 'Hotel/property confirmation'
-                    : v.product === 'Car'
-                      ? 'Rental/company confirmation'
-                      : 'Primary confirmation',
+                  v.product === 'Hotel' || v.product === 'Car'
+                    ? 'Confirmation #'
+                    : 'Primary confirmation',
                 )
               )}
               <details className="full">
@@ -3567,259 +3494,12 @@ export default function BookingEntry(props: Props) {
                   )}
                 </>
               )}
-              {v.product === 'Hotel' && can('manage_commissions') && (
-                <>
-                  <h4 className="full">Primary commission receivable (IATA / collecting agency)</h4>
-                  <small className="full">
-                    Money another agency owes Padova (for example ~90% of profit). Not the affiliate
-                    referrer payable, and not a second expected commission.
-                  </small>
-                  {select(
-                    'commission_expected',
-                    'Primary commission expected?',
-                    ['Yes', 'No', 'Unknown'],
-                    undefined,
-                    commissionExpected,
-                  )}
-                  {commissionExpected === 'Yes' && (
-                    <>
-                      {select(
-                        'commission_mode',
-                        'Commission calculation',
-                        [
-                          'Fixed dollar amount',
-                          'Percentage of Customer Sale Price',
-                          'Percentage of provider / other amount',
-                        ],
-                        (x) => {
-                          change('commission_mode', x);
-                          change('commission_amount', '');
-                          change('commission_percent', '');
-                          change('commission_basis_amount', '');
-                          change('commission_basis_description', '');
-                        },
-                        v.commission_mode ?? 'Fixed dollar amount',
-                      )}
-                      {v.commission_mode === 'Percentage of Customer Sale Price' ||
-                      v.commission_mode === 'Percentage of provider / other amount'
-                        ? text(
-                            'commission_percent',
-                            v.commission_mode === 'Percentage of provider / other amount'
-                              ? 'Commission percentage'
-                              : 'Percentage of Customer Sale Price',
-                            'number',
-                          )
-                        : text('commission_amount', 'Expected commission amount (USD)', 'number')}
-                      {v.commission_mode === 'Percentage of provider / other amount' && (
-                        <>
-                          {text(
-                            'commission_basis_amount',
-                            'Agreed commission basis (USD)',
-                            'number',
-                            true,
-                          )}
-                          {text(
-                            'commission_basis_description',
-                            'Basis details (for example, room rate excluding taxes)',
-                          )}
-                        </>
-                      )}
-                      <output>
-                        Expected commission:{' '}
-                        {(() => {
-                          try {
-                            const expected =
-                              v.commission_mode === 'Percentage of Customer Sale Price' ||
-                              v.commission_mode === 'Percentage of provider / other amount'
-                                ? (v.commission_mode === 'Percentage of provider / other amount'
-                                    ? usd(v.commission_basis_amount)
-                                    : baseSale) === undefined || !v.commission_percent
-                                  ? undefined
-                                  : percentageCommission(
-                                      (v.commission_mode === 'Percentage of provider / other amount'
-                                        ? usd(v.commission_basis_amount)
-                                        : baseSale)!,
-                                      decimalUnits(v.commission_percent),
-                                    )
-                                : usd(v.commission_amount);
-                            return expected === undefined
-                              ? 'Unknown'
-                              : `${dollars(expected)} · Received ${dollars(usd(v.commission_received) ?? 0)} · Outstanding ${dollars(expected - (usd(v.commission_received) ?? 0))}`;
-                          } catch {
-                            return 'Enter exact commission dollars if the percentage produces fractional cents';
-                          }
-                        })()}
-                      </output>
-                      {entity(
-                        'commission_payer_id',
-                        'Expected payer / source',
-                        'parties',
-                        'party',
-                        {
-                          roles: ['commission_payer'],
-                        },
-                      )}
-                      {text('commission_due', 'Expected date', 'date')}
-                      <details className="full">
-                        <summary>Record commission actually received</summary>
-                        <div className="form-grid">
-                          {text('commission_received', 'Received amount (USD)', 'number')}
-                          {text('commission_received_on', 'Received date', 'date')}
-                          {select(
-                            'commission_method',
-                            'Commission receipt method',
-                            PAYMENT_METHODS,
-                          )}
-                          {entity(
-                            'commission_account_id',
-                            'Commission receipt account',
-                            'paymentAccounts',
-                            'payment_account',
-                            { kind: 'Bank' },
-                            undefined,
-                            undefined,
-                            (a) => !v.commission_method || accountSupports(a, v.commission_method),
-                          )}
-                          {text('commission_notes', 'Commission notes', 'text', false, true)}
-                        </div>
-                      </details>
-                      <small className="full">
-                        Expected and actually received are separate. Status and overdue attention
-                        are calculated automatically. Use primary commission for the main IATA /
-                        collecting-agency path (for example the 90% share owed to Padova).
-                      </small>
-                    </>
-                  )}
-                  <details
-                    className="optional-block full"
-                    open={
-                      secondaryCommissionExpected === 'Yes' ||
-                      secondaryCommissionExpected === 'Unknown'
-                    }
-                  >
-                    <OptionalSummary
-                      title="Secondary commission receivable (optional)"
-                      hint="Extra party that also owes Padova — not IATA primary, not affiliate payable"
-                      filled={
-                        secondaryCommissionExpected === 'Yes'
-                          ? 1
-                          : secondaryCommissionExpected === 'Unknown'
-                            ? 1
-                            : 0
-                      }
-                    />
-                    <small className="full">
-                      Stays expected until received. Does not replace primary IATA commission or the
-                      referring-org payable.
-                    </small>
-                    {select(
-                      'secondary_commission_expected',
-                      'Another party also owes commission?',
-                      ['Yes', 'No', 'Unknown'],
-                      undefined,
-                      secondaryCommissionExpected,
-                    )}
-                    {secondaryCommissionExpected === 'Yes' && (
-                      <>
-                        <small className="full">
-                          Only when a second account or partner also owes commission on this
-                          booking. Referring-organization share you pay out is separate (Commission
-                          Payable).
-                        </small>
-                        {select(
-                          'secondary_commission_mode',
-                          'Secondary commission calculation',
-                          [
-                            'Fixed dollar amount',
-                            'Percentage of Customer Sale Price',
-                            'Percentage of provider / other amount',
-                          ],
-                          (x) => {
-                            change('secondary_commission_mode', x);
-                            change('secondary_commission_amount', '');
-                            change('secondary_commission_percent', '');
-                            change('secondary_commission_basis_amount', '');
-                            change('secondary_commission_basis_description', '');
-                          },
-                          v.secondary_commission_mode ?? 'Fixed dollar amount',
-                        )}
-                        {v.secondary_commission_mode === 'Percentage of Customer Sale Price' ||
-                        v.secondary_commission_mode === 'Percentage of provider / other amount'
-                          ? text(
-                              'secondary_commission_percent',
-                              v.secondary_commission_mode ===
-                                'Percentage of provider / other amount'
-                                ? 'Secondary commission percentage'
-                                : 'Percentage of Customer Sale Price',
-                              'number',
-                            )
-                          : text(
-                              'secondary_commission_amount',
-                              'Secondary expected amount (USD)',
-                              'number',
-                            )}
-                        {v.secondary_commission_mode ===
-                          'Percentage of provider / other amount' && (
-                          <>
-                            {text(
-                              'secondary_commission_basis_amount',
-                              'Agreed secondary basis (USD)',
-                              'number',
-                              true,
-                            )}
-                            {text(
-                              'secondary_commission_basis_description',
-                              'Secondary basis details',
-                            )}
-                          </>
-                        )}
-                        {entity(
-                          'secondary_commission_payer_id',
-                          'Who else owes this commission',
-                          'parties',
-                          'party',
-                          { roles: ['commission_payer'] },
-                        )}
-                        {text('secondary_commission_due', 'Expected date', 'date')}
-                        <details className="full">
-                          <summary>Record secondary commission actually received</summary>
-                          <div className="form-grid">
-                            {text(
-                              'secondary_commission_received',
-                              'Received amount (USD)',
-                              'number',
-                            )}
-                            {text('secondary_commission_received_on', 'Received date', 'date')}
-                            {select(
-                              'secondary_commission_method',
-                              'Receipt method',
-                              PAYMENT_METHODS,
-                            )}
-                            {entity(
-                              'secondary_commission_account_id',
-                              'Receipt account',
-                              'paymentAccounts',
-                              'payment_account',
-                              { kind: 'Bank' },
-                              undefined,
-                              undefined,
-                              (a) =>
-                                !v.secondary_commission_method ||
-                                accountSupports(a, v.secondary_commission_method),
-                            )}
-                            {text(
-                              'secondary_commission_notes',
-                              'Secondary commission notes',
-                              'text',
-                              false,
-                              true,
-                            )}
-                          </div>
-                        </details>
-                      </>
-                    )}
-                  </details>
-                </>
+              {can('manage_commissions') && (
+                <p className="full note">
+                  After Save, open <strong>Add commission</strong> on the booking to record who owes
+                  Padova (IATA partner and any secondary payer). Affiliate payable comes from the
+                  referring organization above when set — do not post the same payout twice.
+                </p>
               )}
             </section>
             <section className="booking-section full form-grid" id="booking-summary">

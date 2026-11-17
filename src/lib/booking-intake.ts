@@ -7,6 +7,8 @@ import {
   splitIntakeEntries,
   INTAKE_EMAIL_MAILBOXES,
 } from './booking-intake-split';
+import { extractBinaryIntakeText } from './intake-file-text';
+import { UNREAD_FILE_MESSAGE } from './intake-preview';
 import { redactOperationalText } from './operational-redaction';
 import { normalizePasteValue, parseQuickPaste } from './quick-paste';
 
@@ -48,33 +50,33 @@ const TEXT_TYPES = new Set([
   'application/json',
 ]);
 const BINARY_HINT =
-  'Binary file preserved as provenance only. Paste Field: Value text or convert to plain text before Save Booking — no money is posted from intake.';
+  "We couldn't read this file – paste the text instead. Nothing posts money from intake.";
 
 const PRODUCTS = ['Flight', 'Hotel', 'Car', 'Other'] as const;
 
-/** Extract UTF-8 text when the upload is plain text; never invent booking facts from images/PDFs. */
-export function extractIntakeText(
+function looksLikePlainIntakeText(mimeType: string, filename: string) {
+  const mime = (mimeType || 'application/octet-stream').split(';')[0].trim().toLowerCase();
+  const lower = filename.toLowerCase();
+  return (
+    TEXT_TYPES.has(mime) ||
+    /\.(txt|csv|md|eml|json)$/i.test(lower) ||
+    (mime === 'application/octet-stream' && /\.(txt|csv|md|eml)$/i.test(lower))
+  );
+}
+
+/**
+ * Extract text for intake. Plain text/EML sync path; PDF text-layer + local image OCR async.
+ * Never invents booking facts — raw text only for Field:Value parse.
+ */
+export async function extractIntakeText(
   mimeType: string,
   bytes: Buffer,
   filename = 'upload',
-): { text: string; extractable: boolean; note?: string } {
+): Promise<{ text: string; extractable: boolean; note?: string; method?: string }> {
   const mime = (mimeType || 'application/octet-stream').split(';')[0].trim().toLowerCase();
   const lower = filename.toLowerCase();
-  const looksText =
-    TEXT_TYPES.has(mime) ||
-    /\.(txt|csv|md|eml|json)$/i.test(lower) ||
-    (mime === 'application/octet-stream' && /\.(txt|csv|md|eml)$/i.test(lower));
-  if (!looksText) {
-    return {
-      text: '',
-      extractable: false,
-      note:
-        mime === 'application/pdf' || /\.pdf$/i.test(lower)
-          ? `PDF “${filename}”: ${BINARY_HINT}`
-          : mime.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(lower)
-            ? `Image “${filename}”: ${BINARY_HINT}`
-            : `File “${filename}” (${mime}): ${BINARY_HINT}`,
-    };
+  if (!looksLikePlainIntakeText(mime, filename)) {
+    return extractBinaryIntakeText(mime, bytes, filename);
   }
   const text = bytes.toString('utf8');
   if (text.includes('\u0000'))
@@ -114,7 +116,7 @@ export type BuiltIntakeDraft = {
 };
 
 /** Form-shaped draft entry. Never creates payments, charges, or journal rows. */
-export function buildIntakeDraft(input: {
+export async function buildIntakeDraft(input: {
   text?: string;
   source: IntakeSource;
   filename?: string;
@@ -126,7 +128,7 @@ export function buildIntakeDraft(input: {
   receivedAt?: string;
   entryIndex?: number;
   entryCount?: number;
-}): BuiltIntakeDraft {
+}): Promise<BuiltIntakeDraft> {
   const received_at = input.receivedAt ?? new Date().toISOString();
   const bytes = input.bytes;
   let text = input.text ?? '';
@@ -141,11 +143,17 @@ export function buildIntakeDraft(input: {
     if (bytes.length > 10 * 1024 * 1024) throw new Error('Intake file must be 10 MB or smaller');
     sha256 = intakeSha256(bytes);
     byte_length = bytes.length;
-    const extracted = extractIntakeText(mime_type || 'application/octet-stream', bytes, filename);
+    const extracted = await extractIntakeText(
+      mime_type || 'application/octet-stream',
+      bytes,
+      filename,
+    );
     if (extracted.extractable)
       text = text.trim() ? `${text.trim()}\n\n${extracted.text}` : extracted.text;
     else extract_note = extracted.note;
     text_extractable = text_extractable || extracted.extractable;
+    // Site Feedback 3: do not create a silent empty draft from unread PDF/image.
+    if (!text_extractable && !text.trim()) throw new Error(UNREAD_FILE_MESSAGE);
   } else if (text.trim() && looksLikeEml(text, filename)) {
     // Client batch uploads send .eml as text entries — strip to plain body first.
     const body = extractTextFromEml(text);
@@ -181,12 +189,18 @@ export function buildIntakeDraft(input: {
     typeof preview.fields.property === 'string' ? preview.fields.property.trim() : '';
   const airlineLabel =
     typeof preview.fields.airline === 'string' ? preview.fields.airline.trim() : '';
+  // Never invent route/PNR from the file name (Site Feedback 3).
   const summary =
     typeof preview.fields.reservation_summary === 'string'
       ? preview.fields.reservation_summary
       : input.subject?.trim() ||
-        (filename ? `Intake: ${filename}` : '') ||
-        (product ? `${product} intake` : 'Booking intake draft');
+        (text_extractable
+          ? product
+            ? `${product} intake`
+            : 'Booking intake draft'
+          : filename
+            ? `Unread file — paste text instead`
+            : 'Booking intake draft');
 
   const provenance: IntakeProvenance = {
     source: input.source,
@@ -296,7 +310,7 @@ export function buildIntakeDraft(input: {
 }
 
 /** Build one draft per detected entry in paste/upload text. */
-export function buildIntakeDrafts(input: {
+export async function buildIntakeDrafts(input: {
   text?: string;
   source: IntakeSource;
   filename?: string;
@@ -306,7 +320,7 @@ export function buildIntakeDrafts(input: {
   subject?: string;
   mailbox?: string;
   receivedAt?: string;
-}): BuiltIntakeDraft[] {
+}): Promise<BuiltIntakeDraft[]> {
   let combined = input.text ?? '';
   let extract_note: string | undefined;
   let bytes = input.bytes;
@@ -315,27 +329,36 @@ export function buildIntakeDrafts(input: {
   let mailbox = input.mailbox;
   let source = input.source;
   if (bytes?.length) {
-    const extracted = extractIntakeText(
+    const rawUtf8 = bytes.toString('utf8');
+    // Parse .eml envelope from original bytes before body-only extract clears headers.
+    if (
+      looksLikeEml(rawUtf8, input.filename) ||
+      /\.eml$/i.test(input.filename || '') ||
+      input.mimeType === 'message/rfc822'
+    ) {
+      const envelope = parseEmlEnvelope(rawUtf8);
+      fromAddress = fromAddress || envelope.from_address;
+      subject = subject || envelope.subject;
+      mailbox = mailbox || envelope.mailbox;
+      if (source === 'staff_upload' && mailbox) source = 'email';
+    }
+    const extracted = await extractIntakeText(
       input.mimeType || 'application/octet-stream',
       bytes,
       input.filename,
     );
     if (extracted.extractable)
       combined = combined.trim() ? `${combined.trim()}\n\n${extracted.text}` : extracted.text;
-    else extract_note = extracted.note;
+    else {
+      extract_note = extracted.note;
+      if (!combined.trim()) throw new Error(UNREAD_FILE_MESSAGE);
+    }
+    // Bytes already consumed for text/OCR — drafts use text parts only.
+    bytes = undefined;
   }
-  // API/batch uploads may send .eml bytes without UI envelope fields — fill From/To/Subject here.
-  const envelopeRaw =
-    bytes?.length &&
-    (looksLikeEml(bytes.toString('utf8')) ||
-      /\.eml$/i.test(input.filename || '') ||
-      input.mimeType === 'message/rfc822')
-      ? bytes.toString('utf8')
-      : looksLikeEml(combined)
-        ? combined
-        : '';
-  if (envelopeRaw) {
-    const envelope = parseEmlEnvelope(envelopeRaw);
+  // Text-only .eml uploads (no bytes) still need From/To/Subject from the raw paste.
+  if (!fromAddress && !subject && !mailbox && looksLikeEml(combined, input.filename)) {
+    const envelope = parseEmlEnvelope(combined);
     fromAddress = fromAddress || envelope.from_address;
     subject = subject || envelope.subject;
     mailbox = mailbox || envelope.mailbox;
@@ -345,28 +368,30 @@ export function buildIntakeDrafts(input: {
   const base = { ...input, source, fromAddress, subject, mailbox };
   if (!parts.length) {
     return [
-      buildIntakeDraft({
+      await buildIntakeDraft({
         ...base,
-        text: extract_note ? `Notes: ${extract_note}` : combined,
+        text: extract_note ? `${combined}\n\nNotes: ${extract_note}`.trim() : combined,
+        bytes: undefined,
         entryIndex: 0,
         entryCount: 1,
       }),
     ];
   }
-  return parts.map((part, index) =>
-    buildIntakeDraft({
-      ...base,
-      // File bytes only on first entry for provenance hash; each entry carries its own text.
-      bytes: index === 0 ? bytes : undefined,
-      text: part,
-      entryIndex: index,
-      entryCount: parts.length,
-    }),
+  return Promise.all(
+    parts.map((part, index) =>
+      buildIntakeDraft({
+        ...base,
+        bytes: undefined,
+        text: part,
+        entryIndex: index,
+        entryCount: parts.length,
+      }),
+    ),
   );
 }
 
 /** Build drafts for an explicit list of entry texts (batched client uploads). */
-export function buildIntakeDraftsFromEntries(
+export async function buildIntakeDraftsFromEntries(
   entries: string[],
   input: {
     source: IntakeSource;
@@ -378,21 +403,23 @@ export function buildIntakeDraftsFromEntries(
     entryOffset?: number;
     entryTotal?: number;
   },
-): BuiltIntakeDraft[] {
+): Promise<BuiltIntakeDraft[]> {
   const total = input.entryTotal ?? entries.length;
   const offset = input.entryOffset ?? 0;
-  return entries.map((part, i) =>
-    buildIntakeDraft({
-      text: part,
-      source: input.source,
-      filename: input.filename,
-      fromAddress: input.fromAddress,
-      subject: input.subject,
-      mailbox: input.mailbox,
-      receivedAt: input.receivedAt,
-      entryIndex: offset + i,
-      entryCount: total,
-    }),
+  return Promise.all(
+    entries.map((part, i) =>
+      buildIntakeDraft({
+        text: part,
+        source: input.source,
+        filename: input.filename,
+        fromAddress: input.fromAddress,
+        subject: input.subject,
+        mailbox: input.mailbox,
+        receivedAt: input.receivedAt,
+        entryIndex: offset + i,
+        entryCount: total,
+      }),
+    ),
   );
 }
 

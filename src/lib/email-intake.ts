@@ -37,7 +37,7 @@ export function emailIntakeStatus() {
 }
 
 /** Build a draft payload from an inbound email. Does not write to the database. */
-export function prepareEmailIntakeDraft(message: InboundEmailMessage) {
+export async function prepareEmailIntakeDraft(message: InboundEmailMessage) {
   const mailbox = assertAllowedIntakeMailbox(message.mailbox);
   if (!message.text?.trim()) throw new Error('Email intake requires message text');
   return buildIntakeDraft({

@@ -35,6 +35,18 @@ test('operational entry keeps secondary commission and referring org independent
   assert.notEqual(parsed.commission?.payer_id, parsed.secondary_commission?.payer_id);
 });
 
+test('soft-merge C: referring org alone without receivable commission fields', () => {
+  const org = randomUUID();
+  const parsed = operationalEntry.parse({
+    version: 1,
+    sale_known: true,
+    referring_organization_id: org,
+  });
+  assert.equal(parsed.referring_organization_id, org);
+  assert.equal(parsed.commission, undefined);
+  assert.equal(parsed.secondary_commission, undefined);
+});
+
 test('secondary commission can stay Unknown without inventing zero', () => {
   const parsed = operationalEntry.parse({
     version: 1,

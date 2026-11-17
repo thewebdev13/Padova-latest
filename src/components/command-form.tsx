@@ -9,6 +9,7 @@ import BookingFunding from './booking-funding';
 import BookingTravel from './booking-travel';
 import TravelerRecords from './traveler-records';
 import BookingEntry from './booking-entry';
+import CommissionBundleForm from './commission-bundle-form';
 import BookingPartySelect from './booking-party-select';
 import { eligibleProfileContact } from '@/lib/booking-ux';
 import FlightSegments from './flight-segments';
@@ -1062,7 +1063,8 @@ const actionHelp: Record<string, string> = {
   benefit: 'Record a credit only when the provider has actually confirmed it.',
   price_match_event: 'Track the price-match request and its actual outcome separately.',
   booking_source_profile_link: 'Choose the account or profile used to obtain this booking.',
-  commission: 'Record money someone owes Padova for this booking.',
+  commission:
+    'Record who owes Padova (IATA partner and any secondary payer) and optionally who Padova pays out to.',
   referral:
     'Record money Padova owes an agent, referrer or partner, including when it is earned and payable.',
   note: 'Add a note to this record’s permanent activity history.',
@@ -1090,6 +1092,7 @@ const actionSave: Record<string, string> = {
 export default function CommandForm(props: Parameters<typeof LegacyCommandForm>[0]) {
   if (props.config.kind === 'booking' && props.state.bookingEntryEnabled)
     return <BookingEntry {...props} />;
+  if (props.config.kind === 'commission') return <CommissionBundleForm {...props} />;
   return <LegacyCommandForm {...props} />;
 }
 function LegacyCommandForm({

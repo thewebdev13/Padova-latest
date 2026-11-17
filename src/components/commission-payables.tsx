@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 type Row = Record<string, any>;
 const money = (v: any) =>
   v == null
@@ -23,6 +24,7 @@ export default function CommissionPayables({
   enabled: boolean;
   action: (kind: string, defaults?: Row) => void;
 }) {
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   return (
     <section className="card">
       <div className="card-header">
@@ -41,17 +43,14 @@ export default function CommissionPayables({
       {!rows.length ? (
         <p className="empty">No commissions owed to agents, referrers or partners.</p>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap commissions-compact">
           <table>
             <thead>
               <tr>
                 <th>Payee / booking</th>
                 <th>Agreement</th>
-                <th>Expected</th>
-                <th>Earned / accrued</th>
-                <th>Paid</th>
-                <th>Outstanding</th>
-                <th>Actions</th>
+                <th className="money">Outstanding</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -60,28 +59,26 @@ export default function CommissionPayables({
                   <td>
                     {r.referrer}
                     <small>{r.code}</small>
+                    <small>
+                      Expected {money(r.expected_due)} · paid {money(r.paid)} · accrued{' '}
+                      {money(r.accrued)}
+                    </small>
                   </td>
                   <td>
                     {r.calculation === 'fixed'
                       ? money(r.fixed_amount)
-                      : `${r.rate_bps / 100}% of ${r.percentage_basis.replaceAll('_', ' ')}`}
+                      : `${r.rate_bps / 100}% of ${String(r.percentage_basis || '').replaceAll('_', ' ')}`}
                     <small>{r.reason}</small>
                     <small>
                       {r.payable_when} · earliest {r.due_on}
                     </small>
-                    <small>
-                      {r.status}
-                      {r.recovery_due > 0 ? ` · recover ${money(r.recovery_due)}` : ''}
-                    </small>
                   </td>
-                  <td className="money">{money(r.expected_due)}</td>
-                  <td className="money">
-                    {money(r.accrued)}
-                    <small>{r.earned_on ?? 'Not yet earned'}</small>
+                  <td
+                    className={`money ${Number(r.outstanding) > 0 ? 'text-amber outstanding-amt' : ''}`}
+                  >
+                    {money(r.outstanding)}
                   </td>
-                  <td className="money">{money(r.paid)}</td>
-                  <td className="money">{money(r.outstanding)}</td>
-                  <td>
+                  <td className="row-actions">
                     <button
                       className="btn small"
                       disabled={!canManage || !(r.payable_now > 0)}
@@ -93,28 +90,48 @@ export default function CommissionPayables({
                       Record payout
                     </button>
                     {canManage && enabled && r.active !== false && (
-                      <>
+                      <div className="row-more">
                         <button
+                          type="button"
                           className="btn small ghost"
-                          onClick={() =>
-                            action('revise_referral', {
-                              ...r,
-                              referral_id: r.id,
-                              basis: r.calculation === 'fixed' ? 'fixed' : 'percentage',
-                            })
-                          }
+                          aria-label="More actions"
+                          aria-expanded={menuFor === r.id}
+                          onClick={() => setMenuFor(menuFor === r.id ? null : r.id)}
                         >
-                          Correct terms
+                          ···
                         </button>
-                        <button
-                          className="btn small ghost"
-                          onClick={() =>
-                            action('reverse_referral', { referral_id: r.id, revision: r.revision })
-                          }
-                        >
-                          Reverse agreement
-                        </button>
-                      </>
+                        {menuFor === r.id && (
+                          <div className="row-more-menu" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMenuFor(null);
+                                action('revise_referral', {
+                                  ...r,
+                                  referral_id: r.id,
+                                  basis: r.calculation === 'fixed' ? 'fixed' : 'percentage',
+                                });
+                              }}
+                            >
+                              Correct terms
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMenuFor(null);
+                                action('reverse_referral', {
+                                  referral_id: r.id,
+                                  revision: r.revision,
+                                });
+                              }}
+                            >
+                              Reverse agreement
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                     <details>
                       <summary>Payments and history</summary>

@@ -33,7 +33,7 @@ export function assertWhatsAppBridgeAuth(headerToken: string | null | undefined)
 }
 
 /** Build draft from inbound WhatsApp text. Does not write to the database. */
-export function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage) {
+export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage) {
   if (!message.text?.trim()) throw new Error('WhatsApp intake requires message text');
   return buildIntakeDraft({
     source: 'whatsapp',

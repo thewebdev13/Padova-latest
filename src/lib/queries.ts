@@ -134,8 +134,14 @@ export async function snapshot(db: Database, actor: Actor) {
     });
   }
   const commissions = (
-    await db.query(`SELECT c.*,b.code,p.name payer,s.name collector,
-    COALESCE((SELECT sum(amount) FROM commission_allocations a WHERE a.commission_id=c.id),0) received FROM commissions c JOIN bookings b ON b.id=c.booking_id JOIN parties p ON p.id=c.payer_id LEFT JOIN parties s ON s.id=c.collector_id`)
+    await db.query(`SELECT c.*,b.code,p.name payer,s.name collector,cmd.created_at AS posted_at,
+    COALESCE((SELECT sum(amount) FROM commission_allocations a WHERE a.commission_id=c.id),0) received
+    FROM commissions c
+    JOIN bookings b ON b.id=c.booking_id
+    JOIN parties p ON p.id=c.payer_id
+    LEFT JOIN parties s ON s.id=c.collector_id
+    LEFT JOIN commands cmd ON cmd.id=c.command_id
+    ORDER BY cmd.created_at DESC NULLS LAST, c.id DESC`)
   ).rows;
   const parties = (await db.query('SELECT * FROM parties WHERE archived_at IS NULL ORDER BY name'))
     .rows;

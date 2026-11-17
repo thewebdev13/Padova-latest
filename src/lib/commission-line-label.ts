@@ -12,10 +12,14 @@ type OperationalEntry = {
 } | null;
 
 export function receivableCommissionLabel(
-  row: { payer_id?: string; notes?: string | null },
+  row: { payer_id?: string; notes?: string | null; is_iata_partner?: boolean | null },
   operational?: OperationalEntry,
-  siblings: { payer_id?: string }[] = [],
+  siblings: { payer_id?: string; is_iata_partner?: boolean | null }[] = [],
 ): string {
+  if (row.is_iata_partner === true) return 'Primary IATA / partner commission receivable';
+  if (row.is_iata_partner === false && siblings.some((s) => s.is_iata_partner === true))
+    return 'Secondary commission receivable';
+
   const notes = String(row.notes ?? '');
   if (/\[secondary\]/i.test(notes) || /secondary expected commission/i.test(notes))
     return 'Secondary commission receivable';
