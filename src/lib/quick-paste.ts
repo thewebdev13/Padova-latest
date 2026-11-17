@@ -1,6 +1,7 @@
 import { referenceKey } from './test-reference';
 import { eligibleParty, type DirectoryRole } from './directory-eligibility';
 import { redactOperationalText } from './operational-redaction';
+import { normalizeReservationProseToPaste } from './intake-reservation-normalize';
 import type { PaymentStatus } from './booking-entry-state';
 type R = Record<string, any>;
 
@@ -135,7 +136,8 @@ export function parseQuickPaste(raw: string): PastePreview {
     fieldSources: Record<string, string> = {},
     unknown: PastePreview['unknown'] = [],
     issues: string[] = [];
-  const input = redactOperationalText(raw).slice(0, 20000);
+  // Capital One / reservation email PDFs → Field: Value first (no invented customer/paid).
+  const input = redactOperationalText(normalizeReservationProseToPaste(raw)).slice(0, 20000);
   const known = Object.keys(labels)
     .sort((a, b) => b.length - a.length)
     .join('|');

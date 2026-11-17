@@ -1060,6 +1060,7 @@ td small {
   flex: 1 1 auto;
 }
 .intake-preview-grid {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
@@ -1067,6 +1068,46 @@ td small {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
+}
+.intake-modal-client.is-busy {
+  cursor: wait;
+}
+.intake-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(2px);
+  text-align: center;
+  color: #1f3d2f;
+}
+.intake-loading-overlay strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+.intake-loading-overlay > span:last-child {
+  font-size: 12px;
+  color: #6b7580;
+}
+.intake-loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #d5e5db;
+  border-top-color: #2f6b4f;
+  border-radius: 50%;
+  animation: intake-spin 0.75s linear infinite;
+}
+@keyframes intake-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 @media (max-width: 720px) {
   .intake-preview-grid {

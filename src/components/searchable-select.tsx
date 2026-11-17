@@ -59,7 +59,9 @@ export default function SearchableSelect({
   useEffect(() => {
     if (value !== committed.current) {
       committed.current = value;
-      setText(selectedLabel);
+      // Do not wipe the field to blank when the id arrives before the option row —
+      // intake continue-draft used to flash empty until a slow directory fetch finished.
+      if (selectedLabel || !value) setText(selectedLabel);
       input.current?.setCustomValidity('');
       return;
     }

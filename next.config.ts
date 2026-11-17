@@ -6,13 +6,9 @@ const config: NextConfig = {
       : process.env.PADOVA_REVIEW_BUILD === '1'
         ? '.next-review'
         : '.next',
-  serverExternalPackages: [
-    '@electric-sql/pglite',
-    'pg',
-    '@napi-rs/canvas',
-    'pdfjs-dist',
-    'tesseract.js',
-  ],
+  // Do not list pdfjs-dist here — Turbopack cannot externalize its ESM worker
+  // ("Package pdfjs-dist can't be external") and intake PDF reads then fail intermittently.
+  serverExternalPackages: ['@electric-sql/pglite', 'pg', '@napi-rs/canvas', 'tesseract.js'],
   devIndicators: false,
   agentRules: false,
   async headers() {

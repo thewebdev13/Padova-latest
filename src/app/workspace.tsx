@@ -294,13 +294,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
   useEffect(() => {
     if (!intakeOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closeIntake();
-      }
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      // While a file is reading or a draft is saving, Escape must not close the modal.
+      if (intakeBusy) return;
+      closeIntake();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [intakeOpen, intakeBusy]);
   // Keep unread preview from binary extract until staff pastes real text.
   useEffect(() => {
@@ -333,16 +335,40 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     const binary =
       !/\.(txt|csv|md|eml|json)$/i.test(file.name) && !/^text\//i.test(file.type || '');
     if (binary) {
+      // Clear prior paste so a failed read cannot show a stale mapped preview.
+      setIntakeText('');
+      setIntakePreview(null);
       setIntakeBusy(true);
-      try {
+      const previewOnce = async () => {
         const data = new FormData();
         data.append('preview_only', '1');
         data.append('source', 'staff_upload');
         data.append('file', file);
+        data.append('filename', file.name);
         const response = await fetch('/api/booking-intake', { method: 'POST', body: data });
-        const result = await response.json();
+        const raw = await response.text();
+        let result: Record<string, any> = {};
+        try {
+          result = raw ? JSON.parse(raw) : {};
+        } catch {
+          throw new Error(
+            response.ok
+              ? UNREAD_FILE_MESSAGE
+              : `Intake preview failed (${response.status}). Retry after the page finishes loading.`,
+          );
+        }
         if (!response.ok) throw new Error(result.error || UNREAD_FILE_MESSAGE);
+        return result;
+      };
+      try {
+        let result = await previewOnce();
+        // Same file often works after refresh — auto-retry once while PDF libs warm up.
+        if (result.unread && /\.pdf$/i.test(file.name)) {
+          await new Promise((r) => setTimeout(r, 500));
+          result = await previewOnce();
+        }
         if (result.unread) {
+          setIntakeText('');
           setIntakePreview(
             buildIntakeMappingPreview('', {
               unread: true,
@@ -351,20 +377,36 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           );
         } else {
           const extracted = String(result.text || '');
-          if (extracted.trim()) setIntakeText(extracted);
+          setIntakeText(extracted);
           setIntakePreview(
             result.mapping ||
               buildIntakeMappingPreview(extracted, { parties: s?.parties ?? [] }),
           );
         }
       } catch (err) {
-        setIntakeStatus(err instanceof Error ? err.message : UNREAD_FILE_MESSAGE);
-        setIntakePreview(
-          buildIntakeMappingPreview('', {
-            unread: true,
-            unreadMessage: UNREAD_FILE_MESSAGE,
-          }),
-        );
+        // One more attempt after a compile/network blip (matches “works after refresh”).
+        try {
+          await new Promise((r) => setTimeout(r, 600));
+          const result = await previewOnce();
+          if (result.unread) throw new Error(result.unread_message || UNREAD_FILE_MESSAGE);
+          const extracted = String(result.text || '');
+          setIntakeText(extracted);
+          setIntakePreview(
+            result.mapping ||
+              buildIntakeMappingPreview(extracted, { parties: s?.parties ?? [] }),
+          );
+        } catch (retryErr) {
+          setIntakeText('');
+          setIntakeStatus(
+            retryErr instanceof Error ? retryErr.message : UNREAD_FILE_MESSAGE,
+          );
+          setIntakePreview(
+            buildIntakeMappingPreview('', {
+              unread: true,
+              unreadMessage: UNREAD_FILE_MESSAGE,
+            }),
+          );
+        }
       } finally {
         setIntakeBusy(false);
       }
@@ -5224,13 +5266,16 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         <div
           className="modal-backdrop"
           role="presentation"
-          onClick={() => closeIntake()}
+          onClick={() => {
+            if (!intakeBusy) closeIntake();
+          }}
         >
           <div
-            className="modal intake-modal intake-modal-client"
+            className={`modal intake-modal intake-modal-client${intakeBusy ? ' is-busy' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="intake-draft-title"
+            aria-busy={intakeBusy}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-head intake-modal-head">
@@ -5254,6 +5299,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <div className="modal-body intake-modal-body">
               <section className="intake-preview intake-preview-client" aria-live="polite">
                 <div className="intake-preview-grid">
+                  {intakeBusy && (
+                    <div className="intake-loading-overlay" role="status" aria-live="assertive">
+                      <span className="intake-loading-spinner" aria-hidden />
+                      <strong>
+                        {intakeProgress
+                          ? `Uploading ${intakeProgress.processed.toLocaleString()}/${intakeProgress.total.toLocaleString()}…`
+                          : intakeFile && !intakeText.trim()
+                            ? `Reading ${intakeFile.name}…`
+                            : 'Working…'}
+                      </strong>
+                      <span>Escape is disabled until this finishes</span>
+                    </div>
+                  )}
                   <div className="intake-preview-left">
                     <div
                       className={`intake-paste-box${intakeDrag ? ' is-dragging' : ''}`}
@@ -5620,13 +5678,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
             <div className="modal-footer intake-modal-footer">
               <p className="intake-preview-summary">
-                {liveIntakePreview?.unread
-                  ? 'Could not read — paste text instead'
-                  : !intakeText.trim()
-                    ? 'Paste text or Use sample to map fields'
-                    : liveIntakePreview
-                      ? `${liveIntakePreview.found} found · ${liveIntakePreview.missing} to add yourself`
-                      : 'Paste or drop a file to preview'}
+                {intakeBusy
+                  ? intakeProgress
+                    ? `Uploading ${intakeProgress.processed.toLocaleString()}/${intakeProgress.total.toLocaleString()}…`
+                    : intakeFile && !intakeText.trim()
+                      ? 'Reading file…'
+                      : 'Working…'
+                  : liveIntakePreview?.unread
+                    ? 'Could not read — paste text instead'
+                    : !intakeText.trim()
+                      ? 'Paste text or Use sample to map fields'
+                      : liveIntakePreview
+                        ? `${liveIntakePreview.found} found · ${liveIntakePreview.missing} to add yourself`
+                        : 'Paste or drop a file to preview'}
               </p>
               <div className="intake-footer-actions">
                 <button

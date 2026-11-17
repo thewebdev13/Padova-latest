@@ -72,10 +72,15 @@ export async function POST(request: Request) {
         String(data.get('preview_only') || '') === '1' ||
         String(data.get('preview_only') || '').toLowerCase() === 'true';
       const file = data.get('file');
-      if (file instanceof File) {
-        filename = file.name;
+      // Node/Undici may give File or Blob depending on runtime — both have arrayBuffer.
+      if (file instanceof Blob) {
+        filename =
+          file instanceof File && file.name
+            ? file.name
+            : String(data.get('filename') || 'upload');
         mimeType = file.type || 'application/octet-stream';
         bytes = Buffer.from(await file.arrayBuffer());
+        if (!bytes.length) throw new Error('Uploaded file was empty');
         if (source === 'staff_paste') source = 'staff_upload';
       }
     } else {
@@ -141,11 +146,14 @@ export async function POST(request: Request) {
       let unread = false;
       let unreadMessage: string | undefined;
       if (bytes?.length) {
-        const extracted = await extractIntakeText(
-          mimeType || 'application/octet-stream',
-          bytes,
-          filename || 'upload',
-        );
+        const mime = mimeType || 'application/octet-stream';
+        const name = filename || 'upload';
+        let extracted = await extractIntakeText(mime, bytes, name);
+        // Dev/Turbopack: first PDF compile can fail; one retry usually succeeds (same as refresh).
+        if (!extracted.extractable && /\.pdf$/i.test(name)) {
+          await new Promise((r) => setTimeout(r, 400));
+          extracted = await extractIntakeText(mime, bytes, name);
+        }
         if (extracted.extractable) {
           previewText = previewText.trim()
             ? `${previewText.trim()}\n\n${extracted.text}`
@@ -153,6 +161,7 @@ export async function POST(request: Request) {
         } else if (!previewText.trim()) {
           unread = true;
           unreadMessage = UNREAD_FILE_MESSAGE;
+          if (extracted.note) console.warn('[intake preview]', extracted.note);
         }
       }
       if (!unread && !previewText.trim()) {

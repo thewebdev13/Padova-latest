@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { UNREAD_FILE_MESSAGE } from './intake-preview';
 
 export type FileTextExtract = {
@@ -10,20 +11,99 @@ export type FileTextExtract = {
 
 const require = createRequire(import.meta.url);
 
-/** Cap scanned-PDF OCR cost on serverless (pages × Tesseract). */
-const PDF_OCR_MAX_PAGES = 5;
-const PDF_OCR_SCALE = 1.5;
+/** Cache pdf.js load — first Turbopack compile can fail; reuse after warm. */
+let pdfjsLoad: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null = null;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadPdfjs() {
+  if (!pdfjsLoad) {
+    pdfjsLoad = (async () => {
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      if (pdfjs.GlobalWorkerOptions) {
+        pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(
+          require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
+        ).href;
+      }
+      return pdfjs;
+    })();
+  }
+  try {
+    return await pdfjsLoad;
+  } catch (err) {
+    // Allow a later retry after Turbopack finishes compiling the package.
+    pdfjsLoad = null;
+    throw err;
+  }
+}
 
 /**
- * Best-effort text from a digital PDF (text layer only).
- * Empty text layer → caller may fall back to page OCR.
+ * Digital PDF text via pdf.js getTextContent.
+ */
+export async function extractPdfTextViaPdfjs(
+  bytes: Buffer,
+  filename = 'upload.pdf',
+): Promise<FileTextExtract> {
+  try {
+    const pdfjs = await loadPdfjs();
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(bytes),
+      useSystemFonts: true,
+      isEvalSupported: false,
+      disableFontFace: true,
+    });
+    const pdf = await loadingTask.promise;
+    if (!pdf.numPages) {
+      return {
+        text: '',
+        extractable: false,
+        method: 'none',
+        note: `PDF “${filename}”: no pages.`,
+      };
+    }
+    const parts: string[] = [];
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+      const page = await pdf.getPage(pageNum);
+      const content = await page.getTextContent();
+      let pageText = '';
+      for (const item of content.items) {
+        if (!item || typeof item !== 'object' || !('str' in item)) continue;
+        pageText += String((item as { str?: string }).str || '');
+        pageText += (item as { hasEOL?: boolean }).hasEOL ? '\n' : ' ';
+      }
+      const cleaned = pageText.replace(/\u0000/g, '').replace(/[ \t]+\n/g, '\n').trim();
+      if (cleaned) parts.push(cleaned);
+    }
+    const text = parts.join('\n\n').trim();
+    if (!text) {
+      return {
+        text: '',
+        extractable: false,
+        method: 'none',
+        note: `PDF “${filename}”: no selectable text (likely a scan).`,
+      };
+    }
+    return { text, extractable: true, method: 'pdf-text' };
+  } catch (err) {
+    return {
+      text: '',
+      extractable: false,
+      method: 'none',
+      note: `PDF “${filename}”: ${err instanceof Error ? err.message : 'pdf.js read failed'}.`,
+    };
+  }
+}
+
+/**
+ * pdf-parse text layer (CJS, no worker) — preferred first path under Next/Turbopack.
  */
 export async function extractPdfTextLayer(
   bytes: Buffer,
   filename = 'upload.pdf',
 ): Promise<FileTextExtract> {
   try {
-    // Import lib entry — package root runs a debug harness that needs test PDFs.
     const pdfParse = require('pdf-parse/lib/pdf-parse.js') as (
       data: Buffer,
     ) => Promise<{ text?: string }>;
@@ -50,109 +130,18 @@ export async function extractPdfTextLayer(
   }
 }
 
-/**
- * Rasterize PDF pages (local free) and OCR with Tesseract — for scanned / image-only PDFs.
- * Does not invent Field:Value; returns raw OCR text for the existing paste parser.
- */
+/** Re-export OCR entry for tests; implementation lives in intake-pdf-ocr.ts. */
 export async function extractPdfScannedOcr(
   bytes: Buffer,
   filename = 'upload.pdf',
 ): Promise<FileTextExtract> {
-  try {
-    // Native canvas must stay external to Turbopack (serverExternalPackages + CJS require).
-    const { createCanvas } = require('@napi-rs/canvas') as {
-      createCanvas: (w: number, h: number) => {
-        getContext: (type: '2d') => unknown;
-        toBuffer: (mime: string) => Buffer;
-      };
-    };
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const { createWorker } = await import('tesseract.js');
-    const { pathToFileURL } = await import('node:url');
-
-    // Node has no bundler worker URL — point at the package worker file.
-    if (pdfjs.GlobalWorkerOptions) {
-      pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(
-        require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs'),
-      ).href;
-    }
-
-    const loadingTask = pdfjs.getDocument({
-      data: new Uint8Array(bytes),
-      useSystemFonts: true,
-      isEvalSupported: false,
-      disableFontFace: true,
-    });
-    const pdf = await loadingTask.promise;
-    const pageCount = Math.min(pdf.numPages || 0, PDF_OCR_MAX_PAGES);
-    if (pageCount < 1) {
-      return {
-        text: '',
-        extractable: false,
-        method: 'none',
-        note: `PDF “${filename}”: no pages to OCR. ${UNREAD_FILE_MESSAGE}`,
-      };
-    }
-
-    const worker = await createWorker('eng');
-    const parts: string[] = [];
-    try {
-      for (let pageNum = 1; pageNum <= pageCount; pageNum += 1) {
-        const page = await pdf.getPage(pageNum);
-        const viewport = page.getViewport({ scale: PDF_OCR_SCALE });
-        const width = Math.max(1, Math.ceil(viewport.width));
-        const height = Math.max(1, Math.ceil(viewport.height));
-        const canvas = createCanvas(width, height);
-        const canvasContext = canvas.getContext('2d');
-        await page.render({
-          // pdf.js types expect DOM canvas; @napi-rs/canvas is compatible at runtime.
-          canvasContext: canvasContext as any,
-          viewport,
-        }).promise;
-        const png = canvas.toBuffer('image/png');
-        const {
-          data: { text: raw },
-        } = await worker.recognize(png);
-        const pageText = String(raw || '')
-          .replace(/\u0000/g, '')
-          .trim();
-        if (pageText) parts.push(pageText);
-      }
-    } finally {
-      await worker.terminate();
-    }
-
-    const text = parts.join('\n\n').trim();
-    if (!text) {
-      return {
-        text: '',
-        extractable: false,
-        method: 'none',
-        note: `PDF “${filename}”: scanned OCR found no text. ${UNREAD_FILE_MESSAGE}`,
-      };
-    }
-    const more =
-      (pdf.numPages || 0) > PDF_OCR_MAX_PAGES
-        ? ` (first ${PDF_OCR_MAX_PAGES} of ${pdf.numPages} pages)`
-        : '';
-    return {
-      text,
-      extractable: true,
-      method: 'pdf-ocr',
-      note: `PDF “${filename}”: scanned page OCR${more}`,
-    };
-  } catch (err) {
-    return {
-      text: '',
-      extractable: false,
-      method: 'none',
-      note: `PDF “${filename}”: scanned OCR failed (${err instanceof Error ? err.message : 'error'}). ${UNREAD_FILE_MESSAGE}`,
-    };
-  }
+  const { extractPdfScannedOcr: run } = await import('./intake-pdf-ocr');
+  return run(bytes, filename);
 }
 
 /**
- * Text layer first; if empty, free local page OCR (scanned PDFs). Never invents fields.
+ * pdf-parse → pdf.js (with one retry) → scanned OCR.
+ * Order prefers CJS pdf-parse so first-open under Turbopack does not depend on the ESM worker.
  */
 export async function extractPdfText(
   bytes: Buffer,
@@ -160,14 +149,24 @@ export async function extractPdfText(
 ): Promise<FileTextExtract> {
   const layer = await extractPdfTextLayer(bytes, filename);
   if (layer.extractable && layer.text.trim()) return layer;
+
+  let viaPdfjs = await extractPdfTextViaPdfjs(bytes, filename);
+  if (!viaPdfjs.extractable || !viaPdfjs.text.trim()) {
+    await sleep(350);
+    viaPdfjs = await extractPdfTextViaPdfjs(bytes, filename);
+  }
+  if (viaPdfjs.extractable && viaPdfjs.text.trim()) return viaPdfjs;
+
   const ocr = await extractPdfScannedOcr(bytes, filename);
   if (ocr.extractable && ocr.text.trim()) return ocr;
+
   return {
     text: '',
     extractable: false,
     method: 'none',
     note:
       ocr.note ||
+      viaPdfjs.note ||
       layer.note ||
       `PDF “${filename}”: ${UNREAD_FILE_MESSAGE}`,
   };

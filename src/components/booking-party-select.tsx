@@ -29,6 +29,10 @@ export default function BookingPartySelect({
   const creation = useRef<{ name: string; key: string } | null>(null);
   const [searching, setSearching] = useState(false),
     [lookupFailed, setLookupFailed] = useState(false);
+  const initialRef = useRef(initial);
+  const valueRef = useRef(value);
+  initialRef.current = initial;
+  valueRef.current = value;
   const create = async (kind?: 'person' | 'company') => {
     if (!onCreate || creating || searching || lookupFailed) return;
     const name = query.trim(),
@@ -80,27 +84,40 @@ export default function BookingPartySelect({
     });
   }, [initial, value]);
   useEffect(() => {
+    const term = query.trim();
+    // Empty query: show seeded/local rows only. Never hit directory with q="" —
+    // that loads LIMIT 30 by name and can omit the intake-selected party until a
+    // slow round-trip finishes (blank Customer label on QA/server).
+    if (!term) {
+      if (allowedIds) {
+        setRows(initialRef.current.filter((r) => allowedIds.includes(r.id)));
+      } else if (role === 'contact') {
+        setRows(initialRef.current.slice(0, 30));
+      }
+      setSearching(false);
+      return;
+    }
+    if (allowedIds) {
+      setRows(initialRef.current.filter((r) => allowedIds.includes(r.id)));
+      return;
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      if (role === 'contact' && !query.trim()) {
-        setRows(initial.slice(0, 30));
-        setSearching(false);
-        return;
-      }
-      if (allowedIds) {
-        setRows(initial.filter((r) => allowedIds.includes(r.id)));
-        return;
-      }
-      fetch(`/api/directory?role=${encodeURIComponent(role)}&q=${encodeURIComponent(query)}`, {
+      setSearching(true);
+      fetch(`/api/directory?role=${encodeURIComponent(role)}&q=${encodeURIComponent(term)}`, {
         signal: controller.signal,
       })
         .then((r) => (r.ok ? r.json() : Promise.reject()))
         .then((r) => {
           setRows((old) => {
+            const selectedId = valueRef.current;
             const selectedRow =
-              initial.find((row) => row.id === value) || old.find((row) => row.id === value);
+              (selectedId &&
+                (initialRef.current.find((row) => row.id === selectedId) ||
+                  old.find((row) => row.id === selectedId))) ||
+              undefined;
             const next = selectedRow
-              ? [selectedRow, ...r.results.filter((row: R) => row.id !== value)]
+              ? [selectedRow, ...r.results.filter((row: R) => row.id !== selectedId)]
               : r.results;
             return next;
           });
@@ -118,7 +135,7 @@ export default function BookingPartySelect({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, role, allowedIds?.join(','), value, initial]);
+  }, [query, role, allowedIds?.join(',')]);
   const selected = initial.find((r) => r.id === value) || rows.find((r) => r.id === value),
     all = selected ? [selected, ...rows.filter((r) => r.id !== value)] : rows;
   return (

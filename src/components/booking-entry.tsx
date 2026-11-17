@@ -964,28 +964,66 @@ export default function BookingEntry(props: Props) {
         return '';
       }
     };
+    // Publish progress as soon as customer (and other parties) resolve so the
+    // Customer field paints immediately instead of waiting on later lookups.
+    const publishProgress = () => {
+      setV({
+        ...next,
+        traveler_ids: [...(next.traveler_ids ?? [])],
+      });
+    };
+
+    const partyLookups: Array<Promise<void>> = [];
     if (p.customer && !/^(unknown|n\/a|not applicable)$/i.test(p.customer)) {
-      next.customer_id = await ensureParty(p.customer, 'customer');
-      next.intake_customer_label = next.customer_id ? '' : p.customer;
+      partyLookups.push(
+        (async () => {
+          next.customer_id = await ensureParty(p.customer, 'customer');
+          next.intake_customer_label = next.customer_id ? '' : p.customer;
+          publishProgress();
+        })(),
+      );
     }
     if (p.traveler && !/^(unknown|n\/a|not applicable)$/i.test(p.traveler)) {
-      const id = await ensureParty(p.traveler, 'traveler');
-      if (id) {
-        next.traveler_ids = [id];
-        setTraveler('');
-        next.intake_traveler_label = '';
-      } else {
-        setTraveler(p.traveler);
-        next.intake_traveler_label = p.traveler;
-      }
+      partyLookups.push(
+        (async () => {
+          const names = travelerNames(p.traveler);
+          const ids: string[] = [];
+          for (const name of names) {
+            const id = await ensureParty(name, 'traveler');
+            if (id) ids.push(id);
+          }
+          if (ids.length) {
+            next.traveler_ids = [...new Set(ids)];
+            setTraveler('');
+            next.intake_traveler_label = '';
+          } else {
+            setTraveler(p.traveler);
+            next.intake_traveler_label = p.traveler;
+          }
+          publishProgress();
+        })(),
+      );
     }
-    if (p.airline && next.product === 'Flight')
-      next.provider_id = await ensureParty(p.airline, 'airline');
-    else if (p.property && next.product === 'Hotel') {
-      next.provider_id = await ensureParty(p.property, 'property');
-      setHotelDirectoryQuery(String(p.property));
-    } else if (p.airline || p.property)
+    if (p.airline && next.product === 'Flight') {
+      partyLookups.push(
+        (async () => {
+          next.provider_id = await ensureParty(p.airline, 'airline');
+          publishProgress();
+        })(),
+      );
+    } else if (p.property && next.product === 'Hotel') {
+      partyLookups.push(
+        (async () => {
+          next.provider_id = await ensureParty(p.property, 'property');
+          setHotelDirectoryQuery(String(p.property));
+          publishProgress();
+        })(),
+      );
+    } else if (p.airline || p.property) {
       issues.push('Provider label is incompatible with Product; select the appropriate provider');
+    }
+    await Promise.all(partyLookups);
+
     const method = p.method
       ? exactEligibleMatch(
           rows('bookingSourceMethods').filter((m) => m.products.includes(next.product)),
