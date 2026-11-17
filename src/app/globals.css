@@ -875,7 +875,8 @@ td small {
   align-items: center;
   justify-content: center;
   padding: 25px;
-  backdrop-filter: blur(3px);
+  /* Avoid backdrop-filter: it makes position:fixed dropdowns clip inside the modal */
+  backdrop-filter: none;
 }
 .modal {
   width: 750px;
@@ -3911,7 +3912,270 @@ td small {
   color: var(--ink);
 }
 
-/* Site Feedback 3 Phase 3 — commissions list */
+/* Site Feedback 3 Phase 3 — commissions list (Owner sample) */
+.commissions-sample {
+  padding: 0;
+  overflow: hidden;
+}
+.commissions-sample-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+.commissions-sample-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 14px 12px 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  color: #7a8791;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.commissions-sample-tab.is-active {
+  color: var(--green);
+  border-bottom-color: var(--green);
+}
+.commissions-sample-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eef1f3;
+  color: #52636f;
+  font-size: 11px;
+  font-weight: 700;
+}
+.commissions-sample-tab.is-active .commissions-sample-count {
+  background: var(--softgreen);
+  color: var(--green);
+}
+.commissions-sample-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.commissions-sample-search {
+  flex: 1 1 220px;
+  min-width: 200px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d5dce0;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  color: #7a8791;
+  min-height: 40px;
+}
+.commissions-sample-search input {
+  border: 0;
+  outline: none;
+  background: transparent;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 0;
+  font: inherit;
+  color: var(--ink);
+}
+.commissions-sample-segment {
+  display: inline-flex;
+  border: 1px solid #d5dce0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.commissions-sample-segment button {
+  border: 0;
+  background: transparent;
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #52636f;
+  cursor: pointer;
+}
+.commissions-sample-segment button + button {
+  border-left: 1px solid #d5dce0;
+}
+.commissions-sample-segment button.is-active {
+  background: var(--green);
+  color: #fff;
+}
+.commissions-sample-sort {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.commissions-sample-sort select {
+  appearance: none;
+  border: 1px solid #d5dce0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 32px 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1c262c;
+  min-height: 40px;
+  cursor: pointer;
+}
+.commissions-sample-sort-icon {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: #7a8791;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.commissions-sample.card .table-wrap.commissions-sample-table,
+.commissions-sample-table {
+  overflow: hidden !important;
+  width: 100%;
+  max-width: 100%;
+}
+.commissions-sample-table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  white-space: normal;
+}
+.commissions-sample-table th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a959e;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.commissions-sample-table td {
+  padding: 12px 8px;
+  border-bottom: 1px solid #eef1f3;
+  vertical-align: middle;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.commissions-sample-table col.commissions-col-booking {
+  width: 9%;
+}
+.commissions-sample-table col.commissions-col-payer {
+  width: 20%;
+}
+.commissions-sample-table col.commissions-col-money {
+  width: 9%;
+}
+.commissions-sample-table col.commissions-col-expected {
+  width: 8%;
+}
+.commissions-sample-table col.commissions-col-actions {
+  width: 14%;
+}
+.commissions-sample-table td.money,
+.commissions-sample-table th.money {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.commissions-booking-cell .booking-code {
+  font-weight: 700;
+  font-size: 12.5px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.commissions-payer-cell {
+  min-width: 0;
+}
+.commissions-payer-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.commissions-payer-line strong {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.commissions-through {
+  display: block;
+  margin-top: 2px;
+  color: #7a8791;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commissions-sample-table .row-actions {
+  white-space: nowrap;
+  text-align: right;
+  padding-right: 12px;
+}
+.commissions-record-btn {
+  background: #fff !important;
+  border-color: #cfd6db !important;
+  color: var(--ink) !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+}
+.commissions-more-btn {
+  min-width: 30px;
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+}
+.commissions-sample-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px 16px;
+  color: #7a8791;
+  font-size: 13px;
+}
+.commissions-show-more {
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.commissions-show-more:hover {
+  text-decoration: underline;
+}
+.commissions-sample-empty {
+  padding: 24px 18px;
+}
+.commissions-payable-embed {
+  padding: 8px 0 0;
+}
 .commissions-lane-tabs {
   margin: 0 0 14px;
   padding: 0;
@@ -3940,17 +4204,18 @@ td small {
 }
 .tag-new {
   display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #e7f2ff;
-  color: #1d4f91;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--softgreen);
+  color: var(--green);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   vertical-align: middle;
+  letter-spacing: 0.02em;
 }
 .outstanding-amt {
-  font-weight: 600;
+  font-weight: 700;
+  color: #b45309 !important;
 }
 .row-more {
   position: relative;
@@ -3984,55 +4249,62 @@ td small {
   background: #f3f6f8;
 }
 .modal.commission-bundle {
-  width: min(560px, 100%);
-  max-height: min(92vh, 820px);
-  overflow: hidden;
+  width: min(760px, 100%);
+  max-height: min(92vh, 900px);
+  /* visible so SearchableSelect menus (fixed under backdrop-filter) are not clipped */
+  overflow: visible;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px #0f1c1830;
+}
+.modal.commission-bundle .modal-head,
+.modal.commission-bundle .modal-footer {
+  border-radius: inherit;
+  position: relative;
+  z-index: 2;
+  background: #fff;
+}
+.modal.commission-bundle .modal-footer {
+  background: #fafcfa;
+  border-radius: 0 0 14px 14px;
 }
 .commission-bundle-head {
   align-items: flex-start;
-  background: linear-gradient(180deg, #f7fbf9 0%, #fff 100%);
-}
-.commission-bundle-eyebrow {
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--green);
-  margin: 0 0 4px;
+  background: #fff;
+  border-bottom: 0;
+  padding-bottom: 4px;
 }
 .commission-bundle-head h2 {
   font-size: 22px;
   letter-spacing: -0.02em;
+  margin: 0;
+  color: #1c262c;
 }
 .commission-bundle-head p {
-  max-width: 42ch;
+  max-width: 48ch;
   line-height: 1.45;
+  margin: 8px 0 0;
+  color: #667682;
+  font-size: 13px;
 }
 .commission-bundle-body {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 18px 22px 12px;
-  overflow: auto;
+  gap: 12px;
+  padding: 8px 20px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
   min-height: 0;
   flex: 1 1 auto;
+  max-height: min(62vh, 560px);
+  position: relative;
+  z-index: 1;
+  background: #fff;
 }
-.commission-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
+.modal.commission-bundle .search-select.is-open {
+  z-index: 50;
 }
-.commission-section-head h3 {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink);
-}
-.commission-section-head p {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.4;
+.modal.commission-bundle .search-select-results {
+  z-index: 1300;
 }
 .commission-field {
   display: grid;
@@ -4040,19 +4312,24 @@ td small {
   min-width: 0;
 }
 .commission-field > span {
-  font-size: 11px;
-  font-weight: 600;
-  color: #4d5b66;
+  font-size: 12px;
+  font-weight: 650;
+  color: #2f3b44;
+}
+.commission-field > span abbr {
+  text-decoration: none;
+  color: #2f3b44;
 }
 .commission-field input,
 .commission-field select,
 .commission-field textarea {
   width: 100%;
-  border: 1px solid #d7e0db;
+  border: 1px solid #d5dce0;
   border-radius: 8px;
   padding: 10px 12px;
   background: #fff;
   color: var(--ink);
+  min-height: 42px;
 }
 .commission-field input:focus,
 .commission-field select:focus,
@@ -4061,11 +4338,36 @@ td small {
   border-color: var(--green);
 }
 .commission-field small {
-  color: var(--muted);
+  color: #7a8791;
   font-size: 11px;
+  line-height: 1.35;
 }
-.commission-field--amount {
-  max-width: 140px;
+.commission-money-input {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0;
+  border: 1px solid #d5dce0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  min-height: 42px;
+}
+.commission-money-input > span {
+  padding: 0 0 0 12px;
+  color: #667682;
+  font-weight: 600;
+}
+.commission-money-input input {
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  min-height: 40px;
+}
+.commission-money-input:focus-within {
+  border-color: var(--green);
+  outline: 2px solid #184d4333;
 }
 .commission-payer-stack {
   display: flex;
@@ -4073,26 +4375,16 @@ td small {
   gap: 12px;
 }
 .commission-payer-card {
-  border: 1px solid #dce6e1;
-  border-radius: 12px;
+  border: 1px solid #d9e0e5;
+  border-radius: 10px;
   padding: 14px;
   background: #fff;
   display: grid;
   gap: 12px;
   min-width: 0;
-  box-shadow: 0 1px 0 #184d4308;
-}
-.commission-payer-card--primary {
-  border-color: #c9ddd5;
-  background: linear-gradient(180deg, #f4faf7 0%, #fff 48%);
-}
-.commission-payer-card--secondary {
-  border-color: #e4e8ec;
-  background: #fff;
 }
 .commission-payer-card--payout {
-  border-color: #e6ddcf;
-  background: linear-gradient(180deg, #fbf8f2 0%, #fff 50%);
+  background: #fff;
 }
 .commission-payer-card-head {
   display: flex;
@@ -4100,88 +4392,67 @@ td small {
   justify-content: space-between;
   gap: 10px;
 }
-.commission-payer-card-head > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.commission-payer-card-head strong {
-  font-size: 13px;
+.commission-payer-title {
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #2f3b44;
   font-family: Manrope, Arial, sans-serif;
 }
-.commission-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.commission-pill--primary {
-  background: var(--softgreen);
-  color: var(--green);
-}
-.commission-pill--secondary {
-  background: #eef2f5;
-  color: #44525d;
-}
-.commission-pill--payout {
-  background: #f3eadc;
-  color: #8a6a35;
-}
-.commission-payer-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: end;
-}
-.commission-check {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  align-items: start;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fbfcfd;
-  cursor: pointer;
-}
-.commission-check input {
-  margin-top: 3px;
-  width: 16px;
-  height: 16px;
-  accent-color: var(--green);
-}
-.commission-check span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.commission-check strong {
+.commission-remove-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
   font-size: 13px;
-  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+  color: #c0392b;
 }
-.commission-check small {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.35;
+.commission-remove-link:hover {
+  text-decoration: underline;
 }
-.commission-check--block {
-  width: 100%;
+.commission-payer-row--sample {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.commission-payer-row--inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(140px, 0.7fr) minmax(150px, 0.7fr);
+  gap: 12px;
+  align-items: start;
+}
+.commission-field--gross,
+.commission-field--due {
+  min-width: 0;
 }
 .commission-more-grid {
   display: grid;
   gap: 10px;
 }
+.commission-more-payer-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #667682;
+}
 .commission-add-payer {
-  align-self: start;
-  border-style: dashed;
-  background: #f7faf8;
+  align-self: stretch;
+  width: 100%;
+  justify-content: center;
+  border: 1px dashed #b7c4bc;
+  background: #fff;
   color: var(--green);
+  font-weight: 650;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.commission-add-payer:hover {
+  background: #f7faf8;
 }
 .commission-note {
   margin: 0;
@@ -4194,52 +4465,72 @@ td small {
   line-height: 1.45;
 }
 .commission-more {
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
+  border: 0;
+  padding: 0;
 }
 .commission-more > summary {
+  list-style: none;
   cursor: pointer;
-  color: var(--muted);
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #3d4a54;
+  font-size: 13px;
   font-weight: 600;
+  padding: 4px 0;
 }
-.commission-more[open] > summary {
-  margin-bottom: 10px;
-  color: var(--ink);
+.commission-more > summary::-webkit-details-marker {
+  display: none;
+}
+.commission-more-hint {
+  font-weight: 500;
+  color: #7a8791;
+}
+.commission-more-chevron {
+  flex-shrink: 0;
+  color: #7a8791;
+  transition: transform 0.15s ease;
+}
+.commission-more[open] .commission-more-chevron {
+  transform: rotate(180deg);
+}
+.commission-more-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #d9e0e5;
+  border-radius: 10px;
+  background: #fafbfc;
 }
 .commission-bundle-foot {
   flex-direction: column;
   align-items: stretch;
-  gap: 12px;
+  gap: 0;
   flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
 }
 .commission-summary-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 14px;
   align-items: center;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--softgreen);
-  border: 1px solid #d5e4de;
-  color: #35574d;
-  font-size: 12px;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #eef1f3;
+  border: 0;
+  color: #3d4a54;
+  font-size: 13px;
 }
 .commission-summary-bar strong {
-  color: var(--green);
+  color: #1c262c;
   font-weight: 700;
 }
-.commission-summary-tag {
+.commission-summary-keeps {
   margin-left: auto;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #fff;
-  border: 1px solid #d5e4de;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--green);
 }
 .commission-bundle-actions {
   display: flex;
@@ -4253,18 +4544,25 @@ td small {
   max-width: 100%;
   min-width: 0;
 }
+.modal.commission-bundle .search-select-control {
+  min-height: 42px;
+}
 .modal.commission-bundle .search-select-control input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (max-width: 560px) {
-  .commission-payer-row {
+@media (max-width: 720px) {
+  .commission-payer-row--sample,
+  .commission-payer-row--inline {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
-  .commission-field--amount {
-    max-width: none;
+  .commission-summary-keeps {
+    margin-left: 0;
+  }
+  .commission-more-hint {
+    display: none;
   }
 }
 .checkbox-row {

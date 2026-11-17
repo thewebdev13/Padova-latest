@@ -15,6 +15,7 @@ export default function CommissionPayables({
   canManage,
   enabled,
   action,
+  embedded = false,
 }: {
   rows: Row[];
   payments: Row[];
@@ -23,18 +24,21 @@ export default function CommissionPayables({
   canManage: boolean;
   enabled: boolean;
   action: (kind: string, defaults?: Row) => void;
+  embedded?: boolean;
 }) {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   return (
-    <section className="card">
-      <div className="card-header">
-        <h2>Commission Payable</h2>
-        {canManage && (
-          <button className="btn ghost" disabled={!enabled} onClick={() => action('referral')}>
-            Add Commission Payable
-          </button>
-        )}
-      </div>
+    <section className={embedded ? 'commissions-payable-embed' : 'card'}>
+      {!embedded && (
+        <div className="card-header">
+          <h2>Commission Payable</h2>
+          {canManage && (
+            <button className="btn ghost" disabled={!enabled} onClick={() => action('referral')}>
+              Add Commission Payable
+            </button>
+          )}
+        </div>
+      )}
       {!enabled && (
         <p className="empty">
           Commission Payable extension requires deployment before new agreements can be recorded.
