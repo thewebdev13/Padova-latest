@@ -136,6 +136,7 @@ export default function SearchableSelect({
           autoFocus={autoFocus}
           required={required}
           value={text}
+          title={text || undefined}
           placeholder="Search and select…"
           onFocus={(e) => {
             if (blurClose.current != null) window.clearTimeout(blurClose.current);

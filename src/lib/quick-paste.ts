@@ -13,6 +13,12 @@ const labels: Record<string, string> = {
   'client name': 'customer',
   'booked by': 'customer',
   'bill to': 'customer',
+  'customer phone': 'customer_phone',
+  'customer email': 'customer_email',
+  'customer notes': 'customer_notes',
+  'client phone': 'customer_phone',
+  'client email': 'customer_email',
+  'client notes': 'customer_notes',
   traveler: 'traveler',
   'traveler name': 'traveler',
   passenger: 'traveler',
@@ -264,6 +270,9 @@ export function exactPointCost(quantity: number, rate: string, unit: string): nu
 
 export const quickPasteAIInstructions = `Extract booking information for Padova. Do not invent or infer missing facts, payments, ownership or costs. Use Unknown when unknown. Output ONLY the exact Field: Value lines below, one field per line, no markdown or commentary. Use dates YYYY-MM-DD and money as plain USD decimals. Use Product Flight, Hotel, Car or Other; Trip Type One Way, Round Trip or Multi-City. For Multi-City retain every segment in Summary for human review. Customer Paid and Seller Paid must be exactly Paid, Partial, Unpaid or Unknown, and actual amounts must be evidence-based. Keep reservation facts in Summary and operational notes in Notes. Never output credentials or full card/account numbers. Keep booking source account/profile separate from the card that paid. Rate unit defaults to cents per point. Supply these labels:
 Customer: Unknown
+Customer Phone: Unknown
+Customer Email: Unknown
+Customer Notes: Unknown
 Traveler: Unknown
 Product: Unknown
 Trip Type: Unknown

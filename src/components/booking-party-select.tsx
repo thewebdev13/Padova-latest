@@ -1,7 +1,15 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
 import SearchableSelect from './searchable-select';
+
 type R = Record<string, any>;
+
+export type PartyCreateExtras = {
+  phone?: string;
+  email?: string;
+  notes?: string;
+};
+
 export default function BookingPartySelect({
   id,
   label,
@@ -9,6 +17,7 @@ export default function BookingPartySelect({
   initial,
   role = 'customer',
   allowedIds,
+  createDefaults,
   onChange,
   onCreate,
 }: {
@@ -18,14 +27,24 @@ export default function BookingPartySelect({
   initial: R[];
   role?: string;
   allowedIds?: string[];
+  /** Prefill optional contact fields when opening Add (e.g. intake paste). */
+  createDefaults?: PartyCreateExtras;
   onChange: (v: string) => void;
-  onCreate?: (name: string, key: string, kind?: 'person' | 'company') => Promise<R>;
+  onCreate?: (
+    name: string,
+    key: string,
+    kind?: 'person' | 'company',
+    extras?: PartyCreateExtras,
+  ) => Promise<R>;
 }) {
   const [query, setQuery] = useState(''),
     [rows, setRows] = useState<R[]>(initial.slice(0, 30));
   const [creating, setCreating] = useState(false),
     [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
+  const [phone, setPhone] = useState(''),
+    [email, setEmail] = useState(''),
+    [notes, setNotes] = useState('');
   const creation = useRef<{ name: string; key: string } | null>(null);
   const [searching, setSearching] = useState(false),
     [lookupFailed, setLookupFailed] = useState(false);
@@ -33,11 +52,27 @@ export default function BookingPartySelect({
   const valueRef = useRef(value);
   initialRef.current = initial;
   valueRef.current = value;
+  const contactRoles = ['customer', 'traveler', 'seller', 'contact'].includes(role);
+  const resetContactFields = (seed?: PartyCreateExtras) => {
+    setPhone(seed?.phone?.trim() ?? '');
+    setEmail(seed?.email?.trim() ?? '');
+    setNotes(seed?.notes?.trim() ?? '');
+  };
   const create = async (kind?: 'person' | 'company') => {
-    if (!onCreate || creating || searching || lookupFailed) return;
-    const name = query.trim(),
-      identity = JSON.stringify([name, kind]);
+    if (!onCreate || creating) return;
+    const name = query.trim();
     if (!name) return;
+    if (lookupFailed) {
+      setError('Lookup unavailable. Re-enter the name to retry before creating.');
+      return;
+    }
+    const identity = JSON.stringify([
+      name,
+      kind,
+      phone.trim(),
+      email.trim(),
+      notes.trim(),
+    ]);
     const normalize = (v: string) =>
       v.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
     const exact = [...initial, ...rows].filter(
@@ -48,10 +83,16 @@ export default function BookingPartySelect({
       onChange(exact[0].id);
       setAdding(false);
       setQuery('');
+      resetContactFields();
       return;
     }
     if (exact.length > 1) {
       setError('More than one matching record exists. Cancel and choose the correct record.');
+      return;
+    }
+    const trimmedEmail = email.trim();
+    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError('Enter a valid email, or leave email blank.');
       return;
     }
     setCreating(true);
@@ -59,10 +100,16 @@ export default function BookingPartySelect({
     try {
       if (creation.current?.name !== identity)
         creation.current = { name: identity, key: crypto.randomUUID() };
-      const row = await onCreate(name, creation.current!.key, kind);
+      const extras: PartyCreateExtras = {
+        phone: phone.trim() || undefined,
+        email: trimmedEmail || undefined,
+        notes: notes.trim() || undefined,
+      };
+      const row = await onCreate(name, creation.current!.key, kind, extras);
       setRows((old) => [...old, row]);
       onChange(row.id);
       setQuery('');
+      resetContactFields();
       setAdding(false);
       creation.current = null;
     } catch (e) {
@@ -84,6 +131,12 @@ export default function BookingPartySelect({
     });
   }, [initial, value]);
   useEffect(() => {
+    // While the add panel is open the select is hidden — skip directory fetch so
+    // typing the new name does not toggle searching/rows and flicker the buttons.
+    if (adding) {
+      setSearching(false);
+      return;
+    }
     const term = query.trim();
     // Empty query: show seeded/local rows only. Never hit directory with q="" —
     // that loads LIMIT 30 by name and can omit the intake-selected party until a
@@ -135,7 +188,7 @@ export default function BookingPartySelect({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, role, allowedIds?.join(',')]);
+  }, [query, role, allowedIds?.join(','), adding]);
   const selected = initial.find((r) => r.id === value) || rows.find((r) => r.id === value),
     all = selected ? [selected, ...rows.filter((r) => r.id !== value)] : rows;
   return (
@@ -160,7 +213,10 @@ export default function BookingPartySelect({
             onCreate
               ? (name) => {
                   setQuery(name);
+                  resetContactFields(createDefaults);
                   setAdding(true);
+                  setError('');
+                  setLookupFailed(false);
                 }
               : undefined
           }
@@ -177,7 +233,7 @@ export default function BookingPartySelect({
               e.stopPropagation();
               setAdding(false);
             }
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
               e.preventDefault();
               void create();
             }
@@ -185,52 +241,118 @@ export default function BookingPartySelect({
         >
           <div className="inline-add-head">
             <strong>Add new {role}</strong>
-            <button type="button" aria-label={`Close add ${role}`} onClick={() => setAdding(false)}>
+            <button
+              type="button"
+              className="inline-add-close"
+              aria-label={`Close add ${role}`}
+              onClick={() => setAdding(false)}
+            >
               ×
             </button>
           </div>
-          <label htmlFor={`${id}-new`}>{label} name</label>
-
-          <input
-            id={`${id}-new`}
-            autoFocus
-            aria-label={`New ${role} name`}
-            placeholder={`${label} name`}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSearching(!!e.target.value.trim());
-              setLookupFailed(false);
-            }}
-          />
-          <div className="inline-actions">
+          <div className="inline-add-fields">
+            <div className="inline-add-field">
+              <label htmlFor={`${id}-new`}>
+                {label} name <span className="req">required</span>
+              </label>
+              <input
+                id={`${id}-new`}
+                autoFocus
+                aria-label={`New ${role} name`}
+                placeholder={`Full ${label.toLowerCase()} name`}
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setLookupFailed(false);
+                  setError('');
+                }}
+              />
+            </div>
+            {contactRoles && (
+              <>
+                <div className="inline-add-field">
+                  <label htmlFor={`${id}-phone`}>
+                    Phone <span className="opt">optional</span>
+                  </label>
+                  <input
+                    id={`${id}-phone`}
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    aria-label={`${label} phone`}
+                    placeholder="Phone number"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+                <div className="inline-add-field">
+                  <label htmlFor={`${id}-email`}>
+                    Email <span className="opt">optional</span>
+                  </label>
+                  <input
+                    id={`${id}-email`}
+                    type="email"
+                    autoComplete="email"
+                    aria-label={`${label} email`}
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="inline-add-field full">
+                  <label htmlFor={`${id}-notes`}>
+                    Notes <span className="opt">optional</span>
+                  </label>
+                  <textarea
+                    id={`${id}-notes`}
+                    rows={2}
+                    aria-label={`${label} notes`}
+                    placeholder="Small notes — preferences, how to reach, etc."
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <div className="inline-add-actions">
             <button
               type="button"
               className="btn"
               disabled={creating}
-              onClick={() => setAdding(false)}
+              onClick={() => {
+                setAdding(false);
+                resetContactFields();
+              }}
             >
               Cancel
             </button>
             <button
               type="button"
-              className="btn primary"
-              disabled={!query.trim() || creating || searching || lookupFailed}
+              className="btn primary inline-add-save"
+              disabled={!query.trim() || creating || lookupFailed}
               onClick={() => void create()}
             >
-              {creating ? 'Saving…' : searching ? 'Checking names…' : `Add ${role}`}
+              {creating ? 'Saving…' : `Add ${role}`}
             </button>
             {['customer', 'seller'].includes(role) && (
               <button
                 type="button"
                 className="btn"
-                disabled={!query.trim() || creating || searching || lookupFailed}
+                disabled={!query.trim() || creating || lookupFailed}
                 onClick={() => void create('company')}
               >
                 Add organization
               </button>
             )}
           </div>
+          <small className="inline-add-hint inline-add-hint-stable" aria-live="polite">
+            {lookupFailed
+              ? 'Lookup unavailable — re-enter the name to retry.'
+              : !query.trim()
+                ? `Enter a name to enable Add ${role}.`
+                : '\u00a0'}
+          </small>
         </div>
       )}
       {lookupFailed && (

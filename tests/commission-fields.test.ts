@@ -3,8 +3,12 @@ import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { operationalEntry } from '../src/lib/booking-entry';
 import {
+  bookingCommissionsEmptyMessage,
   expectedCommissionDisplay,
+  expectedCommissionPanelLabel,
+  hasExpectedCommissionOnBooking,
   receivableCommissionLabel,
+  recordedCommissionTotals,
 } from '../src/lib/commission-line-label';
 
 test('operational entry keeps secondary commission and referring org independent', () => {
@@ -66,19 +70,52 @@ test('commission line labels keep primary secondary and payable distinct', () =>
   };
   assert.equal(
     receivableCommissionLabel({ payer_id: primaryPayer }, operational),
-    'Primary IATA / partner commission receivable',
+    'Primary IATA / partner commission · recorded receivable',
   );
   assert.equal(
     receivableCommissionLabel({ payer_id: secondaryPayer }, operational),
-    'Secondary commission receivable',
+    'Secondary commission · recorded receivable',
   );
   assert.equal(
     receivableCommissionLabel({
       payer_id: secondaryPayer,
       notes: '[secondary] Secondary expected commission receivable',
     }),
-    'Secondary commission receivable',
+    'Secondary commission · recorded receivable',
   );
   assert.equal(expectedCommissionDisplay({ expected: 'Unknown' }).status, 'unknown');
   assert.equal(expectedCommissionDisplay({ expected: 'Yes', amount: 2500 }).amount, 2500);
+  assert.equal(
+    expectedCommissionPanelLabel('secondary'),
+    'Secondary commission expected',
+  );
+  assert.equal(hasExpectedCommissionOnBooking(operational), true);
+  assert.match(
+    bookingCommissionsEmptyMessage({
+      hasRecordedReceivable: false,
+      hasReferral: false,
+      hasRefund: false,
+      hasExpectedOnBooking: true,
+    }) || '',
+    /No recorded receivable or receipt yet/,
+  );
+  assert.equal(
+    bookingCommissionsEmptyMessage({
+      hasRecordedReceivable: true,
+      hasReferral: false,
+      hasRefund: false,
+      hasExpectedOnBooking: true,
+    }),
+    null,
+  );
+  assert.deepEqual(
+    recordedCommissionTotals(
+      [
+        { payer_id: primaryPayer, is_iata_partner: true, gross: 2500, retained: 0 },
+        { payer_id: secondaryPayer, is_iata_partner: false, gross: 3000, retained: 0 },
+      ],
+      operational,
+    ),
+    { primaryCents: 2500, secondaryCents: 3000 },
+  );
 });

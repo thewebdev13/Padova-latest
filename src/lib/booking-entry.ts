@@ -99,6 +99,8 @@ export const operationalEntry = z.object({
   sale_known: z.boolean(),
   components: z.array(entryComponent).max(30).default([]),
   additional_charge: cents.default(0),
+  /** What the extra fee is (booking fee, service fee, etc.) — evidence only, not invented. */
+  additional_charge_note: z.string().trim().max(500).optional(),
   commission: z
     .object({
       expected: z.enum(['Yes', 'No', 'Unknown']),

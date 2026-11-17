@@ -2957,7 +2957,7 @@ export async function execute(
           throw new Error(
             'Travel changed since this form opened. Reload the booking before saving.',
           );
-        if (d.travel_end < d.travel_start) throw new Error('Travel end precedes start');
+        if (d.travel_end < d.travel_start) throw new Error('Travel end date is before start date. Fix the dates before saving.');
         for (const person_id of d.details.traveler_ids ?? []) {
           const person = await one(tx, 'SELECT kind FROM parties WHERE id=$1', [person_id]);
           if (person.kind !== 'person') throw new Error('Travelers must be individual people');
@@ -3034,7 +3034,7 @@ export async function execute(
           throw new Error(
             'Review the whole-booking cancellation status before adding travel; cancel a specific component for partial replacements',
           );
-        if (d.travel_end < d.travel_start) throw new Error('Travel end precedes start');
+        if (d.travel_end < d.travel_start) throw new Error('Travel end date is before start date. Fix the dates before saving.');
         before = booking;
         result = await insert(tx, 'travel_components', { ...d, command_id });
         const updated = await one(
@@ -3606,7 +3606,7 @@ export async function execute(
         break;
       }
       case 'booking': {
-        if (d.travel_end < d.travel_start) throw new Error('Travel end precedes start');
+        if (d.travel_end < d.travel_start) throw new Error('Travel end date is before start date. Fix the dates before saving.');
         const {
           historical_undated_booking,
           traveler_ids,
@@ -3792,7 +3792,7 @@ export async function execute(
         if (travel_components_input) {
           for (const travel of travel_components_input)
             if (travel.travel_end < travel.travel_start)
-              throw new Error('Travel end precedes start');
+              throw new Error('Travel end date is before start date. Fix the dates before saving.');
           values.travel_start = travel_components_input.map((t: Row) => t.travel_start).sort()[0];
           values.travel_end = travel_components_input
             .map((t: Row) => t.travel_end)
@@ -3957,9 +3957,12 @@ export async function execute(
           }
         }
         if (operational?.additional_charge) {
+          const feeNote = String(operational.additional_charge_note || '')
+            .trim()
+            .slice(0, 200);
           await insert(tx, 'charges', {
             booking_id: result.id,
-            kind: 'booking/service fee',
+            kind: feeNote || 'booking/service fee',
             amount: operational.additional_charge,
             effective_on: date,
             command_id,
@@ -3974,6 +3977,13 @@ export async function execute(
             result.id,
             d.customer_id,
           );
+          if (feeNote)
+            await insert(tx, 'notes', {
+              record_type: 'booking',
+              record_id: result.id,
+              body: `Extra charge / fee: ${feeNote} (${operational.additional_charge}¢).`,
+              actor: actor.id,
+            });
         }
         if (customer_payment)
           await postPayment(
@@ -4688,6 +4698,13 @@ export async function execute(
               record_id: d.booking_id,
               actor: actor.id,
               body: '[primary] Primary IATA / partner commission receivable.',
+            });
+          } else {
+            await insert(tx, 'notes', {
+              record_type: 'booking',
+              record_id: d.booking_id,
+              actor: actor.id,
+              body: '[secondary] Secondary expected commission receivable (not IATA primary, not org payable).',
             });
           }
         }
@@ -5502,7 +5519,7 @@ export async function execute(
               'This booking contains several trips. Change the individual flight or stay so each trip keeps the correct dates.',
             );
         }
-        if (d.travel_end < d.travel_start) throw new Error('Travel end precedes start');
+        if (d.travel_end < d.travel_start) throw new Error('Travel end date is before start date. Fix the dates before saving.');
         result = await one(
           tx,
           'UPDATE bookings SET summary=$2,travel_start=$3,travel_end=$4,itinerary=$5,reservation_status=$6,confirmation_status=$7,document_status=$8,product=COALESCE($9,product),channel=COALESCE($10,channel),supplier_id=COALESCE($11,supplier_id),revision=revision+1 WHERE id=$1 RETURNING *',

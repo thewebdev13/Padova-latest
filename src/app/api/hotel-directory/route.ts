@@ -18,6 +18,7 @@ export async function GET(request: Request) {
       q: p.get('q') ?? undefined,
       location: p.get('location') ?? undefined,
       includeArchived: p.get('archived') === '1',
+      match: p.get('match') === 'any' ? 'any' : 'all',
     });
     return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {

@@ -10,8 +10,10 @@ import {
   flightEndpointChange,
   eligibleProfileContact,
   inventoryOption,
+  entryBookedCostCents,
 } from '../src/lib/booking-ux';
-import { derivedTravel } from '../src/lib/booking-derived';
+import { decimalUnits } from '../src/lib/entry-options';
+import { derivedTravel, travelDateOrderIssue } from '../src/lib/booking-derived';
 
 const state = {
   today: '2026-11-03',
@@ -55,6 +57,23 @@ test('From/To updates replace legacy route and feed the existing automatic summa
     travel_end: '2026-12-12',
   };
   assert.deepEqual(flightEndpoints(v), { origin: 'EWR', destination: 'TLV' });
+  assert.deepEqual(flightEndpoints({ route: 'JFK New York to TLV' }), {
+    origin: 'JFK',
+    destination: 'TLV',
+  });
+  assert.deepEqual(flightEndpoints({ route: 'JFK New York to Tel Aviv' }), {
+    origin: 'JFK',
+    destination: 'Tel Aviv',
+  });
+  // Whole prose wrongly stored only in From (QA screenshot case).
+  assert.deepEqual(
+    flightEndpoints({ origin: 'JFK New York to TI', destination: '' }),
+    { origin: 'JFK', destination: 'TI' },
+  );
+  assert.deepEqual(
+    flightEndpoints({ origin: 'JFK NEW YORK TO TLV', destination: '' }),
+    { origin: 'JFK', destination: 'TLV' },
+  );
   const changed = flightEndpointChange(v, 'destination', 'HKG');
   assert.equal(changed.route, 'EWR-HKG');
   assert.match(derivedTravel(changed).summary, /EWR-HKG/);
@@ -114,8 +133,8 @@ test('one booking form has six clear sections, one traveler input, direct summar
     html,
     /Add several travelers|Customize reservation summary|Discard unfinished booking/,
   );
-  assert.match(html, /Amount owed to Padova<\/dt><dd>Unknown/);
-  assert.match(html, /Remaining balance<\/dt><dd>Unknown/);
+  assert.match(html, /Amount owed to Padova<\/dt><dd>\$0\.00/);
+  assert.match(html, /Remaining balance<\/dt><dd>\$0\.00/);
   assert.match(html, /aria-label="From"/);
   assert.match(html, /aria-label="To"/);
   assert.match(html, /Discard draft/);
@@ -142,6 +161,123 @@ test('provider-direct amount remains separate from cash received by Padova', () 
   assert.match(html, /Received by Padova<\/dt><dd>\$0.00/);
   assert.match(html, /Customer paid provider directly<\/dt><dd>\$900.00/);
   assert.match(html, /Remaining balance<\/dt><dd>\$50.00/);
+  assert.match(html, /Use booked cost \(\$900\.00\)/);
+  assert.match(html, /What is this fee\?/);
+  assert.match(html, /Booking fee/);
+});
+
+test('customer paid provider sums known costs and ignores empty sibling rows', () => {
+  const html = render({
+    sale: '0',
+    sale_touched: true,
+    components: [
+      { type: 'Customer card', cost: '540' },
+      { type: 'Customer card', cost: '' },
+    ],
+  });
+  assert.match(html, /Customer paid provider directly<\/dt><dd>\$540\.00/);
+  assert.match(html, /Amount owed to Padova<\/dt><dd>\$0\.00/);
+  assert.equal(
+    entryBookedCostCents(
+      [
+        { type: 'Customer card', cost: '540' },
+        { type: 'Customer card', cost: '' },
+      ],
+      (v) => (v === '' || v == null ? undefined : decimalUnits(String(v))),
+    ),
+    54000,
+  );
+});
+
+test('provider-direct + fee shows fee only as owed; trip stay on provider line', () => {
+  const html = render({
+    sale: '0',
+    sale_touched: true,
+    additional_charge: '50',
+    additional_charge_note: 'Booking fee',
+    components: [{ type: 'Customer card', cost: '540' }],
+  });
+  assert.match(html, /Amount owed to Padova \(Booking fee\)<\/dt><dd>\$50\.00/);
+  assert.doesNotMatch(html, /Includes Booking fee/);
+  assert.match(html, /Remaining balance<\/dt><dd>\$50\.00/);
+  assert.match(html, /Customer paid provider directly<\/dt><dd>\$540\.00/);
+  assert.match(html, /What is this fee\?/);
+});
+
+test('return/check-out before start is caught before save with clear copy', () => {
+  assert.equal(
+    travelDateOrderIssue({
+      product: 'Flight',
+      trip_type: 'Round Trip',
+      travel_start: '2026-12-14',
+      travel_end: '2026-12-10',
+    }),
+    'Return Date is before Departure Date. Fix the dates before saving.',
+  );
+  assert.equal(
+    travelDateOrderIssue({
+      product: 'Hotel',
+      travel_start: '2027-03-04',
+      travel_end: '2027-03-01',
+    }),
+    'Check-out date is before Check-in date. Fix the dates before saving.',
+  );
+  assert.equal(
+    travelDateOrderIssue({
+      product: 'Flight',
+      trip_type: 'Round Trip',
+      travel_start: '2026-12-10',
+      travel_end: '2026-12-14',
+    }),
+    null,
+  );
+  assert.equal(
+    travelDateOrderIssue({
+      product: 'Flight',
+      trip_type: 'One Way',
+      travel_start: '2026-12-14',
+      travel_end: '2026-12-10',
+    }),
+    null,
+  );
+  const html = render({
+    product: 'Flight',
+    trip_type: 'Round Trip',
+    travel_start: '2026-12-14',
+    travel_end: '2026-12-10',
+  });
+  assert.match(html, /Return Date is before Departure Date/);
+});
+
+test('entry booked cost sums known component money and stays Unknown when blank', () => {
+  const parse = (v: unknown) =>
+    v === '' || v == null ? undefined : decimalUnits(String(v));
+  assert.equal(entryBookedCostCents([], parse), undefined);
+  assert.equal(entryBookedCostCents([{ cost: '' }], parse), undefined);
+  assert.equal(
+    entryBookedCostCents([{ type: 'Customer card', cost: '540' }], parse),
+    54000,
+  );
+  assert.equal(
+    entryBookedCostCents(
+      [
+        { type: 'Customer card', cost: '540' },
+        { type: 'Padova payment', cost: '10' },
+      ],
+      parse,
+    ),
+    55000,
+  );
+  assert.equal(
+    entryBookedCostCents(
+      [
+        { type: 'Customer card', cost: '540' },
+        { type: 'Padova payment', cost: 'bad' },
+      ],
+      parse,
+    ),
+    undefined,
+  );
 });
 
 test('new booking method offers four controlled product buttons instead of free text', () => {

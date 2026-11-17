@@ -145,7 +145,7 @@ test('normal booking separates travel/source from money, permits typed travelers
   ])
     assert.ok(html.includes(label), label);
   assert.doesNotMatch(html, /Actual supplier|Financially responsible customer|Direct Airline/);
-  assert.match(html, /Amount owed to Padova<\/dt><dd>Unknown/);
+  assert.match(html, /Amount owed to Padova<\/dt><dd>\$0\.00/);
   assert.match(html, /aria-label="Payment type"/);
   assert.match(html, /Points, vouchers or other value/);
   assert.doesNotMatch(

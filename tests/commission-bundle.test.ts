@@ -82,11 +82,11 @@ test('multi-payer commission save posts two receivables + optional payable with 
     assert.equal(commissions[1].is_iata_partner, false);
     assert.equal(
       receivableCommissionLabel(commissions[0], null, commissions),
-      'Primary IATA / partner commission receivable',
+      'Primary IATA / partner commission · recorded receivable',
     );
     assert.equal(
       receivableCommissionLabel(commissions[1], null, commissions),
-      'Secondary commission receivable',
+      'Secondary commission · recorded receivable',
     );
 
     const referrals = (await db.query('SELECT * FROM referrals WHERE booking_id=$1', [booking.id]))

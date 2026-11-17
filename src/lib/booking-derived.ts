@@ -40,6 +40,23 @@ export function travelDateLabels(product: string, tripType = 'One Way') {
         : { start: 'Start date', end: 'End date (optional)' };
 }
 
+/** Client/server-shared: end before start. Returns staff-facing message or null. */
+export function travelDateOrderIssue(v: {
+  product?: string;
+  trip_type?: string;
+  travel_start?: string;
+  travel_end?: string;
+}): string | null {
+  if (v.product === 'Flight' && v.trip_type === 'One Way') return null;
+  if (v.product === 'Flight' && v.trip_type === 'Multi-City') return null;
+  const start = String(v.travel_start || '').trim();
+  const end = String(v.travel_end || '').trim();
+  if (!start || !end) return null;
+  if (end >= start) return null;
+  const labels = travelDateLabels(v.product || 'Other', v.trip_type || 'One Way');
+  return `${labels.end || 'End'} is before ${labels.start}. Fix the dates before saving.`;
+}
+
 /** A direct customer payment identifies its owner unless an exception is entered. */
 export function directCardOwner(component: Values, customerID: string) {
   return component.owner_id || customerID;

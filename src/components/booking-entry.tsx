@@ -18,6 +18,7 @@ import {
   flightEndpoints,
   flightEndpointChange,
   inventoryOption,
+  entryBookedCostCents,
 } from '@/lib/booking-ux';
 import CommandForm from './command-form';
 import BookingPartySelect from './booking-party-select';
@@ -29,7 +30,12 @@ import {
 } from '@/lib/booking-recovery';
 import { similarTravelerName } from '@/lib/traveler-candidates';
 import { assetUnit } from '@/lib/asset-units';
-import { derivedTravel, travelDateLabels, directCardOwner } from '@/lib/booking-derived';
+import {
+  derivedTravel,
+  travelDateLabels,
+  travelDateOrderIssue,
+  directCardOwner,
+} from '@/lib/booking-derived';
 import { decimalUnits, parseList, PAYMENT_METHODS } from '@/lib/entry-options';
 import {
   eligibleParty,
@@ -372,9 +378,8 @@ export default function BookingEntry(props: Props) {
   const [extra, setExtra] = useState<Record<string, R[]>>({});
   const [hotelDirectoryHits, setHotelDirectoryHits] = useState<R[]>([]);
   const [hotelDirectoryNote, setHotelDirectoryNote] = useState('');
-  const [hotelDirectoryQuery, setHotelDirectoryQuery] = useState(
-    String(props.config.defaults.intake_provider_label || ''),
-  );
+  /** Optional corp/IATA override only — Property / Hotel is the real hotel field. */
+  const [hotelDirectoryQuery, setHotelDirectoryQuery] = useState('');
   const [travelerMenuStyle, setTravelerMenuStyle] = useState<CSSProperties | undefined>();
   const [recoveryAvailable, setRecoveryAvailable] = useState(true);
   const recovery = useRef<BookingRecovery | null>(null);
@@ -410,6 +415,7 @@ export default function BookingEntry(props: Props) {
     setV((old) => ({
       ...old,
       [key]: value,
+      ...(key === 'sale' ? { sale_touched: true } : {}),
       ...(key === 'source_method_id' && value !== old.source_method_id
         ? { award_program_id: '', source_profile_id: '' }
         : {}),
@@ -567,12 +573,27 @@ export default function BookingEntry(props: Props) {
                     ),
               )}
             onChange={set}
+            createDefaults={
+              key === 'customer_id'
+                ? {
+                    phone: String(v.intake_customer_phone ?? ''),
+                    email: String(v.intake_customer_email ?? ''),
+                    notes: String(v.intake_customer_notes ?? ''),
+                  }
+                : undefined
+            }
             onCreate={
               !key.startsWith('owner-') && onInlineCommand
-                ? async (name, commandKey, partyKind) => {
+                ? async (name, commandKey, partyKind, extras) => {
                     const role =
                       defaults.roles?.[0] ??
                       (key === 'provider_id' ? providerRole(v.product) : 'customer');
+                    const details = {
+                      ...(defaults.details ?? {}),
+                      ...(extras?.notes
+                        ? { relationship_notes: extras.notes.slice(0, 2000) }
+                        : {}),
+                    };
                     const data = {
                       ...defaults,
                       name,
@@ -583,6 +604,9 @@ export default function BookingEntry(props: Props) {
                           ? 'company'
                           : 'person'),
                       roles: [role],
+                      phone: extras?.phone?.slice(0, 100) || '',
+                      email: extras?.email || '',
+                      details,
                     };
                     setBusy(true);
                     try {
@@ -720,6 +744,13 @@ export default function BookingEntry(props: Props) {
       ? rows('programs').find((p) => /membership.*rewards|amex.*\bmr\b/i.test(p.name))?.id
       : '';
   const providerDirect = components.some((c) => c.type === 'Customer card');
+  const bookedCostCents = entryBookedCostCents(components, usd);
+  const customerDirectCents = entryBookedCostCents(
+    components.filter((c) => c.type === 'Customer card'),
+    usd,
+  );
+  const bookedCostLabel =
+    bookedCostCents === undefined ? undefined : dollars(bookedCostCents);
   const activeProfile = rows('bookingSourceProfiles').find((p) => p.id === v.source_profile_id);
   const sourceContact = rows('parties').find((p) => p.id === activeProfile?.holder_id);
   useEffect(() => {
@@ -744,9 +775,53 @@ export default function BookingEntry(props: Props) {
         ),
       );
   }, [v.source_method_id, inheritedProgram]);
+  // Soft-default sale until staff edits it:
+  // - Customer paid provider → $0 (trip already paid to provider; fee goes in Extra charge)
+  // - Padova paid → booked cost (typical customer price matches trip cost)
+  // Incomplete percent pricing falls back to Manual so the summary always shows dollars.
+  useEffect(() => {
+    if (!can('edit_customer_charges')) return;
+    if (bookedCostCents === undefined && !providerDirect) return;
+    setV((old) => {
+      if (old.sale_touched) return old;
+      const percentIncomplete =
+        old.pricing_method === 'Percentage Off Comparable Online Price' &&
+        !old.price_override &&
+        (old.comparable_price === '' ||
+          old.comparable_price == null ||
+          old.discount_percent === '' ||
+          old.discount_percent == null);
+      if (
+        old.pricing_method === 'Percentage Off Comparable Online Price' &&
+        !old.price_override &&
+        !percentIncomplete
+      )
+        return old;
+      const next = providerDirect
+        ? '0'
+        : bookedCostCents === undefined
+          ? undefined
+          : (bookedCostCents / 100).toFixed(2);
+      if (next === undefined) return old;
+      if (String(old.sale ?? '') === next && !percentIncomplete) return old;
+      return {
+        ...old,
+        pricing_method: 'Manual Customer Price',
+        price_override: false,
+        sale: next,
+        sale_seeded_from_cost: !providerDirect,
+      };
+    });
+  }, [bookedCostCents, providerDirect]);
   const selectedProvider = rows('parties').find((p) => p.id === v.provider_id);
   const derived = derivedTravel(v, selectedProvider?.name);
   const dateLabels = travelDateLabels(v.product, v.trip_type);
+  const dateOrderIssue = travelDateOrderIssue(v);
+  const errorBannerRef = useRef<HTMLParagraphElement | null>(null);
+  useEffect(() => {
+    if (!error) return;
+    errorBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [error]);
   const percentPricing = v.pricing_method === 'Percentage Off Comparable Online Price';
   let calculatedSale: number | undefined;
   try {
@@ -866,9 +941,19 @@ export default function BookingEntry(props: Props) {
       if (p[key] !== undefined)
         next[key] = ['sale', 'tax_amount'].includes(key) ? amount(key) : p[key];
     if (next.product === 'Hotel' && p.route && !next.location) next.location = p.route;
+    if (next.product === 'Flight' && p.route) {
+      const endpoints = flightEndpoints({ route: p.route });
+      next.origin = endpoints.origin;
+      next.destination = endpoints.destination;
+      if (endpoints.origin && endpoints.destination)
+        next.route = `${endpoints.origin}-${endpoints.destination}`;
+    }
     if (p.customer)
       next.intake_customer_label =
         /^(unknown|n\/a|not applicable)$/i.test(p.customer) ? '' : p.customer;
+    if (p.customer_phone) next.intake_customer_phone = String(p.customer_phone).trim();
+    if (p.customer_email) next.intake_customer_email = String(p.customer_email).trim();
+    if (p.customer_notes) next.intake_customer_notes = String(p.customer_notes).trim();
     if (p.traveler)
       next.intake_traveler_label =
         /^(unknown|n\/a|not applicable)$/i.test(p.traveler) ? '' : p.traveler;
@@ -938,13 +1023,21 @@ export default function BookingEntry(props: Props) {
         const keyId = `${role}:${label.normalize('NFKC').trim().toLowerCase()}`;
         if (!intakePartyKeys.current.has(keyId))
           intakePartyKeys.current.set(keyId, crypto.randomUUID());
-        const payload = {
+        const payload: R = {
           name: label.trim(),
           kind: ['airline', 'property', 'rental', 'commission_payer', 'seller'].includes(role)
             ? 'company'
             : 'person',
           roles: [role],
         };
+        if (role === 'customer') {
+          if (next.intake_customer_phone) payload.phone = String(next.intake_customer_phone);
+          if (next.intake_customer_email) payload.email = String(next.intake_customer_email);
+          if (next.intake_customer_notes)
+            payload.details = {
+              relationship_notes: String(next.intake_customer_notes).slice(0, 2000),
+            };
+        }
         const result = await onInlineCommand(
           'party',
           payload,
@@ -1204,6 +1297,8 @@ export default function BookingEntry(props: Props) {
         !v.travel_end
       )
         throw new Error(`Enter ${dateLabels.end}, or save a Draft.`);
+      const dateIssue = travelDateOrderIssue(v);
+      if (dateIssue) throw new Error(dateIssue);
       if (v.product === 'Flight' && v.trip_type !== 'Multi-City') {
         const endpoints = flightEndpoints(v);
         if (!!endpoints.origin.trim() !== !!endpoints.destination.trim())
@@ -1461,6 +1556,10 @@ export default function BookingEntry(props: Props) {
           notes: v.notes ?? '',
           sale_known: baseSale !== undefined,
           additional_charge: extraCharge,
+          additional_charge_note:
+            extraCharge && String(v.additional_charge_note || '').trim()
+              ? String(v.additional_charge_note).trim().slice(0, 500)
+              : undefined,
           components: componentInput,
           // Soft-merge C: IATA / secondary receivables only via Add commission.
           // Referring org on booking still applies the accepted partnership payable once.
@@ -1564,6 +1663,16 @@ export default function BookingEntry(props: Props) {
           </button>
         </div>
         <div className="modal-body">
+          {error && (
+            <p
+              ref={errorBannerRef}
+              className="form-error form-error-sticky"
+              role="alert"
+              tabIndex={-1}
+            >
+              {error}
+            </p>
+          )}
           {props.config.defaults.intake_provenance?.source && (
             <div className="intake-provenance-banner" role="status">
               <strong>Intake draft — review before Save Booking</strong>
@@ -2132,15 +2241,29 @@ export default function BookingEntry(props: Props) {
               {v.product === 'Hotel' && (
                 <>
                   {text('location', 'City / Location')}
-                  <div className="hotel-directory-lookup">
+                  <details
+                    className="hotel-directory-lookup full"
+                    open={
+                      !!hotelDirectoryNote ||
+                      hotelDirectoryHits.length > 0 ||
+                      !!hotelDirectoryQuery.trim()
+                    }
+                  >
+                    <summary>
+                      Optional: corp / IATA tips for this property
+                      <small>
+                        Not a second hotel field — uses Property / Hotel + City above
+                      </small>
+                    </summary>
                     <label className="field">
-                      <span>Hotel name for directory (optional)</span>
+                      <span>Search corp code / IATA / other name (optional)</span>
                       <input
                         type="text"
                         value={hotelDirectoryQuery}
                         onChange={(e) => setHotelDirectoryQuery(e.target.value)}
-                        placeholder="e.g. Marriott / corp code / IATA"
+                        placeholder="Only if different from Property — e.g. corp code or IATA"
                         disabled={busy}
+                        aria-label="Hotel directory search override"
                       />
                     </label>
                     <button
@@ -2168,9 +2291,10 @@ export default function BookingEntry(props: Props) {
                             const params = new URLSearchParams();
                             if (location) params.set('location', location);
                             if (q) params.set('q', q);
+                            if (location && q) params.set('match', 'any');
                             if (!location && !q) {
                               setHotelDirectoryNote(
-                                'Enter a city/location and/or hotel name before looking up.',
+                                'Pick Property / Hotel or enter City first, then look up tips.',
                               );
                               return;
                             }
@@ -2186,14 +2310,21 @@ export default function BookingEntry(props: Props) {
                               return;
                             }
                             setHotelDirectoryHits(data.hotels ?? []);
-                            if (!(data.hotels ?? []).length)
-                              setHotelDirectoryNote(
-                                location && q
-                                  ? 'No hotel directory rows for that location + name.'
-                                  : location
-                                    ? 'No hotel directory rows for that location.'
-                                    : 'No hotel directory rows for that hotel name.',
-                              );
+                            if (!(data.hotels ?? []).length) {
+                              if (!data.total_active) {
+                                setHotelDirectoryNote(
+                                  'Hotel directory catalog is empty. Add hotels under Partnerships → Hotels by location (tips only — does not post money).',
+                                );
+                              } else {
+                                setHotelDirectoryNote(
+                                  location && q
+                                    ? 'No directory match for that city or hotel name. Try the hotel name alone, or add it under Partnerships → Hotels.'
+                                    : location
+                                      ? 'No directory hotels for that city. Add one under Partnerships → Hotels by location.'
+                                      : 'No directory match for that hotel name / corp / IATA. Add it under Partnerships → Hotels.',
+                                );
+                              }
+                            }
                           } catch (err) {
                             setHotelDirectoryNote(
                               err instanceof Error ? err.message : 'Hotel directory lookup failed',
@@ -2202,10 +2333,11 @@ export default function BookingEntry(props: Props) {
                         })();
                       }}
                     >
-                      Look up hotel directory
+                      Look up corp / IATA tips
                     </button>
                     <small className="muted">
-                      Search by city, hotel name, corp code, or IATA. Tips only — does not post money.
+                      Tips only (best book method, corp, IATA). Does not replace Property / Hotel and
+                      does not post money.
                     </small>
                     {hotelDirectoryNote && <p role="status">{hotelDirectoryNote}</p>}
                     {hotelDirectoryHits.length > 0 && (
@@ -2235,7 +2367,6 @@ export default function BookingEntry(props: Props) {
                                   intake_provider_label: h.hotel_name || old.intake_provider_label,
                                   ...(h.party_id ? { provider_id: h.party_id } : {}),
                                 }));
-                                if (h.hotel_name) setHotelDirectoryQuery(String(h.hotel_name));
                                 if (h.party_id) {
                                   setExtra((old) => ({
                                     ...old,
@@ -2297,7 +2428,7 @@ export default function BookingEntry(props: Props) {
                         ))}
                       </div>
                     )}
-                  </div>
+                  </details>
                 </>
               )}
               {v.product === 'Car' && (
@@ -2323,6 +2454,11 @@ export default function BookingEntry(props: Props) {
                       : dateLabels.end!,
                   'date',
                 )}
+              {dateOrderIssue && (
+                <p className="form-error full date-order-error" role="alert">
+                  {dateOrderIssue}
+                </p>
+              )}
               {v.product === 'Flight' && v.trip_type === 'One Way' && (
                 <Field label="Return date">
                   <input
@@ -3373,16 +3509,60 @@ export default function BookingEntry(props: Props) {
                     (x) => change('pricing_method', x),
                     v.pricing_method || 'Manual Customer Price',
                   )}
+                  <p className="full customer-price-hint">
+                    {providerDirect
+                      ? `Customer already paid the provider${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Default amount owed to Padova is $0 — add only a fee below, or use booked cost if Padova is also collecting the trip price.`
+                      : `Typical: customer price matches what the trip was booked for${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Adjust only when it differs. Commissions stay separate.`}
+                  </p>
+                  {bookedCostCents !== undefined && (
+                    <div className="full customer-price-actions">
+                      <button
+                        type="button"
+                        className={providerDirect ? 'btn small' : 'btn primary'}
+                        aria-label={`Use booked cost ${bookedCostLabel}`}
+                        onClick={() =>
+                          setV((old) => ({
+                            ...old,
+                            pricing_method: 'Manual Customer Price',
+                            price_override: false,
+                            sale: (bookedCostCents / 100).toFixed(2),
+                            sale_touched: true,
+                            sale_seeded_from_cost: true,
+                          }))
+                        }
+                      >
+                        Use booked cost ({bookedCostLabel})
+                      </button>
+                      {providerDirect && (
+                        <button
+                          type="button"
+                          className="btn primary"
+                          onClick={() =>
+                            setV((old) => ({
+                              ...old,
+                              pricing_method: 'Manual Customer Price',
+                              sale: '0',
+                              sale_touched: true,
+                            }))
+                          }
+                        >
+                          No amount owed to Padova ($0)
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {percentPricing && (
                     <>
                       {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
                       {text('discount_percent', 'Discount %', 'number')}
                       <output>
                         Customer Price:{' '}
-                        {calculatedSale === undefined ? 'Unknown' : dollars(calculatedSale)} ·
-                        Savings:{' '}
                         {calculatedSale === undefined
-                          ? 'Unknown'
+                          ? dollars(0)
+                          : dollars(calculatedSale)}{' '}
+                        · Savings:{' '}
+                        {calculatedSale === undefined || usd(v.comparable_price) === undefined
+                          ? dollars(0)
                           : dollars(usd(v.comparable_price)! - calculatedSale)}
                       </output>
                       <Field label="Override calculated price">
@@ -3398,24 +3578,34 @@ export default function BookingEntry(props: Props) {
                     text(
                       'sale',
                       providerDirect
-                        ? 'Amount owed to Padova, including any fee (USD)'
+                        ? 'Amount owed to Padova before extra fee (USD)'
                         : 'Customer Sale Price (USD)',
                       'number',
                     )}
                   {providerDirect && (
-                    <>
-                      <p className="full">
-                        Customer payments made directly to the provider are separate. Enter only the
-                        amount Padova will collect above.
-                      </p>
-                      <button
-                        type="button"
-                        className="btn small"
-                        onClick={() => change('sale', '0')}
-                      >
-                        No amount owed to Padova ($0)
-                      </button>
-                    </>
+                    <p className="full">
+                      Customer card paid the provider directly
+                      {bookedCostLabel ? ` (${bookedCostLabel})` : ''}. That amount is recorded
+                      separately below — it is not owed to Padova. Keep amount owed at $0 and put
+                      any booking/service fee in Extra charge, or click Use booked cost only if
+                      Padova is also collecting the trip price.
+                    </p>
+                  )}
+                  {providerDirect && bookedCostCents === undefined && (
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() =>
+                        setV((old) => ({
+                          ...old,
+                          pricing_method: 'Manual Customer Price',
+                          sale: '0',
+                          sale_touched: true,
+                        }))
+                      }
+                    >
+                      No amount owed to Padova ($0)
+                    </button>
                   )}
                   {!percentPricing && (
                     <details>
@@ -3435,19 +3625,68 @@ export default function BookingEntry(props: Props) {
                       </label>
                     </details>
                   )}
-                  <details>
+                  <details open={!!v.additional_charge || !!v.additional_charge_note}>
                     <OptionalSummary
                       title="Extra charge / fee"
-                      hint="An additional amount owed to Padova"
-                      filled={v.additional_charge ? 1 : 0}
+                      hint="Booking fee or other amount owed to Padova — say what it is"
+                      filled={
+                        [v.additional_charge, v.additional_charge_note].filter(Boolean).length
+                      }
                     />
                     {text('additional_charge', 'Optional Additional Charge / Fee (USD)', 'number')}
+                    <Field label="What is this fee?" full>
+                      <>
+                        <div className="fee-note-chips" role="group" aria-label="Common fee types">
+                          {['Booking fee', 'Service fee', 'Agency fee', 'Other'].map((label) => (
+                            <button
+                              key={label}
+                              type="button"
+                              className={`btn small${
+                                String(v.additional_charge_note || '') === label ? ' primary' : ''
+                              }`}
+                              onClick={() => change('additional_charge_note', label)}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          aria-label="Extra fee note"
+                          placeholder="e.g. Booking fee, service fee, or leave blank"
+                          value={v.additional_charge_note ?? ''}
+                          onChange={(e) => change('additional_charge_note', e.target.value)}
+                        />
+                      </>
+                    </Field>
                   </details>
                   <dl className="customer-money-summary full" aria-label="Customer summary">
-                    <div>
-                      <dt>Amount owed to Padova</dt>
-                      <dd>{baseSale === undefined ? 'Unknown' : dollars(total)}</dd>
-                    </div>
+                    {(() => {
+                      const feeNote =
+                        String(v.additional_charge_note || '').trim() || 'Extra fee';
+                      const saleOnly = baseSale ?? 0;
+                      const feeOnly = extraCharge > 0 && saleOnly === 0;
+                      if (feeOnly)
+                        return (
+                          <div>
+                            <dt>Amount owed to Padova ({feeNote})</dt>
+                            <dd>{dollars(extraCharge)}</dd>
+                          </div>
+                        );
+                      return (
+                        <>
+                          <div>
+                            <dt>Amount owed to Padova</dt>
+                            <dd>{dollars(total)}</dd>
+                          </div>
+                          {extraCharge > 0 && (
+                            <div>
+                              <dt>Includes {feeNote}</dt>
+                              <dd>{dollars(extraCharge)}</dd>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                     <div>
                       <dt>Received by Padova</dt>
                       <dd>{v.customer_status_unresolved ? 'Unknown' : dollars(received)}</dd>
@@ -3455,7 +3694,7 @@ export default function BookingEntry(props: Props) {
                     <div className="remaining">
                       <dt>Remaining balance</dt>
                       <dd>
-                        {baseSale === undefined || v.customer_status_unresolved
+                        {v.customer_status_unresolved
                           ? 'Unknown'
                           : dollars(total - received)}
                       </dd>
@@ -3463,17 +3702,7 @@ export default function BookingEntry(props: Props) {
                     {providerDirect && (
                       <div>
                         <dt>Customer paid provider directly</dt>
-                        <dd>
-                          {components
-                            .filter((c) => c.type === 'Customer card')
-                            .some((c) => usd(c.cost) === undefined)
-                            ? 'Unknown'
-                            : dollars(
-                                components
-                                  .filter((c) => c.type === 'Customer card')
-                                  .reduce((sum, c) => sum + usd(c.cost)!, 0),
-                              )}
-                        </dd>
+                        <dd>{dollars(customerDirectCents ?? 0)}</dd>
                       </div>
                     )}
                   </dl>
@@ -3581,64 +3810,71 @@ export default function BookingEntry(props: Props) {
               ? 'Draft saved on this browser'
               : 'Automatic browser recovery is unavailable. Keep this page open or save a draft before leaving.'}
           </p>
+        </div>
+        <div className="modal-footer">
           {error && (
-            <p className="form-error" role="alert">
+            <p className="form-error form-error-footer" role="alert">
               {error}
             </p>
           )}
-        </div>
-        <div className="modal-footer">
-          <button
-            type="button"
-            className="btn discard-draft"
-            disabled={busy}
-            onClick={() => {
-              if (!window.confirm('Discard this unfinished draft?')) return;
-              recoveryFinished.current = true;
-              clearBookingRecovery(state.actor.id);
-              onClose();
-            }}
-          >
-            Discard draft
-          </button>
-          <button type="button" className="btn" onClick={closeBooking} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                if (hasUnsavedTicketing())
-                  throw new Error(
-                    'Save the edited traveler details to their profiles before saving the draft.',
-                  );
-                if (!onInlineCommand) throw new Error('Draft save unavailable');
-                await onInlineCommand(
-                  'booking_draft',
-                  {
-                    title: v.route || v.reservation_summary || `${v.product} draft`,
-                    entry: { ...v, components, pending_traveler: traveler },
-                  },
-                  crypto.randomUUID(),
-                );
+          {dateOrderIssue && !error && (
+            <p className="form-error form-error-footer" role="alert">
+              {dateOrderIssue}
+            </p>
+          )}
+          <div className="modal-footer-actions">
+            <button
+              type="button"
+              className="btn discard-draft"
+              disabled={busy}
+              onClick={() => {
+                if (!window.confirm('Discard this unfinished draft?')) return;
                 recoveryFinished.current = true;
                 clearBookingRecovery(state.actor.id);
                 onClose();
-              } catch (e) {
-                setError(e instanceof Error ? e.message : 'Draft save failed');
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Save Draft
-          </button>
-          <button className="btn primary" disabled={busy}>
-            {busy ? 'Saving…' : 'Save Booking'}
-          </button>
+              }}
+            >
+              Discard draft
+            </button>
+            <button type="button" className="btn" onClick={closeBooking} disabled={busy}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  if (hasUnsavedTicketing())
+                    throw new Error(
+                      'Save the edited traveler details to their profiles before saving the draft.',
+                    );
+                  if (!onInlineCommand) throw new Error('Draft save unavailable');
+                  await onInlineCommand(
+                    'booking_draft',
+                    {
+                      title: v.route || v.reservation_summary || `${v.product} draft`,
+                      entry: { ...v, components, pending_traveler: traveler },
+                    },
+                    crypto.randomUUID(),
+                  );
+                  recoveryFinished.current = true;
+                  clearBookingRecovery(state.actor.id);
+                  onClose();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Draft save failed');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Save Draft
+            </button>
+            <button className="btn primary" disabled={busy || !!dateOrderIssue}>
+              {busy ? 'Saving…' : 'Save Booking'}
+            </button>
+          </div>
         </div>
       </form>
     </div>

@@ -55,9 +55,7 @@ export default function CommissionBundleForm({
   const [bookingId, setBookingId] = useState(String(config.defaults?.booking_id || ''));
   const existingReferral = Boolean(
     bookingId &&
-      (state.referrals ?? []).some(
-        (r: R) => r.booking_id === bookingId && !r.archived_at,
-      ),
+      (state.referrals ?? []).some((r: R) => r.booking_id === bookingId && !r.archived_at),
   );
   const [payOut, setPayOut] = useState(false);
   useEffect(() => {
@@ -113,7 +111,6 @@ export default function CommissionBundleForm({
       let payable = 0;
       if (payOut) {
         if (referral.basis === 'fixed') payable = parseUsd(referral.fixed_amount) ?? 0;
-        // percentage of profit is unknown here without booking economics — show 0 until save.
       }
       return { incoming, retained, keeps: incoming - retained, payable };
     } catch {
@@ -160,8 +157,7 @@ export default function CommissionBundleForm({
             referral.basis === 'percentage'
               ? Math.round((Number.isFinite(ratePct) ? ratePct : 0) * 100)
               : 0,
-          fixed_amount:
-            referral.basis === 'fixed' ? (parseUsd(referral.fixed_amount) ?? 0) : 0,
+          fixed_amount: referral.basis === 'fixed' ? (parseUsd(referral.fixed_amount) ?? 0) : 0,
           percentage_basis: referral.percentage_basis,
           due_on: referral.due_on || date,
           reason: referral.reason.trim(),
@@ -195,6 +191,8 @@ export default function CommissionBundleForm({
     updatePayer(index, { payer_id: created.id });
   };
 
+  const hasPrimary = payers.some((row) => row.is_iata_partner);
+
   return (
     <div
       className="modal-backdrop"
@@ -204,274 +202,348 @@ export default function CommissionBundleForm({
     >
       <form
         ref={dialog}
-        className="modal"
+        className="modal commission-bundle"
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
         aria-labelledby="commission-bundle-title"
       >
-        <div className="modal-head">
+        <div className="modal-head commission-bundle-head">
           <div>
+            <p className="commission-bundle-eyebrow">Receivables</p>
             <h2 id="commission-bundle-title">Add commission</h2>
             <p>
-              Record who owes Padova (IATA partner and any secondary payer) and optionally who
-              Padova pays out to. One save · exact cents · never invents Unknown as zero.
+              Who owes Padova — IATA primary and any secondary payer. Affiliate payout stays
+              separate.
             </p>
           </div>
           <button type="button" disabled={busy} onClick={onClose} aria-label="Close dialog">
             <X size={18} />
           </button>
         </div>
-        <div className="modal-body form-grid">
-          <label className="full">
-            Booking
-            <SearchableSelect
-              id="commission-booking"
-              label="Booking"
-              value={bookingId}
-              options={bookingOptions}
-              onChange={setBookingId}
-              required
-            />
-          </label>
 
-          {payers.map((p, index) => (
-            <fieldset key={index} className="full commission-payer-block">
-              <legend>Payer {index + 1}</legend>
-              <label>
-                Who owes Padova
-                <SearchableSelect
-                  id={`commission-payer-${index}`}
-                  label="Commission payer"
-                  value={p.payer_id}
-                  options={[
-                    ...partyOptions,
-                    ...(onCreateParty
-                      ? [{ value: '__add__', label: '+ Add new payer' }]
-                      : []),
-                  ]}
-                  onChange={(id) => {
-                    if (id === '__add__') void addPayerParty(index);
-                    else updatePayer(index, { payer_id: id });
-                  }}
-                  required
-                />
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={p.is_iata_partner}
-                  onChange={(e) => updatePayer(index, { is_iata_partner: e.target.checked })}
-                />
-                IATA partner (primary receivable)
-              </label>
-              <label>
-                Gross commission (USD)
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  required
-                  value={p.gross}
-                  onChange={(e) => updatePayer(index, { gross: e.target.value })}
-                />
-              </label>
-              {showMore && (
-                <>
-                  <label>
-                    Paid through / collecting agency
-                    <SearchableSelect
-                      id={`commission-collector-${index}`}
-                      label="Collector"
-                      value={p.collector_id}
-                      options={[{ value: '', label: 'None' }, ...partyOptions]}
-                      onChange={(id) => updatePayer(index, { collector_id: id })}
-                    />
-                  </label>
-                  <label>
-                    Collector keeps (USD)
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={p.retained}
-                      onChange={(e) => updatePayer(index, { retained: e.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Expected receipt date
-                    <input
-                      type="date"
-                      value={p.due_on}
-                      onChange={(e) => updatePayer(index, { due_on: e.target.value })}
-                    />
-                  </label>
-                </>
-              )}
-              {payers.length > 1 && (
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => setPayers((rows) => rows.filter((_, i) => i !== index))}
-                >
-                  Remove payer {index + 1}
-                </button>
-              )}
-            </fieldset>
-          ))}
+        <div className="modal-body commission-bundle-body">
+          <section className="commission-section">
+            <label className="commission-field">
+              <span>Booking</span>
+              <SearchableSelect
+                id="commission-booking"
+                label="Booking"
+                value={bookingId}
+                options={bookingOptions}
+                onChange={setBookingId}
+                required
+              />
+            </label>
+          </section>
 
-          <div className="full">
+          <section className="commission-section">
+            <div className="commission-section-head">
+              <h3>Who owes Padova</h3>
+              <p>Primary IATA first. Add a second payer only when someone else also owes.</p>
+            </div>
+
+            <div className="commission-payer-stack">
+              {payers.map((p, index) => {
+                const kind = p.is_iata_partner
+                  ? 'primary'
+                  : hasPrimary
+                    ? 'secondary'
+                    : 'payer';
+                return (
+                  <article
+                    key={index}
+                    className={`commission-payer-card commission-payer-card--${kind}`}
+                  >
+                    <header className="commission-payer-card-head">
+                      <div>
+                        <span className={`commission-pill commission-pill--${kind}`}>
+                          {kind === 'primary'
+                            ? 'IATA / primary'
+                            : kind === 'secondary'
+                              ? 'Secondary'
+                              : `Payer ${index + 1}`}
+                        </span>
+                        <strong>Payer {index + 1}</strong>
+                      </div>
+                      {payers.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn ghost small"
+                          onClick={() => setPayers((rows) => rows.filter((_, i) => i !== index))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </header>
+
+                    <label className="commission-field">
+                      <span>Who owes Padova</span>
+                      <SearchableSelect
+                        id={`commission-payer-${index}`}
+                        label="Commission payer"
+                        value={p.payer_id}
+                        options={[
+                          ...partyOptions,
+                          ...(onCreateParty
+                            ? [{ value: '__add__', label: '+ Add new payer' }]
+                            : []),
+                        ]}
+                        onChange={(id) => {
+                          if (id === '__add__') void addPayerParty(index);
+                          else updatePayer(index, { payer_id: id });
+                        }}
+                        required
+                      />
+                    </label>
+
+                    <div className="commission-payer-row">
+                      <label className="commission-check">
+                        <input
+                          type="checkbox"
+                          checked={p.is_iata_partner}
+                          onChange={(e) =>
+                            updatePayer(index, { is_iata_partner: e.target.checked })
+                          }
+                        />
+                        <span>
+                          <strong>IATA partner</strong>
+                          <small>Primary receivable</small>
+                        </span>
+                      </label>
+                      <label className="commission-field commission-field--amount">
+                        <span>Gross (USD)</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          required
+                          inputMode="decimal"
+                          value={p.gross}
+                          onChange={(e) => updatePayer(index, { gross: e.target.value })}
+                          aria-label={`Gross commission payer ${index + 1}`}
+                        />
+                      </label>
+                    </div>
+
+                    {showMore && (
+                      <div className="commission-more-grid">
+                        <label className="commission-field">
+                          <span>Paid through / collecting agency</span>
+                          <SearchableSelect
+                            id={`commission-collector-${index}`}
+                            label="Collector"
+                            value={p.collector_id}
+                            options={[{ value: '', label: 'None' }, ...partyOptions]}
+                            onChange={(id) => updatePayer(index, { collector_id: id })}
+                          />
+                        </label>
+                        <label className="commission-field">
+                          <span>Collector keeps (USD)</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={p.retained}
+                            onChange={(e) => updatePayer(index, { retained: e.target.value })}
+                          />
+                        </label>
+                        <label className="commission-field">
+                          <span>Expected receipt date</span>
+                          <input
+                            type="date"
+                            value={p.due_on}
+                            onChange={(e) => updatePayer(index, { due_on: e.target.value })}
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+
             <button
               type="button"
-              className="btn"
+              className="btn commission-add-payer"
               onClick={() => setPayers((rows) => [...rows, emptyPayer()])}
             >
-              + Add another payer
+              + Add secondary payer
             </button>
-          </div>
+          </section>
 
-          {existingReferral ? (
-            <p className="full note">
-              This booking already has a referring-org Commission Payable from the affiliate on the
-              booking. Add IATA / secondary receivables here only — do not post a second referrer
-              payout.
-            </p>
-          ) : (
-            <label className="full checkbox-row">
-              <input
-                type="checkbox"
-                checked={payOut}
-                onChange={(e) => setPayOut(e.target.checked)}
-              />
-              Pay out to referrer (Commission Payable Padova owes) — use only when the booking has
-              no referring organization deal
-            </label>
-          )}
-
-          {payOut && !existingReferral && (
-            <fieldset className="full">
-              <legend>Referrer payout</legend>
-              <label>
-                Payee
-                <SearchableSelect
-                  id="commission-referrer"
-                  label="Referrer"
-                  value={referral.referrer_id}
-                  options={orgOptions.length ? orgOptions : partyOptions}
-                  onChange={(id) => setReferral((r) => ({ ...r, referrer_id: id }))}
-                  required
+          <section className="commission-section">
+            {existingReferral ? (
+              <p className="commission-note">
+                This booking already has a referring-org payable. Record IATA / secondary
+                receivables here only — do not post a second referrer payout.
+              </p>
+            ) : (
+              <label className="commission-check commission-check--block">
+                <input
+                  type="checkbox"
+                  checked={payOut}
+                  onChange={(e) => setPayOut(e.target.checked)}
                 />
+                <span>
+                  <strong>Pay out to referrer</strong>
+                  <small>
+                    Commission Payable Padova owes — only when the booking has no referring
+                    organization deal
+                  </small>
+                </span>
               </label>
-              <label>
-                Amount type
-                <select
-                  value={referral.basis}
-                  onChange={(e) =>
-                    setReferral((r) => ({
-                      ...r,
-                      basis: e.target.value as 'percentage' | 'fixed',
-                    }))
-                  }
-                >
-                  <option value="percentage">Percentage</option>
-                  <option value="fixed">Fixed dollar</option>
-                </select>
-              </label>
-              {referral.basis === 'percentage' ? (
-                <label>
-                  Percentage of profit
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="100"
-                    value={referral.rate_bps}
-                    onChange={(e) => setReferral((r) => ({ ...r, rate_bps: e.target.value }))}
+            )}
+
+            {payOut && !existingReferral && (
+              <div className="commission-payer-card commission-payer-card--payout">
+                <header className="commission-payer-card-head">
+                  <div>
+                    <span className="commission-pill commission-pill--payout">Payable</span>
+                    <strong>Referrer payout</strong>
+                  </div>
+                </header>
+                <label className="commission-field">
+                  <span>Payee</span>
+                  <SearchableSelect
+                    id="commission-referrer"
+                    label="Referrer"
+                    value={referral.referrer_id}
+                    options={orgOptions.length ? orgOptions : partyOptions}
+                    onChange={(id) => setReferral((r) => ({ ...r, referrer_id: id }))}
+                    required
                   />
                 </label>
-              ) : (
-                <label>
-                  Fixed amount (USD)
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={referral.fixed_amount}
-                    onChange={(e) => setReferral((r) => ({ ...r, fixed_amount: e.target.value }))}
-                  />
-                </label>
-              )}
-              <label className="full">
-                Reason / agreement source
-                <textarea
-                  value={referral.reason}
-                  onChange={(e) => setReferral((r) => ({ ...r, reason: e.target.value }))}
-                  required
-                />
-              </label>
-              {showMore && (
-                <>
-                  <label>
-                    Payable when
+                <div className="commission-payer-row">
+                  <label className="commission-field">
+                    <span>Amount type</span>
                     <select
-                      value={referral.payable_when}
+                      value={referral.basis}
                       onChange={(e) =>
-                        setReferral((r) => ({ ...r, payable_when: e.target.value }))
+                        setReferral((r) => ({
+                          ...r,
+                          basis: e.target.value as 'percentage' | 'fixed',
+                        }))
                       }
                     >
-                      <option>When earned</option>
-                      <option>After travel</option>
-                      <option>After customer paid</option>
-                      <option>After commission received</option>
-                      <option>On date</option>
+                      <option value="percentage">Percentage</option>
+                      <option value="fixed">Fixed dollar</option>
                     </select>
                   </label>
-                  <label>
-                    Earliest payout date
-                    <input
-                      type="date"
-                      value={referral.due_on}
-                      onChange={(e) => setReferral((r) => ({ ...r, due_on: e.target.value }))}
-                    />
-                  </label>
-                </>
-              )}
-            </fieldset>
-          )}
+                  {referral.basis === 'percentage' ? (
+                    <label className="commission-field commission-field--amount">
+                      <span>% of profit</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        value={referral.rate_bps}
+                        onChange={(e) => setReferral((r) => ({ ...r, rate_bps: e.target.value }))}
+                      />
+                    </label>
+                  ) : (
+                    <label className="commission-field commission-field--amount">
+                      <span>Fixed (USD)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={referral.fixed_amount}
+                        onChange={(e) =>
+                          setReferral((r) => ({ ...r, fixed_amount: e.target.value }))
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
+                <label className="commission-field">
+                  <span>Reason / agreement source</span>
+                  <textarea
+                    value={referral.reason}
+                    onChange={(e) => setReferral((r) => ({ ...r, reason: e.target.value }))}
+                    required
+                    rows={2}
+                  />
+                </label>
+                {showMore && (
+                  <div className="commission-more-grid">
+                    <label className="commission-field">
+                      <span>Payable when</span>
+                      <select
+                        value={referral.payable_when}
+                        onChange={(e) =>
+                          setReferral((r) => ({ ...r, payable_when: e.target.value }))
+                        }
+                      >
+                        <option>When earned</option>
+                        <option>After travel</option>
+                        <option>After customer paid</option>
+                        <option>After commission received</option>
+                        <option>On date</option>
+                      </select>
+                    </label>
+                    <label className="commission-field">
+                      <span>Earliest payout date</span>
+                      <input
+                        type="date"
+                        value={referral.due_on}
+                        onChange={(e) => setReferral((r) => ({ ...r, due_on: e.target.value }))}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
 
-          <details className="full" open={showMore} onToggle={(e) => setShowMore(e.currentTarget.open)}>
+          <details
+            className="commission-more"
+            open={showMore}
+            onToggle={(e) => setShowMore(e.currentTarget.open)}
+          >
             <summary>More options · collector, retained, effective date</summary>
-            <label>
-              Effective date
+            <label className="commission-field">
+              <span>Effective date</span>
               <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-              <small>Defaults to today. Blank is not allowed on save — use today if unsure.</small>
+              <small>Defaults to today. Use today if unsure — blank is not allowed on save.</small>
             </label>
           </details>
 
-          {summary && (
-            <output className="full commission-summary">
-              In {money(summary.incoming)} · Collector keeps {money(summary.retained)} · Padova
-              keeps {money(summary.keeps)}
-              {payOut ? ` · Saved as Commission payable when referrer terms apply` : ''}
-            </output>
-          )}
           {error && (
-            <p className="full error" role="alert">
+            <p className="error" role="alert">
               {error}
             </p>
           )}
         </div>
-        <div className="modal-foot">
-          <button type="button" className="btn ghost" disabled={busy} onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" className="btn primary" disabled={busy}>
-            {busy
-              ? 'Saving…'
-              : `Save ${payers.length} receivable${payers.length === 1 ? '' : 's'}${
-                  payOut ? ' + payable' : ''
-                }`}
-          </button>
+
+        <div className="modal-footer commission-bundle-foot">
+          {summary && (
+            <div className="commission-summary-bar" aria-live="polite">
+              <span>
+                In <strong>{money(summary.incoming)}</strong>
+              </span>
+              <span>
+                Collector <strong>{money(summary.retained)}</strong>
+              </span>
+              <span>
+                Padova keeps <strong>{money(summary.keeps)}</strong>
+              </span>
+              {payOut ? <span className="commission-summary-tag">+ payable</span> : null}
+            </div>
+          )}
+          <div className="commission-bundle-actions">
+            <button type="button" className="btn ghost" disabled={busy} onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="btn primary" disabled={busy}>
+              {busy
+                ? 'Saving…'
+                : `Save ${payers.length} receivable${payers.length === 1 ? '' : 's'}${
+                    payOut ? ' + payable' : ''
+                  }`}
+            </button>
+          </div>
         </div>
       </form>
     </div>

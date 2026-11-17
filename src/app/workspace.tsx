@@ -53,7 +53,11 @@ import {
   type IntakeMappingPreview,
 } from '@/lib/intake-preview';
 import {
+  bookingCommissionsEmptyMessage,
   expectedCommissionDisplay,
+  expectedCommissionPanelLabel,
+  recordedCommissionTotals,
+  hasExpectedCommissionOnBooking,
   receivableCommissionLabel,
 } from '@/lib/commission-line-label';
 import { readWorkspaceLocation, workspaceUrl } from '@/lib/workspace-routes';
@@ -140,14 +144,16 @@ function Card({
   count,
   action,
   children,
+  className,
 }: {
   title: string;
   count?: number;
   action?: React.ReactNode;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="card">
+    <section className={className ? `card ${className}` : 'card'}>
       <div className="card-header">
         <div className="title">
           <h2>{title}</h2>
@@ -1744,6 +1750,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </Card>
             <Card
               title={b.itinerary?.operational_entry ? 'Seller & cost' : 'Supplier & cost'}
+              className="seller-cost-card"
               action={
                 canAction('fund') &&
                 b.reservation_status !== 'Cancelled' &&
@@ -1751,8 +1758,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               }
             >
               {canCosts || can('manage_funding') || can('issue_refunds') ? (
-                <div className="section-body">
-                  <div className="details-grid">
+                <div className="section-body seller-cost-body">
+                  <div className="details-grid seller-cost-grid">
                     {b.itinerary?.operational_entry?.source_profile_id && (
                       <div>
                         <div className="detail-label">Booking source account / profile</div>
@@ -1830,61 +1837,6 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       </div>
                       <strong>{money(b.supplier_balance)}</strong>
                     </div>
-                    {(() => {
-                      const primary = expectedCommissionDisplay(
-                        b.itinerary?.operational_entry?.commission,
-                      );
-                      const secondary = expectedCommissionDisplay(
-                        b.itinerary?.operational_entry?.secondary_commission,
-                      );
-                      const referral = (s.referrals ?? []).find((r: R) => r.booking_id === b.id);
-                      return (
-                        <>
-                          <div>
-                            <div className="detail-label">
-                              Primary IATA / partner commission (receivable)
-                            </div>
-                            <strong>
-                              {primary.status === 'unknown'
-                                ? 'Unknown'
-                                : primary.status === 'none' && b.expected_commission == null
-                                  ? '—'
-                                  : money(
-                                      primary.amount != null
-                                        ? primary.amount
-                                        : b.expected_commission,
-                                    )}
-                            </strong>
-                          </div>
-                          <div>
-                            <div className="detail-label">
-                              Secondary commission expected (receivable)
-                            </div>
-                            <strong>
-                              {secondary.status === 'unknown'
-                                ? 'Unknown'
-                                : secondary.status === 'none'
-                                  ? '—'
-                                  : secondary.amount != null
-                                    ? money(secondary.amount)
-                                    : 'Expected (amount TBD)'}
-                            </strong>
-                          </div>
-                          <div>
-                            <div className="detail-label">
-                              Referring-org commission payable
-                            </div>
-                            <strong>
-                              {referral
-                                ? money(referral.expected_due)
-                                : b.referring_organization_name
-                                  ? 'Linked (see payables)'
-                                  : '—'}
-                            </strong>
-                          </div>
-                        </>
-                      );
-                    })()}
                     {canCosts && b.itinerary?.operational_entry?.taxes && (
                       <div style={{ gridColumn: '1 / -1' }}>
                         <div className="detail-label">Taxes / customer recovery</div>
@@ -1911,6 +1863,84 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       </div>
                     )}
                   </div>
+                  {(() => {
+                    const primary = expectedCommissionDisplay(
+                      b.itinerary?.operational_entry?.commission,
+                    );
+                    const secondary = expectedCommissionDisplay(
+                      b.itinerary?.operational_entry?.secondary_commission,
+                    );
+                    const recorded = recordedCommissionTotals(
+                      s.commissions.filter((r: R) => r.booking_id === b.id),
+                      b.itinerary?.operational_entry,
+                    );
+                    const referral = (s.referrals ?? []).find((r: R) => r.booking_id === b.id);
+                    const primaryValue =
+                      recorded.primaryCents != null
+                        ? money(recorded.primaryCents)
+                        : primary.status === 'unknown'
+                          ? 'Unknown'
+                          : primary.status === 'none' && b.expected_commission == null
+                            ? '—'
+                            : money(
+                                primary.amount != null
+                                  ? primary.amount
+                                  : b.expected_commission,
+                              );
+                    const secondaryValue =
+                      recorded.secondaryCents != null
+                        ? money(recorded.secondaryCents)
+                        : secondary.status === 'unknown'
+                          ? 'Unknown'
+                          : secondary.status === 'none'
+                            ? '—'
+                            : secondary.amount != null
+                              ? money(secondary.amount)
+                              : 'Expected (amount TBD)';
+                    return (
+                      <div className="seller-commission-row">
+                        <div className="seller-metric">
+                          <div className="detail-label">
+                            {recorded.primaryCents != null
+                              ? 'Primary IATA / partner · recorded'
+                              : expectedCommissionPanelLabel('primary')}
+                          </div>
+                          <strong>{primaryValue}</strong>
+                          <small className="seller-metric-hint">
+                            {recorded.primaryCents != null
+                              ? 'Recorded receivable — not cash until a receipt is allocated.'
+                              : 'Expected only — not received until Add commission posts a receivable.'}
+                          </small>
+                        </div>
+                        <div className="seller-metric">
+                          <div className="detail-label">
+                            {recorded.secondaryCents != null
+                              ? 'Secondary commission · recorded'
+                              : expectedCommissionPanelLabel('secondary')}
+                          </div>
+                          <strong>{secondaryValue}</strong>
+                          <small className="seller-metric-hint">
+                            {recorded.secondaryCents != null
+                              ? 'Recorded receivable — separate from primary; cash after receipt.'
+                              : 'Expected only — separate from primary; use Add commission to post.'}
+                          </small>
+                        </div>
+                        <div className="seller-metric">
+                          <div className="detail-label">Referring-org commission payable</div>
+                          <strong>
+                            {referral
+                              ? money(referral.expected_due)
+                              : b.referring_organization_name
+                                ? 'Linked (see payables)'
+                                : '—'}
+                          </strong>
+                          <small className="seller-metric-hint">
+                            Padova pays out — not the same as who owes Padova.
+                          </small>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <ul className="plain-list">
                     {detail.funding.map((f: R) => (
                       <li key={f.id}>
@@ -2464,6 +2494,50 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 }
               >
                 <div className="section-body">
+                  {(() => {
+                    const primaryExpected = expectedCommissionDisplay(
+                      b.itinerary?.operational_entry?.commission,
+                    );
+                    const secondaryExpected = expectedCommissionDisplay(
+                      b.itinerary?.operational_entry?.secondary_commission,
+                    );
+                    const recorded = s.commissions.filter((r: R) => r.booking_id === b.id);
+                    const showExpectedSnapshot =
+                      recorded.length === 0 &&
+                      (primaryExpected.status !== 'none' || secondaryExpected.status !== 'none');
+                    return showExpectedSnapshot ? (
+                      <ul className="plain-list commission-expected-snapshot">
+                        {primaryExpected.status !== 'none' && (
+                          <li>
+                            <strong>{expectedCommissionPanelLabel('primary')}</strong>
+                            {' · '}
+                            {primaryExpected.status === 'unknown'
+                              ? 'Unknown'
+                              : primaryExpected.amount != null
+                                ? money(primaryExpected.amount)
+                                : 'Amount TBD'}
+                            <small>
+                              Expected on booking — not a recorded receivable yet. Received: none.
+                            </small>
+                          </li>
+                        )}
+                        {secondaryExpected.status !== 'none' && (
+                          <li>
+                            <strong>{expectedCommissionPanelLabel('secondary')}</strong>
+                            {' · '}
+                            {secondaryExpected.status === 'unknown'
+                              ? 'Unknown'
+                              : secondaryExpected.amount != null
+                                ? money(secondaryExpected.amount)
+                                : 'Amount TBD'}
+                            <small>
+                              Expected on booking — not a recorded receivable yet. Received: none.
+                            </small>
+                          </li>
+                        )}
+                      </ul>
+                    ) : null;
+                  })()}
                   <ul className="plain-list">
                     {s.commissions
                       .filter((r: R) => r.booking_id === b.id)
@@ -2560,11 +2634,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         </li>
                       ))}
                   </ul>
-                  {!s.commissions.some((r: R) => r.booking_id === b.id) &&
-                    !s.referrals.some((r: R) => r.booking_id === b.id) &&
-                    !s.refunds.some((r: R) => r.booking_id === b.id) && (
-                      <Empty>No commissions, referrals, or refunds recorded.</Empty>
-                    )}
+                  {(() => {
+                    const empty = bookingCommissionsEmptyMessage({
+                      hasRecordedReceivable: s.commissions.some((r: R) => r.booking_id === b.id),
+                      hasReferral: s.referrals.some((r: R) => r.booking_id === b.id),
+                      hasRefund: s.refunds.some((r: R) => r.booking_id === b.id),
+                      hasExpectedOnBooking: hasExpectedCommissionOnBooking(
+                        b.itinerary?.operational_entry,
+                      ),
+                    });
+                    return empty ? <Empty>{empty}</Empty> : null;
+                  })()}
                 </div>
               </Card>
             </div>

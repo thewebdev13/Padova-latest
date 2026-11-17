@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { type Database, type Row, one } from './db';
-import { type Actor, requirePermission } from './permissions';
+import { type Actor, hasPermission, requirePermission } from './permissions';
 import { AccessError, freshActor } from './users';
 
 const id = z.string().uuid();
@@ -47,30 +47,78 @@ async function actorForRead(db: Database, actor: Actor) {
   if (!z.string().uuid().safeParse(actor.id).success)
     throw new AccessError('Individual staff identity required', 401);
   actor = await freshActor(db, actor);
-  requirePermission(actor, 'view_partnerships');
+  // Booking staff need tips during entry; Partnerships staff keep full CRM access.
+  if (!hasPermission(actor, 'view_partnerships') && !hasPermission(actor, 'operations'))
+    throw new Error('Permission required: view_partnerships or operations');
   return actor;
+}
+
+/** Build WHERE fragments for hotel directory search (1-based param indexes start after includeArchived). */
+export function hotelDirectorySearchClauses(
+  params: { q?: string; location?: string; match?: 'all' | 'any' },
+  startIndex = 2,
+): { conditions: string[]; values: unknown[] } {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let i = startIndex;
+  const location = params.location?.trim() || '';
+  const q = params.q?.trim() || '';
+  const matchAny = params.match === 'any' && location && q;
+
+  if (matchAny) {
+    values.push(`%${location}%`, `%${q}%`);
+    const loc = i++;
+    const qq = i++;
+    conditions.push(
+      `(h.location ILIKE $${loc} OR h.hotel_name ILIKE $${qq} OR h.corporate_code ILIKE $${qq} OR h.iata_code ILIKE $${qq} OR h.best_book_method ILIKE $${qq} OR h.discounts ILIKE $${qq} OR h.location ILIKE $${qq})`,
+    );
+    return { conditions, values };
+  }
+
+  if (location) {
+    values.push(`%${location}%`);
+    conditions.push(`h.location ILIKE $${i++}`);
+  }
+  if (q) {
+    values.push(`%${q}%`);
+    conditions.push(
+      `(h.hotel_name ILIKE $${i} OR h.corporate_code ILIKE $${i} OR h.iata_code ILIKE $${i} OR h.best_book_method ILIKE $${i} OR h.discounts ILIKE $${i} OR h.location ILIKE $${i})`,
+    );
+    i += 1;
+  }
+  return { conditions, values };
 }
 
 export async function listHotelDirectory(
   db: Database,
   actor: Actor,
-  params: { q?: string; location?: string; includeArchived?: boolean } = {},
+  params: {
+    q?: string;
+    location?: string;
+    includeArchived?: boolean;
+    match?: 'all' | 'any';
+  } = {},
 ) {
   await actorForRead(db, actor);
   if (!(await hotelDirectoryEnabled(db)))
-    return { enabled: false, hotels: [] as Row[], note: 'Hotel directory is not installed yet' };
+    return {
+      enabled: false,
+      hotels: [] as Row[],
+      total_active: 0,
+      note: 'Hotel directory is not installed yet',
+    };
+  const totalActive = Number(
+    (
+      await db.query(
+        `SELECT count(*)::int AS c FROM pt_hotel_directory WHERE status='active'`,
+      )
+    ).rows[0]?.c ?? 0,
+  );
   const conditions = ["($1::boolean OR h.status='active')"];
   const values: unknown[] = [Boolean(params.includeArchived)];
-  if (params.location?.trim()) {
-    values.push(`%${params.location.trim()}%`);
-    conditions.push(`h.location ILIKE $${values.length}`);
-  }
-  if (params.q?.trim()) {
-    values.push(`%${params.q.trim()}%`);
-    conditions.push(
-      `(h.hotel_name ILIKE $${values.length} OR h.corporate_code ILIKE $${values.length} OR h.iata_code ILIKE $${values.length} OR h.best_book_method ILIKE $${values.length} OR h.discounts ILIKE $${values.length})`,
-    );
-  }
+  const search = hotelDirectorySearchClauses(params, 2);
+  conditions.push(...search.conditions);
+  values.push(...search.values);
   const hotels = (
     await db.query(
       `SELECT h.*, g.name organization_name, p.name party_name
@@ -83,7 +131,7 @@ export async function listHotelDirectory(
       values,
     )
   ).rows;
-  return { enabled: true, hotels };
+  return { enabled: true, hotels, total_active: totalActive };
 }
 
 export async function saveHotelDirectory(db: Database, actor: Actor, raw: unknown) {
