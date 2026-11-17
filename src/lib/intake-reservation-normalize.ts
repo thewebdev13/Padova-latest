@@ -1,7 +1,8 @@
 /**
  * Turn free-form reservation emails/PDFs into Field: Value lines for parseQuickPaste.
- * Supports Capital One Business Travel, GDS/agency itineraries, United, Amex Travel
- * flights, Amex/Expedia TAAP/Marriott (St. Regis) hotel confirmations.
+ * Supports Capital One Business Travel, Chase Travel / Travel Reservation Center,
+ * GDS/agency itineraries, United, Amex Travel flights, Amex/Expedia TAAP/Marriott
+ * (St. Regis) hotel confirmations.
  * Only maps evidence in the text — never invents customer, ownership, or paid status.
  * Never uses Padova agency card imprint (e.g. Shmuel Padawer) as Customer.
  */
@@ -206,12 +207,26 @@ function extractHotelGuests(text: string): string[] {
   return names;
 }
 
+/** Chase Travel: Traveler 1:Hinda Stefansky (colon often glued in Gmail print). */
+function extractChaseTravelPassengers(text: string): string[] {
+  if (!isChaseTravelConfirmation(text)) return [];
+  const names: string[] = [];
+  for (const match of text.matchAll(
+    /Traveler\s*\d+\s*:\s*([A-Za-z][A-Za-z' .-]{1,80}?)(?:\s*\n|Important flight|Payment summary|$)/gi,
+  )) {
+    const name = titleCaseName(match[1].replace(/\s+/g, ' ').trim());
+    if (name.split(/\s+/).length >= 2 && !isAgencyImprintName(name)) names.push(name);
+  }
+  return names;
+}
+
 function extractPassengers(text: string): string[] {
   const names = [
     ...extractCapitalOnePassengers(text),
     ...extractGdsPassengers(text),
     ...extractUnitedPassengers(text),
     ...extractAmexPassengers(text),
+    ...extractChaseTravelPassengers(text),
     ...extractHotelGuests(text),
   ];
   return [...new Map(names.map((n) => [n.toLowerCase(), n])).values()];
@@ -239,6 +254,9 @@ function extractTotalUsd(text: string): string | undefined {
   if (hotelTotal) return hotelTotal[1].replace(/,/g, '');
   const tripCost = text.match(/Total Trip Cost\s*:?\s*\$?\s*([\d,]+\.\d{2})/i);
   if (tripCost) return tripCost[1].replace(/,/g, '');
+  // Chase Travel: Trip total$1,338.49
+  const chaseTrip = text.match(/Trip total\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/i);
+  if (chaseTrip) return chaseTrip[1].replace(/,/g, '');
   const compact = text.match(/Total\s*US\s*\$?\s*([\d,.]+)/i);
   if (compact) return compact[1].replace(/,/g, '');
   const spaced = text.match(/Total\s*[:\s]+US\s*\$\s*([\d,.]+)/i);
@@ -365,8 +383,8 @@ function extractAirlineFlight(text: string): { airline?: string; flight?: string
     };
   }
 
-  // United email: UA 84 / UA 91 under FLIGHT INFO
-  const unitedFlights = [...text.matchAll(/\b(UA)\s+(\d{1,4})\b/gi)].map(
+  // United email / Chase Travel Gmail glue: UA 84 · UA 2692Boeing
+  const unitedFlights = [...text.matchAll(/\b(UA)\s+(\d{1,4})(?!\d)/gi)].map(
     (m) => `${m[1].toUpperCase()}${m[2]}`,
   );
   if (unitedFlights.length && /United Airlines/i.test(text)) {
@@ -400,6 +418,15 @@ function extractAirlineFlight(text: string): { airline?: string; flight?: string
 }
 
 function extractRoute(text: string): string | undefined {
+  // Chase Travel / Gmail: Newark (EWR)Los Angeles (LAX)
+  const cityAirports = [
+    ...text.matchAll(/\(([A-Z]{3})\)/g),
+  ]
+    .map((m) => m[1])
+    .filter((c) => !AIRPORT_SKIP.has(c));
+  if (cityAirports.length >= 2 && cityAirports[0] !== cityAirports[1])
+    return `${cityAirports[0]}-${cityAirports[1]}`;
+
   // Prefer airport code pairs on their own lines (JFK\n...\nTLV).
   const lineCodes = [...text.matchAll(/(?:^|\n)\s*([A-Z]{3})\s*(?:\n|$)/g)]
     .map((m) => m[1])
@@ -532,6 +559,13 @@ function extractCabin(text: string): string | undefined {
   if (united) return united[1];
   const labeled = text.match(/Cabin\s*:?\s*\n?\s*(Economy|Premium Economy|Business|First)\b/i);
   if (labeled) return labeled[1];
+  // Chase Travel: Fare:First Or Business · business class Z
+  const chaseFare = text.match(
+    /Fare\s*:\s*(?:First\s+Or\s+)?(Economy|Premium Economy|Business|First)\b/i,
+  );
+  if (chaseFare) return chaseFare[1];
+  const businessClass = text.match(/\b(business|first|economy)\s+class\b/i);
+  if (businessClass) return titleCaseName(businessClass[1]);
   const m = text.match(/\b(Economy|Premium Economy|Business|First)\s+Cabin\b/i);
   return m ? m[1] : undefined;
 }
@@ -559,8 +593,11 @@ function extractConfirmations(text: string): {
     /United confirmation number\s*:?\s*([A-Z0-9]{5,8})\b/i,
   )?.[1];
 
-  // Amex Travel: Airline Confirmation:GM6OLU · trip #ZO-AX1092-67178
+  // Chase Travel / Amex: Airline confirmation: MKR22M · Airline Confirmation:GM6OLU
   const amexAirline = text.match(/Airline Confirmation\s*:?\s*([A-Z0-9]{5,8})\b/i)?.[1];
+  const chaseTripId = text.match(
+    /(?:Travel Reservation Center\s+)?Trip ID\s*#?\s*:?\s*(\d{7,})\b/i,
+  )?.[1];
 
   // GDS agency + airline PNRs (alpha-only 6-letter codes allowed when labeled).
   const agency = text.match(/(?<!AIRLINE\s)RESERVATION CODE\s+([A-Z0-9]{5,8})\b/i)?.[1];
@@ -585,6 +622,7 @@ function extractConfirmations(text: string): {
   const sourceConf =
     text.match(/Capital One Business Travel\s*\n\s*([A-Z0-9-]{5,12})\b/i)?.[1] ||
     amexTrip ||
+    chaseTripId ||
     (agency && looksLikeRecordLocator(agency, { allowAlphaOnly: true }) ? agency : undefined);
 
   const airlinePnr =
@@ -603,6 +641,18 @@ function extractConfirmations(text: string): {
     airlinePnr,
     sourceConf: sourceConf?.toUpperCase(),
   };
+}
+
+/** Chase Travel / Travel Reservation Center confirmation email. */
+function isChaseTravelConfirmation(text: string): boolean {
+  if (/donotreply@chasetravel\.com/i.test(text) && /Trip ID/i.test(text)) return true;
+  if (/Chase Travel/i.test(text) && /Trip ID\s*#?\s*:?\s*\d{7,}/i.test(text)) return true;
+  if (
+    /Travel Reservation Center\s+Trip ID/i.test(text) &&
+    /Airline confirmation\s*:/i.test(text)
+  )
+    return true;
+  return false;
 }
 
 function isCapitalOneConfirmation(text: string): boolean {
@@ -732,6 +782,16 @@ function extractCustomer(
       return { name: accountName, source: 'account' };
   }
 
+  // Chase Travel: Email intended for: RAIZY FRIEDMAN (account ≠ traveler)
+  const chaseEmailFor = text.match(
+    /Email intended for\s*:\s*([A-Z][A-Z' .-]{2,60})/i,
+  );
+  if (chaseEmailFor?.[1]) {
+    const accountName = titleCaseName(chaseEmailFor[1].replace(/\s+/g, ' ').trim());
+    if (!isAgencyImprintName(accountName))
+      return { name: accountName, source: 'account' };
+  }
+
   // Marriott: Thank you for your booking, Martin Mittelman.
   const thanksBooking = text.match(
     /Thank you for your booking,\s*([A-Za-z][A-Za-z' .-]{2,80}?)\s*\./i,
@@ -753,6 +813,19 @@ function extractCustomer(
     return { name: full || titleCaseName(first), source: 'thanks' };
   }
 
+  // Chase Travel greeting: Hi RAIZY, — prefer full name from travelers only if match
+  const chaseHi = text.match(/\bHi\s+([A-Z][A-Za-z'-]{1,40})\s*,/i);
+  if (chaseHi?.[1] && isChaseTravelConfirmation(text)) {
+    const first = chaseHi[1].trim();
+    const full = travelers.find(
+      (t) =>
+        t.toLowerCase() === first.toLowerCase() ||
+        t.toLowerCase().startsWith(`${first.toLowerCase()} `),
+    );
+    if (full) return { name: full, source: 'thanks' };
+    // First-name-only greeting is not enough for billed-to — fall through to traveler.
+  }
+
   if (travelers.length) return { name: travelers[0], source: 'primary_traveler' };
   return { source: 'none' };
 }
@@ -764,6 +837,7 @@ export function isReservationProse(raw: string): boolean {
   if (
     isGdsItinerary(text) ||
     isCapitalOneConfirmation(text) ||
+    isChaseTravelConfirmation(text) ||
     isUnitedConfirmation(text) ||
     isAmexTravelConfirmation(text) ||
     isHotelConfirmation(text)
@@ -838,11 +912,15 @@ export function normalizeReservationProseToPaste(raw: string): string {
   }
   if (/capital\s*one\s+business\s+travel/i.test(text))
     lines.push('Booked Through: Capital One Business Travel');
+  if (isChaseTravelConfirmation(text)) lines.push('Booked Through: Chase Travel');
   if (/American Express Travel/i.test(text) || isAmexTravelConfirmation(text))
     lines.push('Booked Through: American Express Travel');
   if (isExpediaTaapHotel(text)) lines.push('Booked Through: Expedia TAAP');
   if (isMarriottHotelConfirmation(text)) lines.push('Booked Through: Marriott');
-  const pointsUsed = text.match(/Points used:\s*([\d,]+)/i)?.[1];
+  const pointsUsed =
+    text.match(/Points used:\s*([\d,]+)/i)?.[1] ||
+    text.match(/Points redeemed\s*:?\s*([\d,]+)\s*pts/i)?.[1] ||
+    text.match(/([\d,]+)\s*pts redeemed/i)?.[1];
   const commissionable = /rate is commissionable/i.test(text);
   const customerNote =
     customer.source === 'primary_traveler'

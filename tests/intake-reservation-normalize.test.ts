@@ -288,3 +288,45 @@ test('client Marriott St. Regis Rome PDF extracts and maps', async () => {
   assert.match(String(paste.fields.property || ''), /St\.\s*Regis/i);
   assert.equal(paste.fields.sale, undefined);
 });
+
+test('Chase Travel Reservation Center maps flight without forward From as customer', () => {
+  const raw = readFileSync(
+    new URL('../testdata/intake-samples/trc-trip-1009839282.txt', import.meta.url),
+    'utf8',
+  );
+  assert.equal(isReservationProse(raw), true);
+  const paste = parseQuickPaste(raw);
+  assert.equal(paste.fields.product, 'Flight');
+  assert.equal(paste.fields.airline, 'United Airlines');
+  assert.equal(paste.fields.flight_numbers, 'UA2692');
+  assert.equal(paste.fields.route, 'EWR-LAX');
+  assert.equal(paste.fields.travel_start, '2026-04-16');
+  assert.equal(paste.fields.trip_type, 'One Way');
+  assert.equal(paste.fields.primary_reference, 'MKR22M');
+  assert.equal(paste.fields.booking_source_confirmation, '1009839282');
+  assert.equal(paste.fields.customer, 'Raizy Friedman');
+  assert.match(String(paste.fields.traveler), /Hinda Stefansky/i);
+  assert.ok(!/Abraham Friedman/i.test(String(paste.fields.customer || '')));
+  assert.equal(paste.fields.sale, '1338.49');
+  assert.equal(paste.fields.method, 'Chase Travel');
+  assert.match(String(paste.fields.cabin || ''), /Business/i);
+  assert.match(String(paste.fields.notes || ''), /66,?925/);
+});
+
+test('client Chase Travel TRC PDF extracts and maps', async () => {
+  const buf = readFileSync(
+    new URL('../testdata/intake-samples/trc-trip-1009839282.pdf', import.meta.url),
+  );
+  const extracted = await extractBinaryIntakeText(
+    'application/pdf',
+    buf,
+    'trc-trip-1009839282.pdf',
+  );
+  assert.equal(extracted.extractable, true);
+  const paste = parseQuickPaste(extracted.text);
+  assert.equal(paste.fields.product, 'Flight');
+  assert.equal(paste.fields.customer, 'Raizy Friedman');
+  assert.equal(paste.fields.primary_reference, 'MKR22M');
+  assert.equal(paste.fields.route, 'EWR-LAX');
+  assert.equal(paste.fields.sale, '1338.49');
+});
