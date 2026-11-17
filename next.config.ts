@@ -27,7 +27,7 @@ const config: NextConfig = {
       },
     ];
   },
-  experimental: { cpus: 2 },
+  experimental: { cpus: 2, agentUpgrade: 'security' },
   outputFileTracingIncludes: { '/*': ['./db/*.sql', './certs/*.crt'] },
   outputFileTracingExcludes: { '/*': ['./.data/**/*', './docs/**/*', './tests/**/*'] },
 };
