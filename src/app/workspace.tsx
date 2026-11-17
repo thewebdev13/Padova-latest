@@ -213,7 +213,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [query, setQuery] = useState(''),
     [historicalQuery, setHistoricalQuery] = useState(''),
     [directoryQuery, setDirectoryQuery] = useState(''),
-    [directoryLimit, setDirectoryLimit] = useState(40),
+    [directoryPage, setDirectoryPage] = useState(1),
     [directoryType, setDirectoryType] = useState('All'),
     [directorySort, setDirectorySort] = useState('name'),
     [bookingStatus, setBookingStatus] = useState('All'),
@@ -522,7 +522,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
   }, []);
   const go = (name: string) => {
     setDirectoryQuery('');
-    setDirectoryLimit(40);
+    setDirectoryPage(1);
     setDirectoryType('All');
     setPage(name);
     setSelected(null);
@@ -3688,7 +3688,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               className={`btn ${filter === v ? 'primary' : ''}`}
               onClick={() => {
                 setFilter(v);
-                setDirectoryLimit(40);
+                setDirectoryPage(1);
               }}
             >
               {(
@@ -3712,7 +3712,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               value={directoryQuery}
               onChange={(e) => {
                 setDirectoryQuery(e.target.value);
-                setDirectoryLimit(40);
+                setDirectoryPage(1);
               }}
             />
           </label>
@@ -3723,7 +3723,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               value={directoryType}
               onChange={(e) => {
                 setDirectoryType(e.target.value);
-                setDirectoryLimit(40);
+                setDirectoryPage(1);
               }}
             >
               {[
@@ -3745,16 +3745,20 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <select
               aria-label="Sort directory"
               value={directorySort}
-              onChange={(e) => setDirectorySort(e.target.value)}
+              onChange={(e) => {
+                setDirectorySort(e.target.value);
+                setDirectoryPage(1);
+              }}
             >
               <option value="name">Name A–Z</option>
               <option value="name-desc">Name Z–A</option>
             </select>
           </label>
         </div>
-        <p className="muted">
-          {list.length} matching records · showing up to {directoryLimit}
-        </p>
+        {(() => {
+          const directoryPager = pageSlice(list, directoryPage, 40);
+          return (
+            <>
         <div
           className="directory-list"
           role="list"
@@ -3762,7 +3766,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             page === 'Bookings' ? 'Transactions' : page === 'People & Families' ? 'People' : page
           }
         >
-          {list.slice(0, directoryLimit).map((p) => {
+          {directoryPager.items.map((p) => {
             const ids = new Set(
               (s.travelerLinks ?? [])
                 .filter((t: R) => t.person_id === p.id)
@@ -3844,11 +3848,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             );
           })}
         </div>
-        {list.length > directoryLimit && (
-          <button className="btn" onClick={() => setDirectoryLimit(directoryLimit + 40)}>
-            Show 40 more records
-          </button>
-        )}
+        <ListPager
+          page={directoryPager.page}
+          totalPages={directoryPager.totalPages}
+          total={directoryPager.total}
+          from={directoryPager.from}
+          to={directoryPager.to}
+          onPage={setDirectoryPage}
+          label="records"
+        />
+            </>
+          );
+        })()}
       </>
     );
   } else if (page === 'Payments') {

@@ -119,6 +119,26 @@ Summary: Alias hotel stay`,
   assert.equal(entry.sale, undefined);
 });
 
+test('referring organization aliases are recognized without inventing money or org id', () => {
+  const built = buildIntakeDraft({
+    source: 'staff_paste',
+    text: `Customer: Referral Guest
+Product: Flight
+Trip Type: One Way
+Route: JFK-MIA
+Departure: 2027-06-01
+PNR: REF111
+Referred By: Sample Synagogue
+Customer Price: 400.00
+Summary: Referral sample`,
+  });
+  const entry = built.entry as Record<string, any>;
+  assert.equal(entry.intake_party_hints.referring_organization, 'Sample Synagogue');
+  assert.ok(built.recognized_fields.includes('referring_organization'));
+  assert.equal(entry.referring_organization_id, undefined);
+  assert.equal(entry.sale, '400.00');
+});
+
 test('quoted CSV commas stay inside field values', () => {
   const csv = `Product,Customer,Route,PNR,Customer Price,Summary
 Hotel,"Guest, Jr.",Miami,Q1,"450.00","Stay, ocean view"

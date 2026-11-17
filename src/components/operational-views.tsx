@@ -1,5 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import ListPager, { pageSlice } from '@/components/list-pager';
+
 type Row = Record<string, any>;
 const names = [
   'Customer Owes',
@@ -11,6 +13,8 @@ const names = [
   'Missing Cost',
   'Needs Attention',
 ];
+const PAGE_SIZE = 20;
+
 export default function OperationalViews({
   views,
   open,
@@ -25,8 +29,9 @@ export default function OperationalViews({
   open: (item: Row) => void;
 }) {
   const [selected, setSelected] = useState(initialSelected);
-  const [limit, setLimit] = useState(20);
+  const [page, setPage] = useState(1);
   const rows = views[selected] ?? [];
+  const pager = pageSlice<Row>(rows, page, PAGE_SIZE);
   const labels: Record<string, string> = {
     'Needs Attention': 'Needs attention',
     'Customer Owes': 'Customer owes',
@@ -37,6 +42,17 @@ export default function OperationalViews({
     'Pending Credits': 'Pending credits',
     'Missing Cost': 'Final cost pending',
   };
+
+  useEffect(() => {
+    setPage(1);
+  }, [selected]);
+
+  useEffect(() => {
+    if (page > pager.totalPages) setPage(pager.totalPages);
+  }, [page, pager.totalPages]);
+
+  const visible = compact ? rows.slice(0, 5) : pager.items;
+
   return (
     <section className="card operational-followup">
       <div className="card-header">
@@ -53,10 +69,7 @@ export default function OperationalViews({
             key={n}
             className={`btn small ${n === selected ? 'primary' : 'ghost'} ${!(views[n] ?? []).length ? 'empty-filter' : ''}`}
             aria-pressed={n === selected}
-            onClick={() => {
-              setSelected(n);
-              setLimit(20);
-            }}
+            onClick={() => setSelected(n)}
           >
             {labels[n]} <span>{(views[n] ?? []).length}</span>
           </button>
@@ -76,7 +89,7 @@ export default function OperationalViews({
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, compact ? 5 : limit).map((r) => (
+              {visible.map((r) => (
                 <tr
                   key={r.id}
                   className="clickable"
@@ -133,16 +146,21 @@ export default function OperationalViews({
           </table>
         </div>
       )}
-      {rows.length > (compact ? 5 : limit) && (
-        <button
-          className="btn ghost"
-          onClick={() => (compact ? viewAll?.(selected) : setLimit(limit + 20))}
-        >
-          {compact
-            ? `View all ${rows.length}`
-            : `Show more · ${Math.min(limit, rows.length)} of ${rows.length}`}
+      {compact && rows.length > 5 ? (
+        <button className="btn ghost" onClick={() => viewAll?.(selected)}>
+          View all {rows.length}
         </button>
-      )}
+      ) : !compact && rows.length > 0 ? (
+        <ListPager
+          page={pager.page}
+          totalPages={pager.totalPages}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          onPage={setPage}
+          label="follow-ups"
+        />
+      ) : null}
     </section>
   );
 }

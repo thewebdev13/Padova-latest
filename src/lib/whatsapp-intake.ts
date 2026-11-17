@@ -20,7 +20,7 @@ export function whatsappIntakeStatus() {
     meta_cloud_api: false,
     posts_money: false,
     note: bridgeToken
-      ? 'Bridge token is set. Run the Owner-PC reader against POST /api/booking-intake/whatsapp with that token; never auto-send.'
+      ? 'Bridge token is set. On the PC run npm run intake:whatsapp-web (QR link) or intake:whatsapp-bridge (folder). Never auto-send.'
       : 'Waiting on Owner PC linked WhatsApp session. Staff can still paste chat text via the shared booking-intake API with source=whatsapp.',
   };
 }

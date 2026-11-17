@@ -41,14 +41,20 @@
     "test:padova:financial": "node scripts/test-padova-financial.mjs",
     "db:inspect": "node --use-system-ca --import tsx scripts/inspect-existing-connection.ts",
     "test:hosted:financial": "node --use-system-ca --env-file-if-exists=.env.local --import tsx scripts/test-hosted-financial.ts",
-    "intake:whatsapp-bridge": "node scripts/whatsapp-pc-bridge.mjs"
+    "intake:whatsapp-bridge": "node scripts/whatsapp-pc-bridge.mjs",
+    "intake:whatsapp-web": "node scripts/whatsapp-web-reader.mjs",
+    "intake:whatsapp-helper": "node scripts/whatsapp-web-reader.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.12",
     "@vercel/functions": "3.10.6",
+    "@whiskeysockets/baileys": "^6.7.18",
     "lucide-react": "0.548.0",
     "next": "16.4.3",
     "pg": "8.16.3",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "zod": "4.6.7"

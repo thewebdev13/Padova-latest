@@ -119,6 +119,18 @@ function EntryForm({
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || busy) return;
+      // Nested SearchableSelect / lookup menus handle Escape themselves.
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onClose]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -138,7 +150,7 @@ function EntryForm({
       <section className={styles.modal} role="dialog" aria-modal="true" aria-label={title}>
         <header>
           <h2>{title}</h2>
-          <button onClick={onClose} aria-label="Close form">
+          <button type="button" onClick={onClose} aria-label="Close form" disabled={busy}>
             ×
           </button>
         </header>

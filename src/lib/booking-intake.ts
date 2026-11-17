@@ -257,6 +257,7 @@ export function buildIntakeDraft(input: {
       property: preview.fields.property ?? null,
       seller: preview.fields.seller ?? null,
       method: preview.fields.method ?? null,
+      referring_organization: preview.fields.referring_organization ?? null,
     },
     intake_apply_on_open: true,
   };

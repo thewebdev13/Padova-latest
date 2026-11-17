@@ -32,6 +32,12 @@ const labels: Record<string, string> = {
   'confirmation number': 'primary_reference',
   'record locator': 'primary_reference',
   'booked through': 'method',
+  'referring organization': 'referring_organization',
+  'referring org': 'referring_organization',
+  affiliate: 'referring_organization',
+  'affiliate organization': 'referring_organization',
+  'referred by': 'referring_organization',
+  'referral organization': 'referring_organization',
   program: 'program',
   seller: 'seller',
   bought: 'bought',
@@ -208,6 +214,7 @@ Return: Unknown
 PNR: Unknown
 Flight Numbers: Unknown
 Booked Through: Unknown
+Referring Organization: Unknown
 Booking Source Confirmation: Unknown
 Source Account/Profile: Unknown
 Program: Unknown
@@ -240,6 +247,7 @@ Departure: 2027-02-01
 Return: 2027-02-05
 PNR: SAMPLE
 Booked Through: Award Booking
+Referring Organization: Unknown
 Booking Source Confirmation: AWARD-SAMPLE
 Source Account/Profile: Unknown
 Program: Delta SkyMiles

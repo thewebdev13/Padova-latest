@@ -1,5 +1,13 @@
 'use client';
-import { useState, useEffect, useRef, type ReactNode, type FormEvent } from 'react';
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+  type FormEvent,
+} from 'react';
 import SearchableSelect from './searchable-select';
 import AirportInput from './airport-input';
 import BookingTicketing from './booking-ticketing';
@@ -364,6 +372,10 @@ export default function BookingEntry(props: Props) {
   const [extra, setExtra] = useState<Record<string, R[]>>({});
   const [hotelDirectoryHits, setHotelDirectoryHits] = useState<R[]>([]);
   const [hotelDirectoryNote, setHotelDirectoryNote] = useState('');
+  const [hotelDirectoryQuery, setHotelDirectoryQuery] = useState(
+    String(props.config.defaults.intake_provider_label || ''),
+  );
+  const [travelerMenuStyle, setTravelerMenuStyle] = useState<CSSProperties | undefined>();
   const [recoveryAvailable, setRecoveryAvailable] = useState(true);
   const recovery = useRef<BookingRecovery | null>(null);
   const recoveryFinished = useRef(false);
@@ -774,6 +786,38 @@ export default function BookingEntry(props: Props) {
           similarTravelerName(p.name, traveler)),
     )
     .slice(0, 20);
+  const showTravelerMatches =
+    Boolean(traveler.trim()) && travelerNames(traveler).length === 1 && matches.length > 0;
+  useLayoutEffect(() => {
+    if (!showTravelerMatches || !travelerInput.current) {
+      setTravelerMenuStyle(undefined);
+      return;
+    }
+    const place = () => {
+      const rect = travelerInput.current?.getBoundingClientRect();
+      if (!rect) return;
+      const maxHeight = Math.min(280, Math.max(120, window.innerHeight - rect.bottom - 12));
+      const width = Math.max(rect.width, 220);
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+      setTravelerMenuStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left,
+        width,
+        maxHeight,
+        zIndex: 1200,
+        overflow: 'auto',
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [showTravelerMatches, traveler, matches.length]);
   const commissionExpected = v.commission_expected ?? 'Unknown';
   const secondaryCommissionExpected = v.secondary_commission_expected ?? 'No';
   async function applyPaste(rawText?: string) {
@@ -939,9 +983,10 @@ export default function BookingEntry(props: Props) {
     }
     if (p.airline && next.product === 'Flight')
       next.provider_id = await ensureParty(p.airline, 'airline');
-    else if (p.property && next.product === 'Hotel')
+    else if (p.property && next.product === 'Hotel') {
       next.provider_id = await ensureParty(p.property, 'property');
-    else if (p.airline || p.property)
+      setHotelDirectoryQuery(String(p.property));
+    } else if (p.airline || p.property)
       issues.push('Provider label is incompatible with Product; select the appropriate provider');
     const method = p.method
       ? exactEligibleMatch(
@@ -953,6 +998,32 @@ export default function BookingEntry(props: Props) {
       next.source_method_id = method?.id ?? '';
       if (!method) issues.push(`Select booking method: ${p.method}`);
       next.source_profile_id = '';
+    }
+    if (p.referring_organization) {
+      if (!can('manage_commissions')) {
+        issues.push(
+          'Referring organization was not applied: commission permission required',
+        );
+      } else {
+        const orgs = (state.referralOrganizations ?? []) as R[];
+        const wanted = normalizePasteValue(String(p.referring_organization));
+        const hits = orgs.filter(
+          (o) => normalizePasteValue(String(o.name ?? '')) === wanted,
+        );
+        if (hits.length === 1) {
+          next.referring_organization_id = hits[0].id;
+        } else if (hits.length > 1) {
+          next.referring_organization_id = '';
+          issues.push(
+            `Multiple referring organizations named “${p.referring_organization}” — choose the correct one before Save.`,
+          );
+        } else {
+          next.referring_organization_id = '';
+          issues.push(
+            `Select referring organization: “${p.referring_organization}” has no exact match among accepted partnership deals (no new org created).`,
+          );
+        }
+      }
     }
     if (p.source_profile) {
       const profile = exactEligibleMatch(
@@ -1819,26 +1890,29 @@ export default function BookingEntry(props: Props) {
                 />
                 {traveler.trim() && travelerNames(traveler).length === 1 && (
                   <>
-                    <div className="search-select-results" style={{ position: 'relative' }}>
-                      {matches.map((p) => (
-                        <button
-                          type="button"
-                          className="btn small"
-                          key={p.id}
-                          onClick={() => {
-                            setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), p] }));
-                            change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
-                            setTraveler('');
-                            travelerInput.current?.focus();
-                          }}
-                        >
-                          {p.name}
-                          {matches.filter((m) => m.name === p.name).length > 1
-                            ? ` · ${p.id.slice(-6)}`
-                            : ''}
-                        </button>
-                      ))}
-                    </div>
+                    {showTravelerMatches && (
+                      <div className="search-select-results" style={travelerMenuStyle}>
+                        {matches.map((p) => (
+                          <button
+                            type="button"
+                            className="btn small"
+                            key={p.id}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), p] }));
+                              change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
+                              setTraveler('');
+                              travelerInput.current?.focus();
+                            }}
+                          >
+                            {p.name}
+                            {matches.filter((m) => m.name === p.name).length > 1
+                              ? ` · ${p.id.slice(-6)}`
+                              : ''}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {matches.length > 0 && (
                       <p role="status">
                         Similar names exist. Use an existing person above or create a separate
@@ -2092,18 +2166,47 @@ export default function BookingEntry(props: Props) {
                 <>
                   {text('location', 'City / Location')}
                   <div className="hotel-directory-lookup">
+                    <label className="field">
+                      <span>Hotel name for directory (optional)</span>
+                      <input
+                        type="text"
+                        value={hotelDirectoryQuery}
+                        onChange={(e) => setHotelDirectoryQuery(e.target.value)}
+                        placeholder="e.g. Marriott / corp code / IATA"
+                        disabled={busy}
+                      />
+                    </label>
                     <button
                       type="button"
                       className="btn small"
-                      disabled={!String(v.location || '').trim() || busy}
+                      disabled={
+                        busy ||
+                        !(
+                          String(v.location || '').trim() ||
+                          hotelDirectoryQuery.trim() ||
+                          String(selectedProvider?.name || '').trim() ||
+                          String(v.intake_provider_label || '').trim()
+                        )
+                      }
                       onClick={() => {
                         void (async () => {
                           setHotelDirectoryNote('');
                           setHotelDirectoryHits([]);
                           try {
-                            const params = new URLSearchParams({
-                              location: String(v.location || '').trim(),
-                            });
+                            const location = String(v.location || '').trim();
+                            const q =
+                              hotelDirectoryQuery.trim() ||
+                              String(selectedProvider?.name || '').trim() ||
+                              String(v.intake_provider_label || '').trim();
+                            const params = new URLSearchParams();
+                            if (location) params.set('location', location);
+                            if (q) params.set('q', q);
+                            if (!location && !q) {
+                              setHotelDirectoryNote(
+                                'Enter a city/location and/or hotel name before looking up.',
+                              );
+                              return;
+                            }
                             const response = await fetch(`/api/hotel-directory?${params}`);
                             const data = await response.json();
                             if (!response.ok)
@@ -2117,7 +2220,13 @@ export default function BookingEntry(props: Props) {
                             }
                             setHotelDirectoryHits(data.hotels ?? []);
                             if (!(data.hotels ?? []).length)
-                              setHotelDirectoryNote('No hotel directory rows for that location.');
+                              setHotelDirectoryNote(
+                                location && q
+                                  ? 'No hotel directory rows for that location + name.'
+                                  : location
+                                    ? 'No hotel directory rows for that location.'
+                                    : 'No hotel directory rows for that hotel name.',
+                              );
                           } catch (err) {
                             setHotelDirectoryNote(
                               err instanceof Error ? err.message : 'Hotel directory lookup failed',
@@ -2128,6 +2237,9 @@ export default function BookingEntry(props: Props) {
                     >
                       Look up hotel directory
                     </button>
+                    <small className="muted">
+                      Search by city, hotel name, corp code, or IATA. Tips only — does not post money.
+                    </small>
                     {hotelDirectoryNote && <p role="status">{hotelDirectoryNote}</p>}
                     {hotelDirectoryHits.length > 0 && (
                       <div className="hotel-directory-hits">
@@ -2156,6 +2268,7 @@ export default function BookingEntry(props: Props) {
                                   intake_provider_label: h.hotel_name || old.intake_provider_label,
                                   ...(h.party_id ? { provider_id: h.party_id } : {}),
                                 }));
+                                if (h.hotel_name) setHotelDirectoryQuery(String(h.hotel_name));
                                 if (h.party_id) {
                                   setExtra((old) => ({
                                     ...old,
@@ -2210,6 +2323,7 @@ export default function BookingEntry(props: Props) {
                             }}
                           >
                             {h.hotel_name}
+                            {h.location ? ` · ${h.location}` : ''}
                             {h.corporate_code ? ` · corp ${h.corporate_code}` : ''}
                             {h.iata_code ? ` · IATA ${h.iata_code}` : ''}
                           </button>

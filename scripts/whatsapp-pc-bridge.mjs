@@ -5,9 +5,9 @@
  * Owner scope: run on the Owner PC; read incoming chat text only; never send;
  * create drafts for staff approval. Official Meta Cloud API is out of scope.
  *
- * This script does NOT attach to WhatsApp Web by itself (ToS/ban risk). Drop
- * exported chat text / JSON into an inbox folder, or pipe one message as JSON.
- * Optional future: a separate linked-session reader can write the same inbox files.
+ * Folder/stdin helper only. For live WhatsApp Web QR linking on this PC, use
+ * `npm run intake:whatsapp-web` (scripts/whatsapp-web-reader.mjs) — still
+ * read-only, never sends. Unofficial linked session = residual ToS/ban risk.
  *
  * Required env:
  *   PADOVA_WHATSAPP_BRIDGE_TOKEN  — same token as the Padova server

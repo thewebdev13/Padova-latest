@@ -1,0 +1,6 @@
+{
+  "url": "https://qa.padovatravel.com/api/booking-intake/whatsapp",
+  "token": "REPLACE-WITH-SAME-TOKEN-AS-SERVER",
+  "actor_id": "REPLACE-WITH-ACTIVE-STAFF-UUID",
+  "session_label": "owner-pc-helper"
+}

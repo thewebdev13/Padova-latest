@@ -17,3 +17,6 @@ CURRENT_SOURCE_SNAPSHOT_*.txt
 docs/
 .github/
 testdata/
+
+# Owner WhatsApp helper secrets (copy from config.example.json)
+scripts/whatsapp-pc-helper/config.json

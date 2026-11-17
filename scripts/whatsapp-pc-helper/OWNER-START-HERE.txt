@@ -1,0 +1,33 @@
+Padova WhatsApp helper (Owner PC) — read only
+=============================================
+
+What this does
+- Links WhatsApp on THIS computer (like WhatsApp Web).
+- Reads incoming text only.
+- Creates booking DRAFTS in Padova for staff to approve.
+- Never sends WhatsApp messages. Never posts money by itself.
+
+One-time setup (developer does this on your PC)
+1. Install Node.js 24 if needed.
+2. Put the Padova project folder on this PC.
+3. Copy config.example.json → config.json and fill url, token, actor_id
+   (or use .data/whatsapp-helper-config.json).
+4. In Terminal once: npm ci
+
+Every day (you)
+1. Double-click:
+   - Mac:  Start-Padova-WhatsApp.command
+   - Windows: Start-Padova-WhatsApp.bat
+2. A browser page opens on this PC with a QR code.
+3. Phone: WhatsApp → Linked devices → Link a device → scan that QR.
+4. Leave the helper running and the PC on / awake.
+5. When a new chat text arrives, check Drafts in Padova and approve.
+
+Stop
+- Close the Terminal window, or press Ctrl+C in that window.
+
+Important
+- This is NOT a public website login. The QR only works on this PC.
+- Unofficial link can still risk the WhatsApp account vs official Meta API.
+- First time only needs a scan; later days usually reconnect without a new QR
+  unless you logged out or cleared the session.
