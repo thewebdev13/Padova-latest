@@ -733,7 +733,20 @@ export async function snapshot(db: Database, actor: Actor) {
     bookingDrafts: bookingEntryEnabled
       ? (
           await db.query(
-            "SELECT id,title,created_at,entry,entry->>'summary' AS summary,entry->'itinerary'->>'historical_reconciliation_status' AS historical_status FROM booking_drafts d WHERE created_by=$1 AND NOT EXISTS(SELECT 1 FROM commands c WHERE c.kind='booking' AND c.result IS NOT NULL AND c.payload->'operational'->>'draft_id'=d.id::text) ORDER BY created_at DESC LIMIT 50",
+            `SELECT id,title,created_at,entry,entry->>'summary' AS summary,entry->'itinerary'->>'historical_reconciliation_status' AS historical_status
+             FROM booking_drafts d
+             WHERE created_by=$1
+               AND NOT EXISTS(
+                 SELECT 1 FROM commands c
+                 WHERE c.kind='booking' AND c.result IS NOT NULL
+                   AND c.payload->'operational'->>'draft_id'=d.id::text
+               )
+               AND NOT EXISTS(
+                 SELECT 1 FROM commands c
+                 WHERE c.kind='booking_draft_delete' AND c.result IS NOT NULL
+                   AND c.payload->>'draft_id'=d.id::text
+               )
+             ORDER BY created_at DESC LIMIT 50`,
             [actor.id],
           )
         ).rows.map((draft): Row => {
@@ -919,7 +932,13 @@ export async function detail(db: Database, actor: Actor, type: string, id: strin
   if (type === 'draft') {
     const draft = await one(
       db,
-      'SELECT id,title,entry FROM booking_drafts WHERE id=$1 AND created_by=$2',
+      `SELECT id,title,entry FROM booking_drafts d
+       WHERE id=$1 AND created_by=$2
+         AND NOT EXISTS(
+           SELECT 1 FROM commands c
+           WHERE c.kind='booking_draft_delete' AND c.result IS NOT NULL
+             AND c.payload->>'draft_id'=d.id::text
+         )`,
       [id, actor.id],
     );
     if (actor.role === 'OWNER' && draft.entry?.itinerary?.historical_reconciliation_status)

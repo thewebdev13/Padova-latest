@@ -3646,120 +3646,164 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 return (
                   <>
                     {draftPager.items.map((draft: R) => (
-                      <button
-                        key={draft.id}
-                        type="button"
-                        className="intake-draft-card"
-                        onClick={async () => {
-                          try {
-                            if (
-                              draft.kind === 'voucher_sale' ||
-                              draft.kind === 'historical_booking'
-                            ) {
-                              await openRecord('draft', draft.id);
-                              return;
-                            }
-                            const response = await fetch(
-                              `/api/state?type=draft&id=${encodeURIComponent(draft.id)}`,
-                              { cache: 'no-store' },
-                            );
-                            if (!response.ok) throw new Error('Unable to open this draft');
-                            const loaded = await response.json();
-                            if (
-                              draftKind({
-                                summary: loaded.entry?.summary,
-                                historical_status:
-                                  loaded.entry?.itinerary?.historical_reconciliation_status,
-                              }) !== 'booking'
-                            ) {
-                              setSelected({ type: 'draft', id: loaded.id });
-                              setDetail(loaded);
-                            } else
-                              action('booking', {
-                                ...loaded.entry,
-                                draft_id: loaded.id,
-                                intake_apply_on_open: true,
-                                intake_provenance: loaded.entry?.intake_provenance,
-                                recovery_paste:
-                                  loaded.entry?.intake_raw_text ||
-                                  loaded.entry?.recovery_paste ||
-                                  undefined,
-                              });
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
+                      <article key={draft.id} className="intake-draft-card">
                         <div className="intake-draft-card-top">
                           <strong>
                             {draft.display_title ??
                               (draft.kind === 'voucher_sale' ? draft.summary : draft.title)}
                           </strong>
-                          <span className="intake-draft-badge">
-                            {draft.kind === 'voucher_sale'
-                              ? 'Voucher sale'
-                              : draft.kind === 'historical_booking'
-                                ? 'Historical'
-                                : intakeChannelBadge(draft.intake_source)}
-                          </span>
+                          <div className="intake-draft-card-top-actions">
+                            <span className="intake-draft-badge">
+                              {draft.kind === 'voucher_sale'
+                                ? 'Voucher sale'
+                                : draft.kind === 'historical_booking'
+                                  ? 'Historical'
+                                  : intakeChannelBadge(draft.intake_source)}
+                            </span>
+                            {canAction('booking_draft') && (
+                              <button
+                                type="button"
+                                className="btn small intake-draft-delete"
+                                disabled={busy}
+                                aria-label="Delete draft"
+                                onClick={async (e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const label =
+                                    draft.display_title ||
+                                    draft.title ||
+                                    draft.summary ||
+                                    'this draft';
+                                  if (
+                                    !window.confirm(
+                                      `Delete “${String(label).slice(0, 80)}”? This removes the unposted draft only — not live bookings or money.`,
+                                    )
+                                  )
+                                    return;
+                                  setBusy(true);
+                                  try {
+                                    await command('booking_draft_delete', {
+                                      draft_id: draft.id,
+                                    });
+                                    if (selected?.type === 'draft' && selected.id === draft.id) {
+                                      setSelected(null);
+                                      setDetail(null);
+                                    }
+                                    await refresh();
+                                    setToast('Draft deleted.');
+                                  } catch (err) {
+                                    setError((err as Error).message);
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                }}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        {(draft.intake_from ||
-                          draft.intake_subject ||
-                          draft.intake_mailbox ||
-                          draft.intake_filename) && (
-                          <p className="intake-draft-provenance">
-                            {formatIntakeProvenanceLine({
-                              source: draft.intake_source,
-                              from_address: draft.intake_from,
-                              subject: draft.intake_subject,
-                              mailbox: draft.intake_mailbox,
-                              filename: draft.intake_filename,
-                            })}
-                          </p>
-                        )}
-                        <dl className="intake-draft-meta">
-                          <div>
-                            <dt>Customer</dt>
-                            <dd>
-                              {draft.intake_customer ||
-                                (draft.intake_source ? '—' : 'Not linked yet')}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Product</dt>
-                            <dd>{draft.intake_product || '—'}</dd>
-                          </div>
-                          <div>
-                            <dt>Route / place</dt>
-                            <dd>{draft.intake_route || '—'}</dd>
-                          </div>
-                          <div>
-                            <dt>Travel</dt>
-                            <dd>{draft.intake_travel_start || '—'}</dd>
-                          </div>
-                          <div>
-                            <dt>PNR</dt>
-                            <dd>{draft.intake_pnr || '—'}</dd>
-                          </div>
-                          <div>
-                            <dt>Sale</dt>
-                            <dd>
-                              {draft.intake_sale != null && draft.intake_sale !== ''
-                                ? `$${draft.intake_sale}`
-                                : '—'}
-                            </dd>
-                          </div>
-                        </dl>
-                        <span className="intake-draft-action">
-                          {draft.kind === 'voucher_sale'
-                            ? 'Review voucher details'
-                            : draft.kind === 'historical_booking'
-                              ? 'View historical details'
-                              : draft.intake_source
-                                ? `Continue intake${draft.intake_filename ? ` · ${draft.intake_filename}` : ''}`
-                                : 'Continue draft'}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          className="intake-draft-card-open"
+                          onClick={async () => {
+                            try {
+                              if (
+                                draft.kind === 'voucher_sale' ||
+                                draft.kind === 'historical_booking'
+                              ) {
+                                await openRecord('draft', draft.id);
+                                return;
+                              }
+                              const response = await fetch(
+                                `/api/state?type=draft&id=${encodeURIComponent(draft.id)}`,
+                                { cache: 'no-store' },
+                              );
+                              if (!response.ok) throw new Error('Unable to open this draft');
+                              const loaded = await response.json();
+                              if (
+                                draftKind({
+                                  summary: loaded.entry?.summary,
+                                  historical_status:
+                                    loaded.entry?.itinerary?.historical_reconciliation_status,
+                                }) !== 'booking'
+                              ) {
+                                setSelected({ type: 'draft', id: loaded.id });
+                                setDetail(loaded);
+                              } else
+                                action('booking', {
+                                  ...loaded.entry,
+                                  draft_id: loaded.id,
+                                  intake_apply_on_open: true,
+                                  intake_provenance: loaded.entry?.intake_provenance,
+                                  recovery_paste:
+                                    loaded.entry?.intake_raw_text ||
+                                    loaded.entry?.recovery_paste ||
+                                    undefined,
+                                });
+                            } catch (e) {
+                              setError((e as Error).message);
+                            }
+                          }}
+                        >
+                          {(draft.intake_from ||
+                            draft.intake_subject ||
+                            draft.intake_mailbox ||
+                            draft.intake_filename) && (
+                            <p className="intake-draft-provenance">
+                              {formatIntakeProvenanceLine({
+                                source: draft.intake_source,
+                                from_address: draft.intake_from,
+                                subject: draft.intake_subject,
+                                mailbox: draft.intake_mailbox,
+                                filename: draft.intake_filename,
+                              })}
+                            </p>
+                          )}
+                          <dl className="intake-draft-meta">
+                            <div>
+                              <dt>Customer</dt>
+                              <dd>
+                                {draft.intake_customer ||
+                                  (draft.intake_source ? '—' : 'Not linked yet')}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Product</dt>
+                              <dd>{draft.intake_product || '—'}</dd>
+                            </div>
+                            <div>
+                              <dt>Route / place</dt>
+                              <dd>{draft.intake_route || '—'}</dd>
+                            </div>
+                            <div>
+                              <dt>Travel</dt>
+                              <dd>{draft.intake_travel_start || '—'}</dd>
+                            </div>
+                            <div>
+                              <dt>PNR</dt>
+                              <dd>{draft.intake_pnr || '—'}</dd>
+                            </div>
+                            <div>
+                              <dt>Sale</dt>
+                              <dd>
+                                {draft.intake_sale != null && draft.intake_sale !== ''
+                                  ? `$${draft.intake_sale}`
+                                  : '—'}
+                              </dd>
+                            </div>
+                          </dl>
+                          <span className="intake-draft-action">
+                            {draft.kind === 'voucher_sale'
+                              ? 'Review voucher details'
+                              : draft.kind === 'historical_booking'
+                                ? 'View historical details'
+                                : draft.intake_source
+                                  ? `Continue intake${draft.intake_filename ? ` · ${draft.intake_filename}` : ''}`
+                                  : 'Continue draft'}
+                          </span>
+                        </button>
+                      </article>
                     ))}
                     <div className="intake-draft-more">
                       <ListPager

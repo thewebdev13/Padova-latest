@@ -544,6 +544,21 @@ test('operational booking separates brand, booking method, sellers, customer car
     assert.equal((await detail(db, worker, 'draft', draft.id)).entry.sale, null);
     await assert.rejects(detail(db, testOwner, 'draft', draft.id));
     assert.equal((await snapshot(db, testOwner)).bookingDrafts.length, 0);
+    await assert.rejects(
+      execute(db, testOwner, {
+        id: randomUUID(),
+        kind: 'booking_draft_delete',
+        data: { draft_id: draft.id },
+      }),
+      /not found or not owned/,
+    );
+    const deleted = await execute(db, worker, {
+      id: randomUUID(),
+      kind: 'booking_draft_delete',
+      data: { draft_id: draft.id },
+    });
+    assert.equal(deleted.deleted, true);
+    assert.equal((await snapshot(db, worker)).bookingDrafts.length, 0);
     const held = await execute(db, worker, {
       id: randomUUID(),
       kind: 'booking_draft',

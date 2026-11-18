@@ -77,6 +77,10 @@ const schemas = {
     reason: text,
   }),
   booking_draft: draftSchema,
+  /** Remove an unposted booking_draft only — never touches live bookings or money. */
+  booking_draft_delete: z.object({
+    draft_id: id,
+  }),
   revise_travel: fulfillmentSchemas.travel_component.extend({
     travel_component_id: id,
     expected_version: z.number().int().nonnegative(),
@@ -2768,6 +2772,38 @@ export async function execute(
         // Draft entry contains no posting; access is actor-scoped on read.
         result = await insert(tx, 'booking_drafts', { ...d, created_by: actor.id, command_id });
         result.draft = true;
+        break;
+      }
+      case 'booking_draft_delete': {
+        // booking_drafts rows are immutable (no UPDATE/DELETE). Discard via this command
+        // and hide from lists — never touches live bookings or money.
+        const draft = await one(tx, 'SELECT id, created_by FROM booking_drafts WHERE id=$1', [
+          d.draft_id,
+        ]);
+        if (draft.created_by !== actor.id)
+          throw new Error('Draft not found or not owned by this staff user');
+        const posted = (
+          await tx.query(
+            `SELECT 1 AS hit FROM commands
+             WHERE kind='booking' AND result IS NOT NULL
+               AND payload->'operational'->>'draft_id'=$1
+             LIMIT 1`,
+            [d.draft_id],
+          )
+        ).rows[0];
+        if (posted)
+          throw new Error('This draft was already used for a live booking and cannot be deleted');
+        const already = (
+          await tx.query(
+            `SELECT 1 AS hit FROM commands
+             WHERE kind='booking_draft_delete' AND result IS NOT NULL
+               AND payload->>'draft_id'=$1
+             LIMIT 1`,
+            [d.draft_id],
+          )
+        ).rows[0];
+        if (already) throw new Error('This draft was already deleted');
+        result = { id: d.draft_id, deleted: true, draft: true };
         break;
       }
       case 'expected_event': {

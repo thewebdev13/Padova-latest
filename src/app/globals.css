@@ -1928,6 +1928,12 @@ td small {
   letter-spacing: -0.2px;
   line-height: 1.35;
 }
+.intake-draft-card-top-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
 .intake-draft-badge {
   flex-shrink: 0;
   font-size: 10px;
@@ -1938,6 +1944,31 @@ td small {
   background: var(--softgreen);
   border-radius: 999px;
   padding: 4px 8px;
+}
+.intake-draft-delete {
+  font-size: 11px;
+  padding: 4px 8px;
+  color: #8a4b42;
+  border-color: #e7cfc9;
+  background: #fbf4f2;
+}
+.intake-draft-delete:hover {
+  border-color: #d9b0a8;
+  background: #f7ebe8;
+}
+.intake-draft-card-open {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
 }
 .intake-draft-meta {
   display: grid;

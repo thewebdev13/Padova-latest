@@ -56,6 +56,7 @@ export function commandPermission(kind: string): Permission {
       'relationship',
       'booking',
       'booking_draft',
+      'booking_draft_delete',
       'booking_source_method',
       'booking_source_profile',
       'booking_source_profile_link',
