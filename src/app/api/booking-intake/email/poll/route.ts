@@ -13,6 +13,10 @@ import { redactOperationalText } from '@/lib/operational-redaction';
 import { databaseUnavailable, temporarilyUnavailable } from '@/lib/service-errors';
 import { AccessError } from '@/lib/users';
 
+/** Allow enough time for Gmail + a few digital PDF text extracts (cron-job.org / Vercel). */
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
 function pollJson(out: Awaited<ReturnType<typeof pollEmailIntakeMailboxes>>) {
   return NextResponse.json(
     {
@@ -106,9 +110,10 @@ export async function GET(request: Request) {
     }
 
     // Auto poll (Vercel Cron or Bearer cron secret on GET).
+    // Keep batch small so cron-job.org does not hit Failed (timeout).
     const out = await pollEmailIntakeMailboxes(await database(), {
       actor: actor ?? null,
-      maxPerMailbox: 10,
+      maxPerMailbox: 5,
       markRead: true,
       dryRun: false,
     });

@@ -140,6 +140,26 @@ export async function extractPdfScannedOcr(
 }
 
 /**
+ * Fast path for email poll / cron: pdf-parse text layer only (no OCR, no pdf.js retry).
+ * Keeps cron-job.org / Vercel under timeout while still reading digital confirmation PDFs.
+ */
+export async function extractPdfTextFast(
+  bytes: Buffer,
+  filename = 'upload.pdf',
+): Promise<FileTextExtract> {
+  const layer = await extractPdfTextLayer(bytes, filename);
+  if (layer.extractable && layer.text.trim()) return layer;
+  return {
+    text: '',
+    extractable: false,
+    method: 'none',
+    note:
+      layer.note ||
+      `PDF “${filename}”: no selectable text in fast poll mode (OCR skipped). Paste or staff upload for scans.`,
+  };
+}
+
+/**
  * pdf-parse → pdf.js (with one retry) → scanned OCR.
  * Order prefers CJS pdf-parse so first-open under Turbopack does not depend on the ESM worker.
  */
@@ -216,12 +236,25 @@ export async function extractBinaryIntakeText(
   mimeType: string,
   bytes: Buffer,
   filename = 'upload',
+  opts?: { fast?: boolean },
 ): Promise<FileTextExtract> {
   const mime = (mimeType || 'application/octet-stream').split(';')[0].trim().toLowerCase();
   const lower = filename.toLowerCase();
-  if (mime === 'application/pdf' || /\.pdf$/i.test(lower)) return extractPdfText(bytes, filename);
-  if (mime.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(lower))
+  const fast = Boolean(opts?.fast);
+  if (mime === 'application/pdf' || /\.pdf$/i.test(lower))
+    return fast ? extractPdfTextFast(bytes, filename) : extractPdfText(bytes, filename);
+  if (mime.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(lower)) {
+    // Image OCR is too slow for cron poll — staff upload/paste can still OCR.
+    if (fast) {
+      return {
+        text: '',
+        extractable: false,
+        method: 'none',
+        note: `Image “${filename}”: skipped in fast email poll (OCR). Use staff intake for screenshots.`,
+      };
+    }
     return extractImageTextOcr(bytes, filename);
+  }
   return {
     text: '',
     extractable: false,

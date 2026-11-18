@@ -265,8 +265,13 @@ export async function fetchGmailMessage(
 
   const pdf_filenames: string[] = [];
   const pdf_sections: Array<{ filename: string; text: string }> = [];
-  // Scan every booking-relevant attachment (PDF + confirmation screenshots). Cap keeps poll bounded.
-  for (const file of buckets.files.slice(0, 10)) {
+  // Fast poll: digital PDF text only (no image OCR / scanned-PDF OCR) so cron does not timeout.
+  // Prefer PDFs first; cap attachments tightly for cron-job.org / Vercel time limits.
+  const ranked = [
+    ...buckets.files.filter((f) => intakeMimeForFile(f) === 'application/pdf'),
+    ...buckets.files.filter((f) => intakeMimeForFile(f) !== 'application/pdf'),
+  ];
+  for (const file of ranked.slice(0, 5)) {
     try {
       let bytes: Buffer;
       if (file.inlineData)
@@ -274,10 +279,10 @@ export async function fetchGmailMessage(
       else if (file.attachmentId)
         bytes = await fetchGmailAttachment(accessToken, json.id, file.attachmentId);
       else continue;
-      if (bytes.length > 8 * 1024 * 1024) continue;
+      if (bytes.length > 5 * 1024 * 1024) continue;
       const mime = intakeMimeForFile(file);
       const { extractIntakeText } = await import('./booking-intake');
-      const extracted = await extractIntakeText(mime, bytes, file.filename);
+      const extracted = await extractIntakeText(mime, bytes, file.filename, { fast: true });
       if (extracted.extractable && extracted.text?.trim()) {
         const fileText = extracted.text.trim();
         pdf_filenames.push(file.filename);

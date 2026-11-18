@@ -291,7 +291,7 @@ export async function pollEmailIntakeMailboxes(
   const boxes = (opts?.mailboxes?.length ? opts.mailboxes : intakeEmailMailboxes()).map((b) =>
     assertAllowedIntakeMailbox(b),
   );
-  const maxPerMailbox = Math.min(Math.max(opts?.maxPerMailbox ?? 10, 1), 30);
+  const maxPerMailbox = Math.min(Math.max(opts?.maxPerMailbox ?? 5, 1), 15);
   const markRead = opts?.markRead !== false;
   const dryRun = Boolean(opts?.dryRun);
   const results: EmailPollResult[] = [];

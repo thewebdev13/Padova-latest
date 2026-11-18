@@ -78,11 +78,12 @@ export async function extractIntakeText(
   mimeType: string,
   bytes: Buffer,
   filename = 'upload',
+  opts?: { fast?: boolean },
 ): Promise<{ text: string; extractable: boolean; note?: string; method?: string }> {
   const mime = (mimeType || 'application/octet-stream').split(';')[0].trim().toLowerCase();
   const lower = filename.toLowerCase();
   if (!looksLikePlainIntakeText(mime, filename)) {
-    return extractBinaryIntakeText(mime, bytes, filename);
+    return extractBinaryIntakeText(mime, bytes, filename, opts);
   }
   const text = bytes.toString('utf8');
   if (text.includes('\u0000'))

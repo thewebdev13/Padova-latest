@@ -81,6 +81,12 @@ Call on a schedule:
 `GET` or `POST` `https://qa.padovatravel.com/api/booking-intake/email/poll`  
 Header: `Authorization: Bearer <CRON_SECRET>`
 
+### cron-job.org settings (avoid Failed timeout)
+
+- Request timeout: **90–120 seconds** (Advanced settings) — default 30s is too short when PDFs are scanned.
+- Poll is capped (~5 unread per mailbox, digital PDF text only; image OCR skipped on cron).
+- If a test run still times out, raise the job timeout first, then retry.
+
 ---
 
 ## Optional: local helper (developers only)
