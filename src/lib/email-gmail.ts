@@ -37,8 +37,27 @@ export function emailIntakeClientSecret() {
 }
 
 /**
+ * Mailboxes that are Google aliases of another connected inbox (no separate OAuth).
+ * Default: none — Owner confirmed mindy@ is its own mailbox (not an alias of bookings@).
+ * Optional comma list: PADOVA_EMAIL_INTAKE_ALIAS_MAILBOXES=
+ */
+export function emailIntakeAliasMailboxes(): string[] {
+  const raw = process.env.PADOVA_EMAIL_INTAKE_ALIAS_MAILBOXES?.trim();
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isEmailIntakeAliasMailbox(mailbox: string): boolean {
+  return emailIntakeAliasMailboxes().includes(mailbox.trim().toLowerCase());
+}
+
+/**
  * Per-mailbox refresh token.
  * Owner boxes use only their dedicated env keys (never a personal/test shared token).
+ * Alias mailboxes usually have no token — poll skips them (mail arrives in the primary inbox).
  * Optional `PADOVA_EMAIL_INTAKE_TEST_MAILBOX` may use `PADOVA_EMAIL_INTAKE_REFRESH_TOKEN`.
  */
 export function refreshTokenForMailbox(mailbox: string): string | null {

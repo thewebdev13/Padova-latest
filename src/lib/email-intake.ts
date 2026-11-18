@@ -7,7 +7,9 @@ import {
 import type { Database } from './db';
 import { looksLikeBookingRelatedEmail } from './booking-message-detect';
 import {
+  emailIntakeAliasMailboxes,
   fetchGmailMessage,
+  isEmailIntakeAliasMailbox,
   listUnreadGmailMessages,
   markGmailMessageRead,
   refreshGmailAccessToken,
@@ -51,10 +53,12 @@ export function emailIntakeStatus() {
     mailboxes.map((box) => [box, Boolean(refreshTokenForMailbox(box))]),
   );
   const testMailbox = process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX?.trim().toLowerCase() || null;
+  const alias_mailboxes = emailIntakeAliasMailboxes();
   return {
     mailboxes,
     owner_mailboxes: [...INTAKE_EMAIL_MAILBOXES],
     test_mailbox: testMailbox,
+    alias_mailboxes,
     polling_configured: configured,
     mailbox_tokens,
     mode: configured ? 'workspace_oauth_ready' : 'manual_staff_forward_only',
@@ -63,8 +67,8 @@ export function emailIntakeStatus() {
     draft_only: true,
     poll_path: '/api/booking-intake/email/poll',
     note: configured
-      ? 'OAuth env present. POST /api/booking-intake/email/poll creates booking drafts from unread booking-related mail. Never posts money.'
-      : 'Automatic mailbox poll is not configured. Add Google OAuth + refresh token (test mailbox OK for QA) — see docs/EMAIL_INTAKE_OAUTH.md.',
+      ? 'OAuth env present. Poll creates booking drafts from unread booking-related mail. Never posts money.'
+      : 'Automatic mailbox poll is not configured. Connect Shmuel@ / mindy@ / bookings@ via hosted OAuth — see docs/EMAIL_INTAKE_OAUTH.md.',
   };
 }
 
@@ -220,7 +224,15 @@ export async function pollEmailIntakeMailboxes(
     };
     const refresh = refreshTokenForMailbox(mailbox);
     if (!refresh) {
-      result.errors.push({ error: `No refresh token configured for ${mailbox}` });
+      if (isEmailIntakeAliasMailbox(mailbox)) {
+        result.skipped.push({
+          message_id: '—',
+          reason: 'alias_mailbox_skip_poll',
+          subject: 'Alias mailbox — mail is read via the primary Google inbox',
+        });
+      } else {
+        result.errors.push({ error: `No refresh token configured for ${mailbox}` });
+      }
       results.push(result);
       continue;
     }
