@@ -11,6 +11,7 @@ import {
   splitIntakeEntries,
 } from '../src/lib/booking-intake';
 import { draftKind } from '../src/lib/draft-kind';
+import { looksLikeBookingRelatedEmail } from '../src/lib/email-gmail';
 import { emailIntakeStatus, prepareEmailIntakeDraft } from '../src/lib/email-intake';
 import {
   formatIntakeProvenanceLine,
@@ -237,6 +238,23 @@ test('email intake mailboxes are limited to the two Owner-approved addresses', a
   assert.equal(emailEntry.intake_provenance.mailbox, 'shmuel@padovatravel.com');
   assert.equal(emailIntakeStatus().posts_money, false);
   assert.equal(emailIntakeStatus().polling_configured, false);
+  assert.equal(emailIntakeStatus().draft_only, true);
+  assert.equal(emailIntakeStatus().mailbox_tokens['shmuel@padovatravel.com'], false);
+  assert.ok(
+    looksLikeBookingRelatedEmail({
+      subject: 'Your hotel confirmation 123',
+      text: 'Check-in tomorrow',
+      from_address: 'reservations@hotel.com',
+    }),
+  );
+  assert.equal(
+    looksLikeBookingRelatedEmail({
+      subject: 'Weekly newsletter',
+      text: 'Unsubscribe here for deals',
+      from_address: 'marketing@example.com',
+    }),
+    false,
+  );
 });
 
 test('eml extract prefers text/plain and keeps Field: Value lines', async () => {

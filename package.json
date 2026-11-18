@@ -43,7 +43,8 @@
     "test:hosted:financial": "node --use-system-ca --env-file-if-exists=.env.local --import tsx scripts/test-hosted-financial.ts",
     "intake:whatsapp-bridge": "node scripts/whatsapp-pc-bridge.mjs",
     "intake:whatsapp-web": "node scripts/whatsapp-web-reader.mjs",
-    "intake:whatsapp-helper": "node scripts/whatsapp-web-reader.mjs"
+    "intake:whatsapp-helper": "node scripts/whatsapp-web-reader.mjs",
+    "intake:email-oauth": "node --env-file-if-exists=.env.local scripts/email-intake-oauth.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.12",
