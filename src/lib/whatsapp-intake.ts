@@ -1,4 +1,6 @@
 import { buildIntakeDraft } from './booking-intake';
+export { looksLikeBookingRelatedWhatsApp } from './whatsapp-booking-detect';
+import { looksLikeBookingRelatedWhatsApp } from './whatsapp-booking-detect';
 
 export type InboundWhatsAppMessage = {
   /** Linked PC session label — never a Meta Business API send path. */
@@ -30,17 +32,6 @@ export function assertWhatsAppBridgeAuth(headerToken: string | null | undefined)
   if (!expected) throw new Error('WhatsApp PC bridge is not configured (missing bridge token)');
   if (!headerToken || headerToken !== expected)
     throw new Error('WhatsApp bridge authorization rejected');
-}
-
-/** Skip short chatter so bridge does not create blank wa:… drafts. */
-export function looksLikeBookingRelatedWhatsApp(text: string) {
-  const t = String(text || '').trim();
-  if (t.length < 12) return false;
-  if (/^(product|customer|traveler|property|sale|total|hotel|flight|pnr|confirmation)\s*:/im.test(t))
-    return true;
-  return /\b(confirm(ation|ed)?|reservation|itinerary|booking|e-?ticket|record locator|pnr|check[- ]?in|check[- ]?out|flight|hotel|airline|marriott|hilton|hyatt|amex travel|expedia|guest|traveler|depart|arrival|product\s*:)/i.test(
-    t,
-  );
 }
 
 /** Build draft from inbound WhatsApp text. Does not write to the database. */

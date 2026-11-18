@@ -404,12 +404,20 @@ test('WhatsApp intake is read-only draft provenance and never claims send', asyn
   assert.equal(status.posts_money, false);
   assert.equal(looksLikeBookingRelatedWhatsApp('hi'), false);
   assert.equal(looksLikeBookingRelatedWhatsApp('ok thanks'), false);
-  assert.ok(looksLikeBookingRelatedWhatsApp('Product: Hotel\nCustomer: Test'));
+  assert.equal(looksLikeBookingRelatedWhatsApp('Smoke Guest,'), false);
+  assert.equal(looksLikeBookingRelatedWhatsApp('I need a hotel please'), false);
+  assert.equal(looksLikeBookingRelatedWhatsApp('can you book something'), false);
+  assert.ok(looksLikeBookingRelatedWhatsApp('Product: Hotel\nCustomer: Test Guest'));
+  assert.ok(
+    looksLikeBookingRelatedWhatsApp(
+      'Your hotel confirmation 910637\nCheck-in: 2026-12-01\nGuest Name: Abraham\nProperty: Test Inn Miami Beach',
+    ),
+  );
   await assert.rejects(
     () =>
       prepareWhatsAppIntakeDraft({
         chat_name: 'wa:123',
-        text: 'hi',
+        text: 'hi hotel please',
       }),
     /does not look like a booking/,
   );

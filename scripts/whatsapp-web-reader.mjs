@@ -200,17 +200,45 @@ function extractText(msg) {
 }
 
 /**
- * Skip chatter ("hi", "ok", lone names) so we do not create blank wa:… drafts.
- * Only Field:Value / booking-like text becomes a draft (Owner: not every message).
+ * Strict: only real booking Field:Value / confirmation paste → draft.
+ * Keep in sync with src/lib/whatsapp-booking-detect.ts
  */
 function looksLikeBookingRelatedWhatsApp(text) {
   const t = String(text || '').trim();
-  if (t.length < 12) return false;
-  if (/^(product|customer|traveler|property|sale|total|hotel|flight|pnr|confirmation)\s*:/im.test(t))
-    return true;
-  return /\b(confirm(ation|ed)?|reservation|itinerary|booking|e-?ticket|record locator|pnr|check[- ]?in|check[- ]?out|flight|hotel|airline|marriott|hilton|hyatt|amex travel|expedia|guest|traveler|depart|arrival|product\s*:)/i.test(
-    t,
+  if (t.length < 20) return false;
+  const FIELD_LABEL =
+    /^(product|customer|traveler|guest|property|airline|seller|pnr|confirmation(?:\s*(?:#|no\.?|number))?|record\s*locator|check[- ]?in|check[- ]?out|pickup|drop[- ]?off|route|sale|total(?:\s*cost)?|booked\s*through|purchased\s*from|departure|arrival|trip\s*id|hotel\s*confirmation)\s*:/gim;
+  const fieldHits = [...t.matchAll(FIELD_LABEL)];
+  const uniqueLabels = new Set(
+    fieldHits.map((m) => String(m[1]).toLowerCase().replace(/\s+/g, ' ')),
   );
+  if (uniqueLabels.size >= 2) return true;
+  if (uniqueLabels.size === 1) {
+    const label = [...uniqueLabels][0];
+    const strong =
+      /^(product|customer|traveler|property|pnr|confirmation|record locator|check-in|check in)$/i.test(
+        label,
+      );
+    const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (
+      strong &&
+      lines.length >= 2 &&
+      /\b(hotel|flight|car|pnr|check[- ]?in|check[- ]?out|confirmation|customer|traveler|property|airline|reservation)\b/i.test(
+        t,
+      )
+    )
+      return true;
+  }
+  const hasConfirm =
+    /\b(confirmation|reservation confirmed|booking confirmation|itinerary|e-?ticket|travel reservation)\b/i.test(
+      t,
+    );
+  const hasTravel =
+    /\b(hotel|flight|airline|check[- ]?in|check[- ]?out|record locator|\bpnr\b|marriott|hilton|hyatt|united|delta|el al|amex travel|expedia|taap)\b/i.test(
+      t,
+    );
+  if (hasConfirm && hasTravel && t.length >= 60) return true;
+  return false;
 }
 
 function jidToNumber(jid) {
