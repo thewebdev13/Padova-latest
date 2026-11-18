@@ -199,6 +199,20 @@ function extractText(msg) {
   return '';
 }
 
+/**
+ * Skip chatter ("hi", "ok", lone names) so we do not create blank wa:… drafts.
+ * Only Field:Value / booking-like text becomes a draft (Owner: not every message).
+ */
+function looksLikeBookingRelatedWhatsApp(text) {
+  const t = String(text || '').trim();
+  if (t.length < 12) return false;
+  if (/^(product|customer|traveler|property|sale|total|hotel|flight|pnr|confirmation)\s*:/im.test(t))
+    return true;
+  return /\b(confirm(ation|ed)?|reservation|itinerary|booking|e-?ticket|record locator|pnr|check[- ]?in|check[- ]?out|flight|hotel|airline|marriott|hilton|hyatt|amex travel|expedia|guest|traveler|depart|arrival|product\s*:)/i.test(
+    t,
+  );
+}
+
 function jidToNumber(jid) {
   if (!jid) return undefined;
   const user = String(jid).split('@')[0] || '';
@@ -552,6 +566,16 @@ async function startReader() {
 
           const id = messageKeyId(msg);
           if (processed.processed[id]) continue;
+
+          // Mark seen even when skipped so retries do not re-evaluate forever.
+          if (!looksLikeBookingRelatedWhatsApp(text)) {
+            processed.processed[id] = new Date().toISOString();
+            await saveState(processed);
+            console.log(
+              `[skip] not booking-related (${text.slice(0, 40).replace(/\s+/g, ' ')}…)`,
+            );
+            continue;
+          }
 
           const chatName = await resolveChatName(sock, remoteJid);
           const fromNumber =

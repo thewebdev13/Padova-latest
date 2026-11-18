@@ -24,7 +24,11 @@ import {
   prepareInstinctIntakeDraft,
   readInstinctAuthHeader,
 } from '../src/lib/instinct-intake';
-import { prepareWhatsAppIntakeDraft, whatsappIntakeStatus } from '../src/lib/whatsapp-intake';
+import {
+  looksLikeBookingRelatedWhatsApp,
+  prepareWhatsAppIntakeDraft,
+  whatsappIntakeStatus,
+} from '../src/lib/whatsapp-intake';
 
 test('plain text Field: Value builds a booking-shaped draft without posting signals', async () => {
   const built = await buildIntakeDraft({
@@ -398,6 +402,17 @@ test('WhatsApp intake is read-only draft provenance and never claims send', asyn
   assert.equal(status.auto_send, false);
   assert.equal(status.meta_cloud_api, false);
   assert.equal(status.posts_money, false);
+  assert.equal(looksLikeBookingRelatedWhatsApp('hi'), false);
+  assert.equal(looksLikeBookingRelatedWhatsApp('ok thanks'), false);
+  assert.ok(looksLikeBookingRelatedWhatsApp('Product: Hotel\nCustomer: Test'));
+  await assert.rejects(
+    () =>
+      prepareWhatsAppIntakeDraft({
+        chat_name: 'wa:123',
+        text: 'hi',
+      }),
+    /does not look like a booking/,
+  );
 });
 
 test('Instinct intake is draft-only provenance and rejects bad auth', async () => {

@@ -32,9 +32,25 @@ export function assertWhatsAppBridgeAuth(headerToken: string | null | undefined)
     throw new Error('WhatsApp bridge authorization rejected');
 }
 
+/** Skip short chatter so bridge does not create blank wa:… drafts. */
+export function looksLikeBookingRelatedWhatsApp(text: string) {
+  const t = String(text || '').trim();
+  if (t.length < 12) return false;
+  if (/^(product|customer|traveler|property|sale|total|hotel|flight|pnr|confirmation)\s*:/im.test(t))
+    return true;
+  return /\b(confirm(ation|ed)?|reservation|itinerary|booking|e-?ticket|record locator|pnr|check[- ]?in|check[- ]?out|flight|hotel|airline|marriott|hilton|hyatt|amex travel|expedia|guest|traveler|depart|arrival|product\s*:)/i.test(
+    t,
+  );
+}
+
 /** Build draft from inbound WhatsApp text. Does not write to the database. */
 export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage) {
   if (!message.text?.trim()) throw new Error('WhatsApp intake requires message text');
+  if (!looksLikeBookingRelatedWhatsApp(message.text)) {
+    throw new Error(
+      'WhatsApp text does not look like a booking/reservation; draft not created (chatter skipped)',
+    );
+  }
   return buildIntakeDraft({
     source: 'whatsapp',
     text: message.text,
