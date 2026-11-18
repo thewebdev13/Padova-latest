@@ -18,7 +18,13 @@ import { redactOperationalText } from '@/lib/operational-redaction';
 import { databaseUnavailable, temporarilyUnavailable } from '@/lib/service-errors';
 import { AccessError } from '@/lib/users';
 
-const SOURCES = new Set<IntakeSource>(['staff_upload', 'staff_paste', 'email', 'whatsapp']);
+const SOURCES = new Set<IntakeSource>([
+  'staff_upload',
+  'staff_paste',
+  'email',
+  'whatsapp',
+  'instinct',
+]);
 
 export async function POST(request: Request) {
   try {

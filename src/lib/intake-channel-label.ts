@@ -5,6 +5,7 @@ export type IntakeChannelSource =
   | 'staff_paste'
   | 'email'
   | 'whatsapp'
+  | 'instinct'
   | string
   | null
   | undefined;
@@ -15,6 +16,8 @@ export function intakeChannelBadge(source: IntakeChannelSource): string {
       return 'Email intake';
     case 'whatsapp':
       return 'WhatsApp intake';
+    case 'instinct':
+      return 'Instinct intake';
     case 'staff_upload':
       return 'File intake';
     case 'staff_paste':
@@ -30,6 +33,8 @@ export function intakeChannelFilterKey(source: IntakeChannelSource): string {
       return 'email';
     case 'whatsapp':
       return 'whatsapp';
+    case 'instinct':
+      return 'instinct';
     case 'staff_upload':
     case 'staff_paste':
       return 'staff';

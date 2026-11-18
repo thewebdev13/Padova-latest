@@ -24,7 +24,12 @@ export {
 } from './booking-intake-split';
 
 /** Channels that feed the same booking_draft → staff approve path. */
-export type IntakeSource = 'staff_upload' | 'staff_paste' | 'email' | 'whatsapp';
+export type IntakeSource =
+  | 'staff_upload'
+  | 'staff_paste'
+  | 'email'
+  | 'whatsapp'
+  | 'instinct';
 
 export type IntakeProvenance = {
   source: IntakeSource;

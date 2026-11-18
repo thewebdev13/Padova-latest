@@ -3612,6 +3612,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   ['All', 'All'],
                   ['email', 'Email'],
                   ['whatsapp', 'WhatsApp'],
+                  ['instinct', 'Instinct'],
                   ['staff', 'Staff file/paste'],
                   ['manual', 'Manual'],
                   ['historical', 'Historical'],

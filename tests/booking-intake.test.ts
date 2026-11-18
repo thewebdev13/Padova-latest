@@ -17,6 +17,12 @@ import {
   intakeChannelBadge,
   intakeChannelFilterKey,
 } from '../src/lib/intake-channel-label';
+import {
+  assertInstinctAuth,
+  instinctIntakeStatus,
+  prepareInstinctIntakeDraft,
+  readInstinctAuthHeader,
+} from '../src/lib/instinct-intake';
 import { prepareWhatsAppIntakeDraft, whatsappIntakeStatus } from '../src/lib/whatsapp-intake';
 
 test('plain text Field: Value builds a booking-shaped draft without posting signals', async () => {
@@ -374,4 +380,47 @@ test('WhatsApp intake is read-only draft provenance and never claims send', asyn
   assert.equal(status.auto_send, false);
   assert.equal(status.meta_cloud_api, false);
   assert.equal(status.posts_money, false);
+});
+
+test('Instinct intake is draft-only provenance and rejects bad auth', async () => {
+  assert.equal(intakeChannelBadge('instinct'), 'Instinct intake');
+  assert.equal(intakeChannelFilterKey('instinct'), 'instinct');
+  const built = await prepareInstinctIntakeDraft({
+    chat_name: 'Owner ↔ Instinct',
+    text: 'Product: Hotel\nProperty: Instinct Test Inn\nNotes: agent draft',
+    title: 'Instinct draft title',
+  });
+  const entry = built.entry as Record<string, any>;
+  assert.equal(entry.intake_provenance.source, 'instinct');
+  assert.equal(entry.product, 'Hotel');
+  assert.equal(built.title, 'Instinct draft title');
+  const prev = process.env.PADOVA_INSTINCT_TOKEN;
+  process.env.PADOVA_INSTINCT_TOKEN = 'test-instinct-token';
+  try {
+    assertInstinctAuth('test-instinct-token');
+    assert.throws(() => assertInstinctAuth('wrong'), /rejected/);
+    const status = instinctIntakeStatus();
+    assert.equal(status.draft_only, true);
+    assert.equal(status.posts_money, false);
+    assert.equal(status.live_booking, false);
+    assert.equal(
+      readInstinctAuthHeader(
+        new Request('http://local/test', {
+          headers: { Authorization: 'Bearer test-instinct-token' },
+        }),
+      ),
+      'test-instinct-token',
+    );
+    assert.equal(
+      readInstinctAuthHeader(
+        new Request('http://local/test', {
+          headers: { 'x-padova-instinct': 'header-token' },
+        }),
+      ),
+      'header-token',
+    );
+  } finally {
+    if (prev === undefined) delete process.env.PADOVA_INSTINCT_TOKEN;
+    else process.env.PADOVA_INSTINCT_TOKEN = prev;
+  }
 });
