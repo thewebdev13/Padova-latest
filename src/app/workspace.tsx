@@ -3685,10 +3685,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                     await command('booking_draft_delete', {
                                       draft_id: draft.id,
                                     });
-                                    if (selected?.type === 'draft' && selected.id === draft.id) {
-                                      setSelected(null);
-                                      setDetail(null);
-                                    }
+                                    setSelected(null);
+                                    setDetail(null);
                                     await refresh();
                                     setToast('Draft deleted.');
                                   } catch (err) {
