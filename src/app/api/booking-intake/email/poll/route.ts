@@ -110,12 +110,14 @@ export async function GET(request: Request) {
     }
 
     // Auto poll (Vercel Cron or Bearer cron secret on GET).
-    // Keep batch small so cron-job.org does not hit Failed (timeout).
+    // cron-job.org free plan max timeout = 30s — finish early; leftover unread stays for next run.
     const out = await pollEmailIntakeMailboxes(await database(), {
       actor: actor ?? null,
-      maxPerMailbox: 5,
+      maxPerMailbox: 2,
+      maxAttachments: 2,
       markRead: true,
       dryRun: false,
+      deadlineAt: Date.now() + 22_000,
     });
     return pollJson(out);
   } catch (e) {

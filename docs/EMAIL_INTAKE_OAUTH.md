@@ -83,9 +83,10 @@ Header: `Authorization: Bearer <CRON_SECRET>`
 
 ### cron-job.org settings (avoid Failed timeout)
 
-- Request timeout: **90–120 seconds** (Advanced settings) — default 30s is too short when PDFs are scanned.
-- Poll is capped (~5 unread per mailbox, digital PDF text only; image OCR skipped on cron).
-- If a test run still times out, raise the job timeout first, then retry.
+- Free plan max timeout is **30 seconds** — leave it at 30; Padova poll is built for that.
+- Cron poll finishes early (~22s budget): ~2 unread/mailbox, ~2 PDFs/message, digital PDF text only.
+- Leftover unread mail is picked up on the next 5-minute run (no data loss).
+- Do not try to set 90–120s on free cron-job.org — that value is invalid there.
 
 ---
 

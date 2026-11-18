@@ -282,6 +282,10 @@ export async function pollEmailIntakeMailboxes(
     maxPerMailbox?: number;
     markRead?: boolean;
     dryRun?: boolean;
+    /** Soft deadline (ms since epoch). Stop starting new messages when exceeded. */
+    deadlineAt?: number;
+    /** Max PDF/image files to extract per message (cron free = 30s → keep low). */
+    maxAttachments?: number;
   },
 ): Promise<{ results: EmailPollResult[]; intake: ReturnType<typeof emailIntakeStatus> }> {
   if (!emailIntakePollingConfigured()) {
@@ -292,11 +296,30 @@ export async function pollEmailIntakeMailboxes(
     assertAllowedIntakeMailbox(b),
   );
   const maxPerMailbox = Math.min(Math.max(opts?.maxPerMailbox ?? 5, 1), 15);
+  const maxAttachments = Math.min(Math.max(opts?.maxAttachments ?? 3, 0), 5);
   const markRead = opts?.markRead !== false;
   const dryRun = Boolean(opts?.dryRun);
+  const deadlineAt = opts?.deadlineAt;
   const results: EmailPollResult[] = [];
+  const pastDeadline = () => Boolean(deadlineAt && Date.now() >= deadlineAt);
 
   for (const mailbox of boxes) {
+    if (pastDeadline()) {
+      results.push({
+        mailbox,
+        scanned: 0,
+        created: [],
+        skipped: [
+          {
+            message_id: '—',
+            reason: 'time_budget_exceeded',
+            subject: 'Stopped early so cron-job.org 30s timeout is not hit',
+          },
+        ],
+        errors: [],
+      });
+      continue;
+    }
     const result: EmailPollResult = {
       mailbox,
       scanned: 0,
@@ -325,6 +348,14 @@ export async function pollEmailIntakeMailboxes(
       });
       result.scanned = listed.length;
       for (const item of listed) {
+        if (pastDeadline()) {
+          result.skipped.push({
+            message_id: item.id,
+            reason: 'time_budget_exceeded',
+            subject: 'Remaining unread left for the next cron run',
+          });
+          continue;
+        }
         try {
           if (await draftExistsForGmailMessage(db, item.id)) {
             result.skipped.push({
@@ -340,7 +371,9 @@ export async function pollEmailIntakeMailboxes(
             }
             continue;
           }
-          const msg = await fetchGmailMessage(token.access_token, item.id);
+          const msg = await fetchGmailMessage(token.access_token, item.id, {
+            maxFiles: maxAttachments,
+          });
           if (
             !looksLikeBookingRelatedEmail({
               subject: msg.subject,

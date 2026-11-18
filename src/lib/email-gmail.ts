@@ -237,6 +237,7 @@ function headerValue(
 export async function fetchGmailMessage(
   accessToken: string,
   messageId: string,
+  opts?: { maxFiles?: number },
 ): Promise<GmailFetchedMessage> {
   const url = new URL(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`,
@@ -266,12 +267,13 @@ export async function fetchGmailMessage(
   const pdf_filenames: string[] = [];
   const pdf_sections: Array<{ filename: string; text: string }> = [];
   // Fast poll: digital PDF text only (no image OCR / scanned-PDF OCR) so cron does not timeout.
-  // Prefer PDFs first; cap attachments tightly for cron-job.org / Vercel time limits.
+  // Prefer PDFs first; cap tightly for cron-job.org free plan (max 30s request timeout).
+  const maxFiles = Math.min(Math.max(opts?.maxFiles ?? 3, 0), 5);
   const ranked = [
     ...buckets.files.filter((f) => intakeMimeForFile(f) === 'application/pdf'),
     ...buckets.files.filter((f) => intakeMimeForFile(f) !== 'application/pdf'),
   ];
-  for (const file of ranked.slice(0, 5)) {
+  for (const file of ranked.slice(0, maxFiles)) {
     try {
       let bytes: Buffer;
       if (file.inlineData)
