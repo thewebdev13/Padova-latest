@@ -330,3 +330,19 @@ test('client Chase Travel TRC PDF extracts and maps', async () => {
   assert.equal(paste.fields.route, 'EWR-LAX');
   assert.equal(paste.fields.sale, '1338.49');
 });
+
+test('Etihad extras EMD receipt maps passenger PNR route without inventing flight sale', () => {
+  const raw = readFileSync(
+    new URL('../testdata/intake-samples/etihad-extras-nechama.txt', import.meta.url),
+    'utf8',
+  );
+  assert.equal(isReservationProse(raw), true);
+  const paste = parseQuickPaste(raw);
+  assert.equal(paste.fields.product, 'Flight');
+  assert.equal(paste.fields.airline, 'Etihad Airways');
+  assert.equal(paste.fields.primary_reference, '88MRHN');
+  assert.equal(paste.fields.route, 'TLV-AUH');
+  assert.match(String(paste.fields.traveler || ''), /Nechama Rivka Thav/i);
+  assert.equal(paste.fields.sale, undefined);
+  assert.match(String(paste.fields.notes || ''), /extras|EMD|seat/i);
+});

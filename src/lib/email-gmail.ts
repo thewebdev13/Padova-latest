@@ -20,6 +20,8 @@ export type GmailFetchedMessage = {
   snippet?: string;
   /** PDF attachment extracts appended into text for booking detect + draft. */
   pdf_filenames?: string[];
+  /** Per-attachment extracts — one draft per PDF when multiple passenger receipts. */
+  pdf_sections?: Array<{ filename: string; text: string }>;
 };
 
 function requireEnv(name: string) {
@@ -229,8 +231,9 @@ export async function fetchGmailMessage(
   if (!text && json.snippet) text = String(json.snippet).trim();
 
   const pdf_filenames: string[] = [];
+  const pdf_sections: Array<{ filename: string; text: string }> = [];
   // Cap PDF extracts so one huge mail cannot stall poll (same spirit as intake size limits).
-  for (const pdf of buckets.pdfs.slice(0, 3)) {
+  for (const pdf of buckets.pdfs.slice(0, 8)) {
     try {
       let bytes: Buffer;
       if (pdf.inlineData) bytes = Buffer.from(pdf.inlineData.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
@@ -241,10 +244,12 @@ export async function fetchGmailMessage(
       const { extractIntakeText } = await import('./booking-intake');
       const extracted = await extractIntakeText('application/pdf', bytes, pdf.filename);
       if (extracted.extractable && extracted.text?.trim()) {
+        const pdfText = extracted.text.trim();
         pdf_filenames.push(pdf.filename);
+        pdf_sections.push({ filename: pdf.filename, text: pdfText });
         text = text
-          ? `${text}\n\n--- PDF: ${pdf.filename} ---\n${extracted.text.trim()}`
-          : extracted.text.trim();
+          ? `${text}\n\n---\nPDF: ${pdf.filename}\n${pdfText}`
+          : pdfText;
       }
     } catch {
       /* keep body-only if one PDF fails */
@@ -270,6 +275,7 @@ export async function fetchGmailMessage(
     text,
     snippet: json.snippet,
     pdf_filenames,
+    pdf_sections,
   };
 }
 

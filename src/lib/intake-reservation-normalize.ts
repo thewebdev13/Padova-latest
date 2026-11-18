@@ -220,8 +220,31 @@ function extractChaseTravelPassengers(text: string): string[] {
   return names;
 }
 
+/** Etihad / airline EMD “Receipt for your extras” — passenger under the logo. */
+function extractEtihadPassengers(text: string): string[] {
+  if (!isEtihadReceipt(text)) return [];
+  const match = text.match(
+    /\b(Mrs?|Ms|Miss|Mstr?)\.?\s+([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){1,4})\b/,
+  );
+  if (!match) return [];
+  const title = match[1].toLowerCase().startsWith('mrs')
+    ? 'Mrs'
+    : match[1].toLowerCase().startsWith('miss')
+      ? 'Miss'
+      : match[1].toLowerCase().startsWith('ms')
+        ? 'Ms'
+        : match[1].toLowerCase().startsWith('mstr')
+          ? 'Mstr'
+          : 'Mr';
+  const person = titleCaseName(match[2].replace(/\s+/g, ' ').trim());
+  // Traveler may be the agency cardholder (e.g. Shmuel) — still keep as traveler.
+  if (person.length < 3) return [];
+  return [`${title} ${person}`];
+}
+
 function extractPassengers(text: string): string[] {
   const names = [
+    ...extractEtihadPassengers(text),
     ...extractCapitalOnePassengers(text),
     ...extractGdsPassengers(text),
     ...extractUnitedPassengers(text),
@@ -250,6 +273,8 @@ function extractTickets(text: string): string[] {
 }
 
 function extractTotalUsd(text: string): string | undefined {
+  // Seat / EMD extras receipts are not the customer flight sale — leave Sale blank.
+  if (isEtihadExtrasReceipt(text)) return undefined;
   const hotelTotal = text.match(/Total Cost\s*:?\s*\$?\s*([\d,]+\.\d{2})/i);
   if (hotelTotal) return hotelTotal[1].replace(/,/g, '');
   const tripCost = text.match(/Total Trip Cost\s*:?\s*\$?\s*([\d,]+\.\d{2})/i);
@@ -366,6 +391,9 @@ function extractForeignStayTotal(
 function extractAirlineFlight(text: string): { airline?: string; flight?: string } {
   // Hotel Amex confirmations include trip #ZO-AX1099 — never a flight number.
   if (isHotelConfirmation(text)) return {};
+  if (isEtihadReceipt(text)) {
+    return { airline: 'Etihad Airways' };
+  }
   // Amex Travel: Flight Number:DL 249 — before dashed trip ids like ZO-AX1092.
   const numbered = [
     ...text.matchAll(/Flight Number:\s*([A-Z]{2})\s*(\d{1,4})\b/gi),
@@ -418,6 +446,11 @@ function extractAirlineFlight(text: string): { airline?: string; flight?: string
 }
 
 function extractRoute(text: string): string | undefined {
+  // Etihad fare calc: TLV EY AUH56.00USD56.00END
+  const etihadFare = text.match(/\b([A-Z]{3})\s+EY\s+([A-Z]{3})\d/i);
+  if (etihadFare && etihadFare[1] !== etihadFare[2])
+    return `${etihadFare[1].toUpperCase()}-${etihadFare[2].toUpperCase()}`;
+
   // Chase Travel / Gmail: Newark (EWR)Los Angeles (LAX)
   const cityAirports = [
     ...text.matchAll(/\(([A-Z]{3})\)/g),
@@ -588,6 +621,11 @@ function extractConfirmations(text: string): {
     };
   }
 
+  // Etihad: Booking reference: 88MRHN
+  const etihadRef = text.match(
+    /Booking reference\s*:?\s*([A-Z0-9]{5,8})\b/i,
+  )?.[1];
+
   // United: United confirmation number : PQNGJN
   const unitedConf = text.match(
     /United confirmation number\s*:?\s*([A-Z0-9]{5,8})\b/i,
@@ -626,6 +664,9 @@ function extractConfirmations(text: string): {
     (agency && looksLikeRecordLocator(agency, { allowAlphaOnly: true }) ? agency : undefined);
 
   const airlinePnr =
+    (etihadRef && looksLikeRecordLocator(etihadRef, { allowAlphaOnly: true })
+      ? etihadRef.toUpperCase()
+      : undefined) ||
     (amexAirline && looksLikeRecordLocator(amexAirline, { allowAlphaOnly: true })
       ? amexAirline.toUpperCase()
       : undefined) ||
@@ -830,6 +871,24 @@ function extractCustomer(
   return { source: 'none' };
 }
 
+/** Etihad purchase / EMD extras receipt PDF (or forwarded purchase mail body). */
+function isEtihadReceipt(text: string): boolean {
+  if (/etihad/i.test(text) && /booking reference\s*:?\s*[A-Z0-9]{5,8}/i.test(text)) return true;
+  if (/noreply@etihad\.com/i.test(text) && /thanks for your (purchase|order)/i.test(text))
+    return true;
+  return false;
+}
+
+/** Seat / ancillary EMD — not the base ticket sale. */
+function isEtihadExtrasReceipt(text: string): boolean {
+  return (
+    isEtihadReceipt(text) &&
+    (/receipt for your extras/i.test(text) ||
+      /pre reserved seat/i.test(text) ||
+      /electronic miscellaneous document/i.test(text))
+  );
+}
+
 /** True when text looks like a reservation email/PDF itinerary, not Padova Field:Value paste. */
 export function isReservationProse(raw: string): boolean {
   const text = raw.normalize('NFKC').trim();
@@ -840,7 +899,8 @@ export function isReservationProse(raw: string): boolean {
     isChaseTravelConfirmation(text) ||
     isUnitedConfirmation(text) ||
     isAmexTravelConfirmation(text) ||
-    isHotelConfirmation(text)
+    isHotelConfirmation(text) ||
+    isEtihadReceipt(text)
   )
     return true;
   // Structured Padova paste — do not rewrite.
@@ -932,7 +992,17 @@ export function normalizeReservationProseToPaste(raw: string): string {
         : customer.source === 'thanks'
           ? 'Customer set from confirmation greeting — confirm billed-to before Save.'
           : '';
-  if (total && !foreignTotal) {
+  if (isEtihadExtrasReceipt(text)) {
+    const seat = text.match(/\bSeat\s*:?\s*([A-Z0-9]{1,4})\b/i)?.[1];
+    const extrasTotal = text.match(/Total Amount\s*:?\s*USD\s*([\d,.]+)/i)?.[1];
+    const bits = [
+      'Etihad extras/EMD receipt — seat fee is not the flight sale; leave Sale blank until ticket price is known.',
+      seat ? `Seat ${seat.toUpperCase()}.` : '',
+      extrasTotal ? `Extras total USD ${extrasTotal.replace(/,/g, '')} on receipt.` : '',
+      customerNote,
+    ].filter(Boolean);
+    if (!lines.some((l) => l.startsWith('Notes:'))) lines.push(`Notes: ${bits.join(' ')}`);
+  } else if (total && !foreignTotal) {
     lines.push(`Total: ${total}`);
     const bits = [
       'Total from reservation receipt — confirm customer price vs card/points charge before Save.',

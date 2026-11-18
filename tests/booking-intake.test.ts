@@ -12,7 +12,11 @@ import {
 } from '../src/lib/booking-intake';
 import { draftKind } from '../src/lib/draft-kind';
 import { looksLikeBookingRelatedEmail } from '../src/lib/email-gmail';
-import { emailIntakeStatus, prepareEmailIntakeDraft } from '../src/lib/email-intake';
+import {
+  emailIntakeStatus,
+  prepareEmailIntakeDraft,
+  prepareEmailIntakeDrafts,
+} from '../src/lib/email-intake';
 import {
   formatIntakeProvenanceLine,
   intakeChannelBadge,
@@ -389,6 +393,39 @@ test('loose hotel enquiry / purchase subjects fill draft card fields without inv
     }),
     false,
   );
+});
+
+test('email intake creates one draft per Etihad PDF passenger receipt', async () => {
+  const { readFileSync } = await import('node:fs');
+  const nechama = readFileSync(
+    new URL('../testdata/intake-samples/etihad-extras-nechama.txt', import.meta.url),
+    'utf8',
+  );
+  const shmuel = nechama
+    .replace(/Mrs Nechama Rivka Thav/g, 'Mr Shmuel Padawer')
+    .replace(/21D/g, '21F');
+  const drafts = await prepareEmailIntakeDrafts({
+    mailbox: 'bookings@padovatravel.com',
+    subject: 'Fwd: Thanks for your purchase, reference 88MRHN',
+    from_address: 'Shmuel Padawer <shpadawer@gmail.com>',
+    text: 'Thanks for your purchase. See attached receipts.',
+    message_id: 'etihad-test-msg',
+    pdf_sections: [
+      { filename: 'NECHAMA.pdf', text: nechama },
+      { filename: 'SHMUEL.pdf', text: shmuel },
+    ],
+  });
+  assert.equal(drafts.length, 2);
+  const a = drafts[0].entry as Record<string, any>;
+  const b = drafts[1].entry as Record<string, any>;
+  assert.equal(a.product, 'Flight');
+  assert.equal(a.primary_reference, '88MRHN');
+  assert.equal(a.route, 'TLV-AUH');
+  assert.match(String(a.intake_traveler_label || a.pending_traveler || ''), /Nechama/i);
+  assert.equal(a.sale, undefined);
+  assert.equal(b.primary_reference, '88MRHN');
+  assert.match(String(b.intake_traveler_label || b.pending_traveler || ''), /Shmuel/i);
+  assert.equal(b.sale, undefined);
 });
 
 test('eml extract prefers text/plain and keeps Field: Value lines', async () => {

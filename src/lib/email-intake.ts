@@ -28,6 +28,8 @@ export type InboundEmailMessage = {
   text: string;
   received_at?: string;
   message_id?: string;
+  /** Optional per-PDF extracts (passenger receipts) — one draft each when present. */
+  pdf_sections?: Array<{ filename: string; text: string }>;
 };
 
 export type EmailPollResult = {
@@ -75,12 +77,24 @@ export function emailIntakeStatus() {
 
 /** Build a draft payload from an inbound email. Does not write to the database. */
 export async function prepareEmailIntakeDraft(message: InboundEmailMessage) {
+  const drafts = await prepareEmailIntakeDrafts(message);
+  return drafts[0];
+}
+
+/**
+ * One draft per passenger PDF when attachments parse; otherwise a single body draft.
+ * Never invents sale amounts.
+ */
+export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
   const mailbox = assertAllowedIntakeMailbox(message.mailbox);
-  if (!message.text?.trim()) throw new Error('Email intake requires message text');
+  const probe = [message.subject, message.text, ...(message.pdf_sections || []).map((p) => p.text)]
+    .filter(Boolean)
+    .join('\n');
+  if (!probe.trim()) throw new Error('Email intake requires message text');
   if (
     !looksLikeBookingRelatedEmail({
       subject: message.subject,
-      text: message.text,
+      text: probe,
       from_address: message.from_address,
     })
   ) {
@@ -88,16 +102,49 @@ export async function prepareEmailIntakeDraft(message: InboundEmailMessage) {
       'Email does not look like a booking/reservation; draft not created (unrelated skipped)',
     );
   }
-  return buildIntakeDraft({
-    source: 'email',
-    text: message.text,
-    mailbox,
-    fromAddress: message.from_address,
-    subject: message.subject,
-    receivedAt: message.received_at,
-    filename: message.message_id ? `email:${message.message_id}` : undefined,
-    mimeType: 'message/rfc822',
-  });
+
+  const sections = (message.pdf_sections || []).filter((p) => p.text?.trim());
+  if (sections.length >= 1) {
+    const built = await Promise.all(
+      sections.map((pdf, index) =>
+        buildIntakeDraft({
+          source: 'email',
+          text: `${message.subject || ''}\n\n${pdf.text}`.trim(),
+          mailbox,
+          fromAddress: message.from_address,
+          subject: message.subject,
+          receivedAt: message.received_at,
+          filename: message.message_id
+            ? `email:${message.message_id}:${index}`
+            : `pdf:${pdf.filename}`,
+          mimeType: 'application/pdf',
+          entryIndex: index,
+          entryCount: sections.length,
+        }),
+      ),
+    );
+    const shaped = built.filter((b) =>
+      intakeDraftHasMinimumShape({
+        entry: b.entry as Record<string, unknown>,
+        recognized_fields: b.recognized_fields,
+      }),
+    );
+    if (shaped.length) return shaped;
+  }
+
+  if (!message.text?.trim()) throw new Error('Email intake requires message text');
+  return [
+    await buildIntakeDraft({
+      source: 'email',
+      text: message.text,
+      mailbox,
+      fromAddress: message.from_address,
+      subject: message.subject,
+      receivedAt: message.received_at,
+      filename: message.message_id ? `email:${message.message_id}` : undefined,
+      mimeType: 'message/rfc822',
+    }),
+  ];
 }
 
 export async function resolveEmailIntakeActor(
@@ -146,12 +193,21 @@ export async function resolveEmailIntakeActor(
 
 async function draftExistsForGmailMessage(db: Database, messageId: string) {
   const filename = `email:${messageId}`;
+  // Soft-deleted drafts (booking_draft_delete) do not block a fresh poll.
   const row = (
     await db.query(
-      `SELECT id FROM booking_drafts
-       WHERE entry->'intake_provenance'->>'filename' = $1
+      `SELECT d.id FROM booking_drafts d
+       WHERE (
+           entry->'intake_provenance'->>'filename' = $1
+           OR entry->'intake_provenance'->>'filename' LIKE $2
+         )
+         AND NOT EXISTS(
+           SELECT 1 FROM commands c
+           WHERE c.kind='booking_draft_delete' AND c.result IS NOT NULL
+             AND c.payload->>'draft_id'=d.id::text
+         )
        LIMIT 1`,
-      [filename],
+      [filename, `${filename}:%`],
     )
   ).rows[0];
   return Boolean(row?.id);
@@ -282,22 +338,22 @@ export async function pollEmailIntakeMailboxes(
             });
             continue;
           }
-          const built = await prepareEmailIntakeDraft({
+          const drafts = await prepareEmailIntakeDrafts({
             mailbox,
             from_address: msg.from_address,
             subject: msg.subject,
             text: msg.text,
             received_at: msg.received_at,
             message_id: msg.id,
+            pdf_sections: msg.pdf_sections,
           });
-          const entry = built.entry as Record<string, unknown>;
-          // Keep draft when at least one real booking field is present (never invent sale).
-          if (
-            !intakeDraftHasMinimumShape({
-              entry,
+          const shaped = drafts.filter((built) =>
+            intakeDraftHasMinimumShape({
+              entry: built.entry as Record<string, unknown>,
               recognized_fields: built.recognized_fields,
-            })
-          ) {
+            }),
+          );
+          if (!shaped.length) {
             result.skipped.push({
               message_id: item.id,
               reason: 'insufficient_booking_fields',
@@ -306,25 +362,29 @@ export async function pollEmailIntakeMailboxes(
             continue;
           }
           if (dryRun) {
-            result.created.push({
-              id: 'dry-run',
-              title: built.title || msg.subject || 'Email intake dry-run',
-              message_id: item.id,
-              subject: msg.subject,
-            });
+            for (const built of shaped) {
+              result.created.push({
+                id: 'dry-run',
+                title: built.title || msg.subject || 'Email intake dry-run',
+                message_id: item.id,
+                subject: msg.subject,
+              });
+            }
             continue;
           }
-          const saved = await execute(db, staff, {
-            id: crypto.randomUUID(),
-            kind: 'booking_draft',
-            data: { title: built.title, entry: built.entry },
-          });
-          result.created.push({
-            id: String(saved.id),
-            title: built.title,
-            message_id: msg.id,
-            subject: msg.subject,
-          });
+          for (const built of shaped) {
+            const saved = await execute(db, staff, {
+              id: crypto.randomUUID(),
+              kind: 'booking_draft',
+              data: { title: built.title, entry: built.entry },
+            });
+            result.created.push({
+              id: String(saved.id),
+              title: built.title,
+              message_id: msg.id,
+              subject: msg.subject,
+            });
+          }
           if (markRead) {
             try {
               await markGmailMessageRead(token.access_token, msg.id);
