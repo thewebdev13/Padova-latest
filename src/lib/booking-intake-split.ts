@@ -101,11 +101,17 @@ export function splitIntakeEntries(raw: string, filename?: string): string[] {
 export const INTAKE_BATCH_SIZE = 25;
 export const INTAKE_MAX_ENTRIES = 50_000;
 
-/** Owner-approved email intake mailboxes only (client-safe list). */
+/** Owner-approved email intake mailboxes (client-safe list). */
 export const INTAKE_EMAIL_MAILBOXES = [
   'shmuel@padovatravel.com',
   'mindy@padovatravel.com',
+  'bookings@padovatravel.com',
 ] as const;
+
+/** Current live spelling with “s” maps to the padovatravel.com bookings mailbox. */
+export const INTAKE_EMAIL_MAILBOX_ALIASES: Record<string, (typeof INTAKE_EMAIL_MAILBOXES)[number]> = {
+  'bookings@padovatravels.com': 'bookings@padovatravel.com',
+};
 
 function decodeBase64Utf8(b64: string): string {
   const clean = b64.replace(/\s+/g, '');
@@ -190,9 +196,12 @@ export function parseEmlEnvelope(raw: string): {
   ]
     .filter(Boolean)
     .join(' ');
-  const mailbox = INTAKE_EMAIL_MAILBOXES.find((box) =>
-    toLine.toLowerCase().includes(box.toLowerCase()),
-  );
+  const toLower = toLine.toLowerCase();
+  let mailbox = INTAKE_EMAIL_MAILBOXES.find((box) => toLower.includes(box.toLowerCase()));
+  if (!mailbox) {
+    const alias = Object.keys(INTAKE_EMAIL_MAILBOX_ALIASES).find((a) => toLower.includes(a));
+    if (alias) mailbox = INTAKE_EMAIL_MAILBOX_ALIASES[alias];
+  }
   return {
     from_address: from || undefined,
     subject,

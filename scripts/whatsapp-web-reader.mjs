@@ -37,6 +37,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   isJidBroadcast,
   isJidNewsletter,
@@ -201,7 +202,7 @@ function extractText(msg) {
 
 /**
  * Strict: only real booking Field:Value / confirmation paste → draft.
- * Keep in sync with src/lib/whatsapp-booking-detect.ts
+ * Keep in sync with src/lib/booking-message-detect.ts
  */
 function looksLikeBookingRelatedWhatsApp(text) {
   const t = String(text || '').trim();
@@ -230,15 +231,23 @@ function looksLikeBookingRelatedWhatsApp(text) {
       return true;
   }
   const hasConfirm =
-    /\b(confirmation|reservation confirmed|booking confirmation|itinerary|e-?ticket|travel reservation)\b/i.test(
+    /\b(confirmation|confirmed:\s*your\s+trip|reservation confirmed|booking confirmation|itinerary|e-?ticket|travel reservation|hotel confirmation|flight confirmation)\b/i.test(
       t,
     );
   const hasTravel =
-    /\b(hotel|flight|airline|check[- ]?in|check[- ]?out|record locator|\bpnr\b|marriott|hilton|hyatt|united|delta|el al|amex travel|expedia|taap)\b/i.test(
+    /\b(hotel|flight|airline|check[- ]?in|check[- ]?out|record locator|\bpnr\b|marriott|hilton|hyatt|st\.?\s*regis|united|delta|el al|amex travel|american express travel|expedia|taap|capital one travel|chase travel|travel reservation center|trip id|guest name|prepared for)\b/i.test(
       t,
     );
   if (hasConfirm && hasTravel && t.length >= 60) return true;
   return false;
+}
+
+function isPdfDocumentMessage(msg) {
+  const doc = msg?.message?.documentMessage;
+  if (!doc) return false;
+  const mime = String(doc.mimetype || '').toLowerCase();
+  const name = String(doc.fileName || doc.title || '');
+  return mime.includes('pdf') || /\.pdf$/i.test(name);
 }
 
 function jidToNumber(jid) {
@@ -267,10 +276,13 @@ async function postDraft(payload) {
     session_label: sessionLabel,
     chat_name: payload.chat_name || undefined,
     from_number: payload.from_number || undefined,
-    text: payload.text,
+    text: payload.text || '',
     received_at: payload.received_at || new Date().toISOString(),
     message_id: payload.message_id || undefined,
     actor_id: actorId,
+    file_base64: payload.file_base64 || undefined,
+    filename: payload.filename || undefined,
+    mime_type: payload.mime_type || undefined,
   };
   const response = await fetch(url, {
     method: 'POST',
@@ -590,13 +602,14 @@ async function startReader() {
             continue;
 
           const text = extractText(msg).trim();
-          if (!text) continue;
+          const pdfDoc = isPdfDocumentMessage(msg);
+          if (!text && !pdfDoc) continue;
 
           const id = messageKeyId(msg);
           if (processed.processed[id]) continue;
 
-          // Mark seen even when skipped so retries do not re-evaluate forever.
-          if (!looksLikeBookingRelatedWhatsApp(text)) {
+          // Text-only: skip chatter unless PDF (server extracts + re-checks booking-ness).
+          if (!pdfDoc && !looksLikeBookingRelatedWhatsApp(text)) {
             processed.processed[id] = new Date().toISOString();
             await saveState(processed);
             console.log(
@@ -612,6 +625,45 @@ async function startReader() {
             ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
             : new Date().toISOString();
 
+          let file_base64;
+          let filename;
+          let mime_type;
+          if (pdfDoc) {
+            try {
+              const buf = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                  logger,
+                  reuploadRequest: sock.updateMediaMessage,
+                },
+              );
+              const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+              if (bytes.length > 10 * 1024 * 1024) {
+                console.log('[skip] PDF larger than 10 MB');
+                processed.processed[id] = new Date().toISOString();
+                await saveState(processed);
+                continue;
+              }
+              file_base64 = bytes.toString('base64');
+              filename =
+                msg.message.documentMessage.fileName ||
+                msg.message.documentMessage.title ||
+                `whatsapp-${msg.key?.id || id}.pdf`;
+              mime_type = msg.message.documentMessage.mimetype || 'application/pdf';
+            } catch (err) {
+              console.error(
+                `[whatsapp-web-reader] PDF download failed: ${err instanceof Error ? err.message : err}`,
+              );
+              if (!text) {
+                processed.processed[id] = new Date().toISOString();
+                await saveState(processed);
+                continue;
+              }
+            }
+          }
+
           // Intentionally no sock.sendMessage / no replies — read-only intake.
           const result = await postDraft({
             chat_name: chatName,
@@ -619,6 +671,9 @@ async function startReader() {
             text,
             received_at: receivedAt,
             message_id: msg.key?.id || id,
+            file_base64,
+            filename,
+            mime_type,
           });
 
           processed.processed[id] = new Date().toISOString();

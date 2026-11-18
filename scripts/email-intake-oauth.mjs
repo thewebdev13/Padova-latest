@@ -81,10 +81,13 @@ const server = http.createServer(async (req, res) => {
     if (refresh) {
       console.log('Refresh token (store in env, never commit / never WhatsApp):');
       console.log(refresh);
-      if (String(loginHint).toLowerCase().startsWith('mindy@')) {
+      const hint = String(loginHint).toLowerCase();
+      if (hint.startsWith('mindy@')) {
         console.log('\nSuggested env key: PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_MINDY');
-      } else if (String(loginHint).toLowerCase().startsWith('shmuel@')) {
+      } else if (hint.startsWith('shmuel@')) {
         console.log('\nSuggested env key: PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_SHMUEL');
+      } else if (hint.startsWith('bookings@')) {
+        console.log('\nSuggested env key: PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_BOOKINGS');
       } else {
         console.log('\nSuggested env key: PADOVA_EMAIL_INTAKE_REFRESH_TOKEN');
       }

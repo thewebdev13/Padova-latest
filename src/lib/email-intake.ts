@@ -1,13 +1,14 @@
 import {
   assertAllowedIntakeMailbox,
   buildIntakeDraft,
+  intakeEmailMailboxes,
   INTAKE_EMAIL_MAILBOXES,
 } from './booking-intake';
 import type { Database } from './db';
+import { looksLikeBookingRelatedEmail } from './booking-message-detect';
 import {
   fetchGmailMessage,
   listUnreadGmailMessages,
-  looksLikeBookingRelatedEmail,
   markGmailMessageRead,
   refreshGmailAccessToken,
   refreshTokenForMailbox,
@@ -40,16 +41,20 @@ export function emailIntakePollingConfigured() {
     process.env.PADOVA_EMAIL_INTAKE_CLIENT_ID?.trim() &&
     process.env.PADOVA_EMAIL_INTAKE_CLIENT_SECRET?.trim();
   if (!client) return false;
-  return INTAKE_EMAIL_MAILBOXES.some((box) => Boolean(refreshTokenForMailbox(box)));
+  return intakeEmailMailboxes().some((box) => Boolean(refreshTokenForMailbox(box)));
 }
 
 export function emailIntakeStatus() {
   const configured = emailIntakePollingConfigured();
+  const mailboxes = intakeEmailMailboxes();
   const mailbox_tokens = Object.fromEntries(
-    INTAKE_EMAIL_MAILBOXES.map((box) => [box, Boolean(refreshTokenForMailbox(box))]),
+    mailboxes.map((box) => [box, Boolean(refreshTokenForMailbox(box))]),
   );
+  const testMailbox = process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX?.trim().toLowerCase() || null;
   return {
-    mailboxes: [...INTAKE_EMAIL_MAILBOXES],
+    mailboxes,
+    owner_mailboxes: [...INTAKE_EMAIL_MAILBOXES],
+    test_mailbox: testMailbox,
     polling_configured: configured,
     mailbox_tokens,
     mode: configured ? 'workspace_oauth_ready' : 'manual_staff_forward_only',
@@ -58,8 +63,8 @@ export function emailIntakeStatus() {
     draft_only: true,
     poll_path: '/api/booking-intake/email/poll',
     note: configured
-      ? 'Workspace OAuth env present. POST /api/booking-intake/email/poll (cron secret or staff session) creates booking drafts from unread booking-related mail. Never posts money.'
-      : 'Automatic mailbox poll is not configured. Staff may forward message text through the booking-intake email endpoint. Add Google OAuth client + refresh token(s) for Shmuel@ and/or mindy@ — see docs/EMAIL_INTAKE_OAUTH.md.',
+      ? 'OAuth env present. POST /api/booking-intake/email/poll creates booking drafts from unread booking-related mail. Never posts money.'
+      : 'Automatic mailbox poll is not configured. Add Google OAuth + refresh token (test mailbox OK for QA) — see docs/EMAIL_INTAKE_OAUTH.md.',
   };
 }
 
@@ -67,6 +72,17 @@ export function emailIntakeStatus() {
 export async function prepareEmailIntakeDraft(message: InboundEmailMessage) {
   const mailbox = assertAllowedIntakeMailbox(message.mailbox);
   if (!message.text?.trim()) throw new Error('Email intake requires message text');
+  if (
+    !looksLikeBookingRelatedEmail({
+      subject: message.subject,
+      text: message.text,
+      from_address: message.from_address,
+    })
+  ) {
+    throw new Error(
+      'Email does not look like a booking/reservation; draft not created (unrelated skipped)',
+    );
+  }
   return buildIntakeDraft({
     source: 'email',
     text: message.text,
@@ -137,9 +153,26 @@ async function draftExistsForGmailMessage(db: Database, messageId: string) {
 }
 
 export function assertEmailPollAuth(headerToken: string | null | undefined) {
-  const expected = process.env.PADOVA_EMAIL_INTAKE_CRON_SECRET?.trim();
-  if (!expected) throw new Error('Email poll cron is not configured (missing cron secret)');
-  if (!headerToken || headerToken !== expected) throw new Error('Email poll authorization rejected');
+  const expected = [
+    process.env.PADOVA_EMAIL_INTAKE_CRON_SECRET?.trim(),
+    // Vercel Cron sends Authorization: Bearer $CRON_SECRET
+    process.env.CRON_SECRET?.trim(),
+  ].filter(Boolean) as string[];
+  if (!expected.length) throw new Error('Email poll cron is not configured (missing cron secret)');
+  if (!headerToken || !expected.includes(headerToken))
+    throw new Error('Email poll authorization rejected');
+}
+
+/** True when this request is an authorized unattended poll (Padova secret or Vercel Cron). */
+export function isAuthorizedEmailPollRequest(request: Request) {
+  const token = readEmailPollAuthHeader(request);
+  if (!token) return false;
+  try {
+    assertEmailPollAuth(token);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function readEmailPollAuthHeader(request: Request): string | null {
@@ -169,7 +202,7 @@ export async function pollEmailIntakeMailboxes(
     throw new Error('Email intake OAuth is not configured');
   }
   const staff = opts?.actor ?? (await resolveEmailIntakeActor(db, null));
-  const boxes = (opts?.mailboxes?.length ? opts.mailboxes : [...INTAKE_EMAIL_MAILBOXES]).map((b) =>
+  const boxes = (opts?.mailboxes?.length ? opts.mailboxes : intakeEmailMailboxes()).map((b) =>
     assertAllowedIntakeMailbox(b),
   );
   const maxPerMailbox = Math.min(Math.max(opts?.maxPerMailbox ?? 10, 1), 30);

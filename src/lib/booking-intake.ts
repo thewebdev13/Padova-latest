@@ -428,12 +428,28 @@ export async function buildIntakeDraftsFromEntries(
   );
 }
 
+/**
+ * Owner boxes + optional QA/dev mailbox from `PADOVA_EMAIL_INTAKE_TEST_MAILBOX`
+ * (developer Gmail for auto-poll testing; remove / replace with client later).
+ */
+export function intakeEmailMailboxes(): string[] {
+  const boxes: string[] = [...INTAKE_EMAIL_MAILBOXES];
+  const test = process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX?.trim().toLowerCase();
+  if (test && !boxes.includes(test)) boxes.push(test);
+  return boxes;
+}
+
 export function assertAllowedIntakeMailbox(mailbox: string | undefined) {
   if (!mailbox) throw new Error('Email intake requires the mailbox address');
-  const normalized = mailbox.trim().toLowerCase();
-  if (!(INTAKE_EMAIL_MAILBOXES as readonly string[]).includes(normalized))
+  let normalized = mailbox.trim().toLowerCase();
+  // Live Workspace still uses bookings@padovatravels.com — treat as bookings@padovatravel.com.
+  if (normalized === 'bookings@padovatravels.com') normalized = 'bookings@padovatravel.com';
+  if (!intakeEmailMailboxes().includes(normalized))
     throw new Error(
-      'Email intake is limited to Shmuel@padovatravel.com and mindy@padovatravel.com',
+      'Email intake is limited to Shmuel@padovatravel.com, mindy@padovatravel.com, bookings@padovatravel.com' +
+        (process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX?.trim()
+          ? `, or the configured test mailbox`
+          : ''),
     );
   return normalized;
 }

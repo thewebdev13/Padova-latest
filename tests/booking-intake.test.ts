@@ -216,12 +216,17 @@ test('extractIntakeText accepts utf8 text and rejects null bytes', async () => {
   assert.equal(bad.extractable, false);
 });
 
-test('email intake mailboxes are limited to the two Owner-approved addresses', async () => {
+test('email intake mailboxes are limited to the Owner-approved addresses', async () => {
   assert.deepEqual([...INTAKE_EMAIL_MAILBOXES], [
     'shmuel@padovatravel.com',
     'mindy@padovatravel.com',
+    'bookings@padovatravel.com',
   ]);
   assert.equal(assertAllowedIntakeMailbox('Mindy@padovatravel.com'), 'mindy@padovatravel.com');
+  assert.equal(
+    assertAllowedIntakeMailbox('bookings@padovatravels.com'),
+    'bookings@padovatravel.com',
+  );
   assert.throws(() => assertAllowedIntakeMailbox('other@padovatravel.com'), /limited/);
   await assert.rejects(
     () =>
@@ -241,23 +246,69 @@ test('email intake mailboxes are limited to the two Owner-approved addresses', a
   assert.equal(emailEntry.intake_provenance.source, 'email');
   assert.equal(emailEntry.intake_provenance.mailbox, 'shmuel@padovatravel.com');
   assert.equal(emailIntakeStatus().posts_money, false);
-  assert.equal(emailIntakeStatus().polling_configured, false);
   assert.equal(emailIntakeStatus().draft_only, true);
+  // Isolate status checks from ambient shell/.env tokens left over from local OAuth setup.
+  const prevTokens = {
+    shmuel: process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_SHMUEL,
+    mindy: process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_MINDY,
+    bookings: process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_BOOKINGS,
+    shared: process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN,
+    testMb: process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX,
+    clientId: process.env.PADOVA_EMAIL_INTAKE_CLIENT_ID,
+    clientSecret: process.env.PADOVA_EMAIL_INTAKE_CLIENT_SECRET,
+  };
+  delete process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_SHMUEL;
+  delete process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_MINDY;
+  delete process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_BOOKINGS;
+  delete process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN;
+  delete process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX;
+  delete process.env.PADOVA_EMAIL_INTAKE_CLIENT_ID;
+  delete process.env.PADOVA_EMAIL_INTAKE_CLIENT_SECRET;
+  assert.equal(emailIntakeStatus().polling_configured, false);
   assert.equal(emailIntakeStatus().mailbox_tokens['shmuel@padovatravel.com'], false);
+  assert.equal(emailIntakeStatus().mailbox_tokens['bookings@padovatravel.com'], false);
+  assert.equal(emailIntakeStatus().test_mailbox, null);
+  if (prevTokens.shmuel) process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_SHMUEL = prevTokens.shmuel;
+  if (prevTokens.mindy) process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_MINDY = prevTokens.mindy;
+  if (prevTokens.bookings)
+    process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_BOOKINGS = prevTokens.bookings;
+  if (prevTokens.shared) process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN = prevTokens.shared;
+  if (prevTokens.testMb) process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX = prevTokens.testMb;
+  if (prevTokens.clientId) process.env.PADOVA_EMAIL_INTAKE_CLIENT_ID = prevTokens.clientId;
+  if (prevTokens.clientSecret)
+    process.env.PADOVA_EMAIL_INTAKE_CLIENT_SECRET = prevTokens.clientSecret;
   assert.ok(
     looksLikeBookingRelatedEmail({
-      subject: 'Your hotel confirmation 123',
-      text: 'Check-in tomorrow',
-      from_address: 'reservations@hotel.com',
+      subject: 'Your hotel confirmation 910637',
+      text:
+        'Check-in: 2026-12-01\nGuest Name: Abraham\nProperty: Test Inn Miami Beach\nReservation confirmed for your stay.',
+      from_address: 'reservations@marriott.com',
+    }),
+  );
+  assert.ok(
+    looksLikeBookingRelatedEmail({
+      subject: 'Confirmed: Your Trip',
+      text:
+        'American Express Travel reservation. Trip ID 12345. Hotel confirmation and flight itinerary attached for the guest.',
+      from_address: 'noreply@americanexpress.com',
     }),
   );
   assert.equal(
     looksLikeBookingRelatedEmail({
       subject: 'Weekly newsletter',
-      text: 'Unsubscribe here for deals',
+      text: 'Unsubscribe here for deals and lunch tips this week',
       from_address: 'marketing@example.com',
     }),
     false,
+  );
+  await assert.rejects(
+    () =>
+      prepareEmailIntakeDraft({
+        mailbox: 'mindy@padovatravel.com',
+        subject: 'Team lunch',
+        text: 'Hi team, lunch tomorrow at noon?',
+      }),
+    /does not look like a booking/,
   );
 });
 
@@ -421,6 +472,19 @@ test('WhatsApp intake is read-only draft provenance and never claims send', asyn
       }),
     /does not look like a booking/,
   );
+  const fromPdfBytes = await prepareWhatsAppIntakeDraft({
+    chat_name: 'Client PDF',
+    from_number: '+10000000001',
+    text: '',
+    bytes: Buffer.from(
+      'Product: Hotel\nCustomer: PDF Guest\nConfirmation: WA-PDF-01\nCheck-in: 2026-12-10\n',
+      'utf8',
+    ),
+    filename: 'reservation-note.txt',
+    mimeType: 'text/plain',
+  });
+  assert.equal((fromPdfBytes.entry as any).intake_provenance.source, 'whatsapp');
+  assert.match(String((fromPdfBytes.entry as any).intake_customer_label || ''), /PDF Guest/);
 });
 
 test('Instinct intake is draft-only provenance and rejects bad auth', async () => {

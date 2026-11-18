@@ -1,6 +1,6 @@
 import { buildIntakeDraft } from './booking-intake';
-export { looksLikeBookingRelatedWhatsApp } from './whatsapp-booking-detect';
-import { looksLikeBookingRelatedWhatsApp } from './whatsapp-booking-detect';
+export { looksLikeBookingRelatedWhatsApp } from './booking-message-detect';
+import { looksLikeBookingRelatedWhatsApp } from './booking-message-detect';
 
 export type InboundWhatsAppMessage = {
   /** Linked PC session label — never a Meta Business API send path. */
@@ -10,6 +10,10 @@ export type InboundWhatsAppMessage = {
   text: string;
   received_at?: string;
   message_id?: string;
+  /** Optional PDF/bytes — server extracts text (same as file intake). */
+  bytes?: Buffer;
+  filename?: string;
+  mimeType?: string;
 };
 
 /** PC bridge posts here; Meta Cloud API send is out of scope. */
@@ -34,25 +38,49 @@ export function assertWhatsAppBridgeAuth(headerToken: string | null | undefined)
     throw new Error('WhatsApp bridge authorization rejected');
 }
 
-/** Build draft from inbound WhatsApp text. Does not write to the database. */
+/** Build draft from inbound WhatsApp text and/or PDF bytes. Does not write to the database. */
 export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage) {
-  if (!message.text?.trim()) throw new Error('WhatsApp intake requires message text');
-  if (!looksLikeBookingRelatedWhatsApp(message.text)) {
+  const hasText = Boolean(message.text?.trim());
+  const hasBytes = Boolean(message.bytes?.length);
+  if (!hasText && !hasBytes) throw new Error('WhatsApp intake requires message text or a PDF file');
+
+  // Pre-check on caption/text only; PDF extract is checked after build via recognized content.
+  if (hasText && !hasBytes && !looksLikeBookingRelatedWhatsApp(message.text)) {
     throw new Error(
       'WhatsApp text does not look like a booking/reservation; draft not created (chatter skipped)',
     );
   }
-  return buildIntakeDraft({
-    source: 'whatsapp',
-    text: message.text,
-    subject: message.chat_name,
-    fromAddress: message.from_number,
-    receivedAt: message.received_at,
-    filename: message.message_id
+
+  const filename =
+    message.filename ||
+    (message.message_id
       ? `whatsapp:${message.message_id}`
       : message.session_label
         ? `whatsapp-session:${message.session_label}`
-        : undefined,
-    mimeType: 'text/plain',
+        : undefined);
+
+  const built = await buildIntakeDraft({
+    source: 'whatsapp',
+    text: message.text || '',
+    bytes: message.bytes,
+    subject: message.chat_name,
+    fromAddress: message.from_number,
+    receivedAt: message.received_at,
+    filename,
+    mimeType: message.mimeType || (hasBytes ? 'application/pdf' : 'text/plain'),
   });
+
+  const probe = [
+    message.text || '',
+    typeof (built.entry as { intake_raw_text?: string }).intake_raw_text === 'string'
+      ? (built.entry as { intake_raw_text: string }).intake_raw_text
+      : '',
+    built.title || '',
+  ].join('\n');
+  if (!looksLikeBookingRelatedWhatsApp(probe) && (built.recognized_fields?.length ?? 0) < 2) {
+    throw new Error(
+      'WhatsApp content does not look like a booking/reservation; draft not created (unrelated skipped)',
+    );
+  }
+  return built;
 }

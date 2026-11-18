@@ -52,6 +52,13 @@ export async function POST(request: Request) {
     if (!actor && !bridge) throw new AccessError('Sign in required', 401);
 
     const body = await readJSON(request);
+    let bytes: Buffer | undefined;
+    if (body.file_base64) {
+      const raw = String(body.file_base64);
+      const b64 = raw.includes('base64,') ? raw.split('base64,')[1] : raw;
+      bytes = Buffer.from(b64, 'base64');
+      if (bytes.length > 10 * 1024 * 1024) throw new Error('WhatsApp file must be 10 MB or smaller');
+    }
     const built = await prepareWhatsAppIntakeDraft({
       session_label: body.session_label ? String(body.session_label) : undefined,
       chat_name: body.chat_name ? String(body.chat_name) : undefined,
@@ -59,6 +66,9 @@ export async function POST(request: Request) {
       text: String(body.text || ''),
       received_at: body.received_at ? String(body.received_at) : undefined,
       message_id: body.message_id ? String(body.message_id) : undefined,
+      bytes,
+      filename: body.filename ? String(body.filename) : undefined,
+      mimeType: body.mime_type ? String(body.mime_type) : undefined,
     });
 
     // Bridge posts without a browser session: attribute draft to an active staff actor.

@@ -1,5 +1,7 @@
 /** Gmail API helpers for Padova email intake (draft-only). No money posts. */
 
+export { looksLikeBookingRelatedEmail } from './booking-message-detect';
+
 export type GmailTokenSet = {
   access_token: string;
   expires_in?: number;
@@ -16,6 +18,8 @@ export type GmailFetchedMessage = {
   received_at?: string;
   text: string;
   snippet?: string;
+  /** PDF attachment extracts appended into text for booking detect + draft. */
+  pdf_filenames?: string[];
 };
 
 function requireEnv(name: string) {
@@ -32,24 +36,27 @@ export function emailIntakeClientSecret() {
   return process.env.PADOVA_EMAIL_INTAKE_CLIENT_SECRET?.trim() || '';
 }
 
-/** Per-mailbox refresh token, with shared fallback. */
+/**
+ * Per-mailbox refresh token.
+ * Owner boxes use only their dedicated env keys (never a personal/test shared token).
+ * Optional `PADOVA_EMAIL_INTAKE_TEST_MAILBOX` may use `PADOVA_EMAIL_INTAKE_REFRESH_TOKEN`.
+ */
 export function refreshTokenForMailbox(mailbox: string): string | null {
   const normalized = mailbox.trim().toLowerCase();
   if (normalized === 'shmuel@padovatravel.com') {
-    return (
-      process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_SHMUEL?.trim() ||
-      process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN?.trim() ||
-      null
-    );
+    return process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_SHMUEL?.trim() || null;
   }
   if (normalized === 'mindy@padovatravel.com') {
-    return (
-      process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_MINDY?.trim() ||
-      process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN?.trim() ||
-      null
-    );
+    return process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_MINDY?.trim() || null;
   }
-  return process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN?.trim() || null;
+  if (normalized === 'bookings@padovatravel.com' || normalized === 'bookings@padovatravels.com') {
+    return process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN_BOOKINGS?.trim() || null;
+  }
+  const test = process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX?.trim().toLowerCase();
+  if (test && normalized === test) {
+    return process.env.PADOVA_EMAIL_INTAKE_REFRESH_TOKEN?.trim() || null;
+  }
+  return null;
 }
 
 export async function refreshGmailAccessToken(refreshToken: string): Promise<GmailTokenSet> {
@@ -125,19 +132,44 @@ function htmlToRoughText(html: string) {
 type GmailPart = {
   mimeType?: string;
   filename?: string;
-  body?: { data?: string; size?: number };
+  body?: { data?: string; size?: number; attachmentId?: string };
   parts?: GmailPart[];
 };
 
-function collectParts(part: GmailPart | undefined, out: { plain: string[]; html: string[] }) {
+function collectParts(
+  part: GmailPart | undefined,
+  out: {
+    plain: string[];
+    html: string[];
+    pdfs: Array<{ filename: string; attachmentId?: string; inlineData?: string }>;
+  },
+) {
   if (!part) return;
   const mime = (part.mimeType || '').toLowerCase();
-  if (part.body?.data) {
+  const filename = part.filename || 'attachment.pdf';
+  if (mime === 'application/pdf' || /\.pdf$/i.test(filename)) {
+    if (part.body?.attachmentId)
+      out.pdfs.push({ filename, attachmentId: part.body.attachmentId });
+    else if (part.body?.data) out.pdfs.push({ filename, inlineData: part.body.data });
+  } else if (part.body?.data) {
     const decoded = decodeBase64Url(part.body.data);
     if (mime === 'text/plain') out.plain.push(decoded);
     else if (mime === 'text/html') out.html.push(decoded);
   }
   for (const child of part.parts || []) collectParts(child, out);
+}
+
+async function fetchGmailAttachment(
+  accessToken: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<Buffer> {
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
+  const res = await fetch(url, { headers: gmailHeaders(accessToken) });
+  const json = (await res.json()) as { data?: string; error?: { message?: string } };
+  if (!res.ok || !json.data)
+    throw new Error(json.error?.message || `Gmail attachment failed (${res.status})`);
+  return Buffer.from(json.data.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
 function headerValue(
@@ -167,11 +199,38 @@ export async function fetchGmailMessage(
   };
   if (!res.ok || !json.id) throw new Error(json.error?.message || `Gmail fetch failed (${res.status})`);
 
-  const buckets = { plain: [] as string[], html: [] as string[] };
+  const buckets = {
+    plain: [] as string[],
+    html: [] as string[],
+    pdfs: [] as Array<{ filename: string; attachmentId?: string; inlineData?: string }>,
+  };
   collectParts(json.payload, buckets);
   let text = buckets.plain.join('\n\n').trim();
   if (!text && buckets.html.length) text = htmlToRoughText(buckets.html.join('\n'));
   if (!text && json.snippet) text = String(json.snippet).trim();
+
+  const pdf_filenames: string[] = [];
+  // Cap PDF extracts so one huge mail cannot stall poll (same spirit as intake size limits).
+  for (const pdf of buckets.pdfs.slice(0, 3)) {
+    try {
+      let bytes: Buffer;
+      if (pdf.inlineData) bytes = Buffer.from(pdf.inlineData.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+      else if (pdf.attachmentId)
+        bytes = await fetchGmailAttachment(accessToken, json.id, pdf.attachmentId);
+      else continue;
+      if (bytes.length > 8 * 1024 * 1024) continue;
+      const { extractIntakeText } = await import('./booking-intake');
+      const extracted = await extractIntakeText('application/pdf', bytes, pdf.filename);
+      if (extracted.extractable && extracted.text?.trim()) {
+        pdf_filenames.push(pdf.filename);
+        text = text
+          ? `${text}\n\n--- PDF: ${pdf.filename} ---\n${extracted.text.trim()}`
+          : extracted.text.trim();
+      }
+    } catch {
+      /* keep body-only if one PDF fails */
+    }
+  }
 
   const headers = json.payload?.headers;
   const from = headerValue(headers, 'From');
@@ -191,6 +250,7 @@ export async function fetchGmailMessage(
     received_at,
     text,
     snippet: json.snippet,
+    pdf_filenames,
   };
 }
 
@@ -206,24 +266,6 @@ export async function markGmailMessageRead(accessToken: string, messageId: strin
     const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
     throw new Error(json.error?.message || `Gmail mark-read failed (${res.status})`);
   }
-}
-
-/** Conservative booking/travel relevance — skip newsletters when no travel signals. */
-export function looksLikeBookingRelatedEmail(input: {
-  subject?: string;
-  text?: string;
-  from_address?: string;
-}): boolean {
-  const hay = `${input.subject || ''}\n${input.from_address || ''}\n${input.text || ''}`.toLowerCase();
-  if (!hay.trim()) return false;
-  const positive =
-    /\b(confirm(ation|ed)?|reservation|itinerary|booking|e-?ticket|ticket number|record locator|pnr|check[- ]?in|check[- ]?out|flight|hotel|airline|marriott|hilton|hyatt|amex travel|expedia|booking\.com|capital one travel|united airlines|delta air|el al|taap|trip id|confirmation (no|#|number)|guest name|depart|arrival)\b/i.test(
-      hay,
-    );
-  if (positive) return true;
-  // Field:Value style already used by staff intake
-  if (/^(product|customer|traveler|property|sale|total)\s*:/im.test(input.text || '')) return true;
-  return false;
 }
 
 export function googleOAuthAuthorizeUrl(opts: {

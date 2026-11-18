@@ -4,6 +4,7 @@ import { database } from '@/lib/db';
 import {
   assertEmailPollAuth,
   emailIntakeStatus,
+  isAuthorizedEmailPollRequest,
   pollEmailIntakeMailboxes,
   readEmailPollAuthHeader,
 } from '@/lib/email-intake';
@@ -12,10 +13,46 @@ import { redactOperationalText } from '@/lib/operational-redaction';
 import { databaseUnavailable, temporarilyUnavailable } from '@/lib/service-errors';
 import { AccessError } from '@/lib/users';
 
+function pollJson(out: Awaited<ReturnType<typeof pollEmailIntakeMailboxes>>) {
+  return NextResponse.json(
+    {
+      draft: true,
+      posted: false,
+      live_booking: false,
+      posts_money: false,
+      ...out,
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
+}
+
+function pollError(e: unknown) {
+  const message = redactOperationalText(e instanceof Error ? e.message : 'Email poll failed');
+  console.error(message);
+  return NextResponse.json(
+    {
+      error: databaseUnavailable(e) ? temporarilyUnavailable : message,
+      draft: true,
+      posted: false,
+      intake: emailIntakeStatus(),
+    },
+    {
+      status:
+        e instanceof AccessError
+          ? e.status
+          : message.includes('authorization rejected')
+            ? 403
+            : databaseUnavailable(e)
+              ? 503
+              : 400,
+    },
+  );
+}
+
 /**
- * Poll Shmuel@ / mindy@ for unread booking-related mail → booking_draft only.
- * Auth: staff session OR `Authorization: Bearer <PADOVA_EMAIL_INTAKE_CRON_SECRET>` /
- * `x-padova-email-poll`. Never posts money / never live booking.
+ * Poll allow-listed mailboxes → booking_draft only.
+ * Auth: staff session OR Bearer cron secret / x-padova-email-poll / Vercel CRON_SECRET.
+ * Never posts money / never live booking.
  */
 export async function POST(request: Request) {
   try {
@@ -45,60 +82,51 @@ export async function POST(request: Request) {
       dryRun: body.dry_run === true || body.dry_run === '1',
     });
 
-    return NextResponse.json(
-      {
-        draft: true,
-        posted: false,
-        live_booking: false,
-        posts_money: false,
-        ...out,
-      },
-      { headers: { 'Cache-Control': 'no-store' } },
-    );
+    return pollJson(out);
   } catch (e) {
-    const message = redactOperationalText(
-      e instanceof Error ? e.message : 'Email poll failed',
-    );
-    console.error(message);
-    return NextResponse.json(
-      {
-        error: databaseUnavailable(e) ? temporarilyUnavailable : message,
-        draft: true,
-        posted: false,
-        intake: emailIntakeStatus(),
-      },
-      {
-        status:
-          e instanceof AccessError
-            ? e.status
-            : message.includes('authorization rejected')
-              ? 403
-              : databaseUnavailable(e)
-                ? 503
-                : 400,
-      },
-    );
+    return pollError(e);
   }
 }
 
+/**
+ * GET: staff → status. Vercel Cron / cron Bearer → run poll (auto-fetch).
+ * Query `?status=1` forces status even with cron auth.
+ */
 export async function GET(request: Request) {
   try {
-    const cron = readEmailPollAuthHeader(request);
+    const url = new URL(request.url);
+    const statusOnly = url.searchParams.get('status') === '1';
+    const cronOk = isAuthorizedEmailPollRequest(request);
     const actor = await currentActor();
-    if (!actor && !cron) throw new AccessError('Sign in required', 401);
-    if (!actor && cron) assertEmailPollAuth(cron);
-    return NextResponse.json(emailIntakeStatus(), { headers: { 'Cache-Control': 'no-store' } });
+
+    if (!actor && !cronOk) throw new AccessError('Sign in required', 401);
+
+    if (statusOnly || (actor && !cronOk)) {
+      return NextResponse.json(emailIntakeStatus(), { headers: { 'Cache-Control': 'no-store' } });
+    }
+
+    // Auto poll (Vercel Cron or Bearer cron secret on GET).
+    const out = await pollEmailIntakeMailboxes(await database(), {
+      actor: actor ?? null,
+      maxPerMailbox: 10,
+      markRead: true,
+      dryRun: false,
+    });
+    return pollJson(out);
   } catch (e) {
-    return NextResponse.json(
-      {
-        error:
-          e instanceof AccessError
-            ? e.message
-            : e instanceof Error
+    if (e instanceof AccessError || (e instanceof Error && e.message.includes('authorization'))) {
+      return NextResponse.json(
+        {
+          error:
+            e instanceof AccessError
               ? e.message
-              : 'Unable to read email poll status',
-      },
-      { status: e instanceof AccessError ? e.status : 400 },
-    );
+              : e instanceof Error
+                ? e.message
+                : 'Unable to read email poll status',
+        },
+        { status: e instanceof AccessError ? e.status : 403 },
+      );
+    }
+    return pollError(e);
   }
 }
