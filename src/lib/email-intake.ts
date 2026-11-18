@@ -82,7 +82,9 @@ export async function prepareEmailIntakeDraft(message: InboundEmailMessage) {
 }
 
 /**
- * One draft per passenger PDF when attachments parse; otherwise a single body draft.
+ * Prefer scanned attachments (PDF / confirmation images) for every booking pattern
+ * (Amex, United, Capital One, Chase, Etihad, hotels, …). One draft per useful file.
+ * Falls back to the email body when no attachment yields booking fields.
  * Never invents sale amounts.
  */
 export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
@@ -106,18 +108,19 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
   const sections = (message.pdf_sections || []).filter((p) => p.text?.trim());
   if (sections.length >= 1) {
     const built = await Promise.all(
-      sections.map((pdf, index) =>
+      sections.map((file, index) =>
         buildIntakeDraft({
           source: 'email',
-          text: `${message.subject || ''}\n\n${pdf.text}`.trim(),
+          // Subject + file text so every normalizer pattern can run on the attachment.
+          text: `${message.subject || ''}\nFrom: ${message.from_address || ''}\n\n${file.text}`.trim(),
           mailbox,
           fromAddress: message.from_address,
           subject: message.subject,
           receivedAt: message.received_at,
           filename: message.message_id
             ? `email:${message.message_id}:${index}`
-            : `pdf:${pdf.filename}`,
-          mimeType: 'application/pdf',
+            : `file:${file.filename}`,
+          mimeType: /\.pdf$/i.test(file.filename) ? 'application/pdf' : 'text/plain',
           entryIndex: index,
           entryCount: sections.length,
         }),

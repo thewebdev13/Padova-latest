@@ -18,9 +18,12 @@ export type GmailFetchedMessage = {
   received_at?: string;
   text: string;
   snippet?: string;
-  /** PDF attachment extracts appended into text for booking detect + draft. */
+  /** Attachment filenames that yielded extractable text. */
   pdf_filenames?: string[];
-  /** Per-attachment extracts — one draft per PDF when multiple passenger receipts. */
+  /**
+   * Per-attachment extracts (PDF text/OCR + confirmation images).
+   * Email poll creates one draft per section when the file looks like a booking.
+   */
   pdf_sections?: Array<{ filename: string; text: string }>;
 };
 
@@ -157,27 +160,57 @@ type GmailPart = {
   parts?: GmailPart[];
 };
 
+type IntakeFilePart = {
+  filename: string;
+  mime: string;
+  attachmentId?: string;
+  inlineData?: string;
+};
+
+function isIntakeFilePart(mime: string, filename: string) {
+  const m = mime.toLowerCase();
+  const f = filename.toLowerCase();
+  if (m === 'application/pdf' || f.endsWith('.pdf')) return true;
+  if (m === 'image/png' || m === 'image/jpeg' || m === 'image/jpg' || m === 'image/webp')
+    return true;
+  if (/\.(png|jpe?g|webp)$/i.test(f)) return true;
+  // Some forwarders send PDFs as octet-stream with a .pdf name.
+  if (m === 'application/octet-stream' && /\.(pdf|png|jpe?g|webp)$/i.test(f)) return true;
+  return false;
+}
+
 function collectParts(
   part: GmailPart | undefined,
   out: {
     plain: string[];
     html: string[];
-    pdfs: Array<{ filename: string; attachmentId?: string; inlineData?: string }>;
+    files: IntakeFilePart[];
   },
 ) {
   if (!part) return;
   const mime = (part.mimeType || '').toLowerCase();
-  const filename = part.filename || 'attachment.pdf';
-  if (mime === 'application/pdf' || /\.pdf$/i.test(filename)) {
+  const filename = (part.filename || '').trim() || 'attachment.bin';
+  if (isIntakeFilePart(mime, filename)) {
     if (part.body?.attachmentId)
-      out.pdfs.push({ filename, attachmentId: part.body.attachmentId });
-    else if (part.body?.data) out.pdfs.push({ filename, inlineData: part.body.data });
+      out.files.push({ filename, mime, attachmentId: part.body.attachmentId });
+    else if (part.body?.data)
+      out.files.push({ filename, mime, inlineData: part.body.data });
   } else if (part.body?.data) {
     const decoded = decodeBase64Url(part.body.data);
     if (mime === 'text/plain') out.plain.push(decoded);
     else if (mime === 'text/html') out.html.push(decoded);
   }
   for (const child of part.parts || []) collectParts(child, out);
+}
+
+function intakeMimeForFile(file: IntakeFilePart) {
+  const f = file.filename.toLowerCase();
+  if (file.mime === 'application/pdf' || f.endsWith('.pdf')) return 'application/pdf';
+  if (file.mime.startsWith('image/')) return file.mime;
+  if (f.endsWith('.png')) return 'image/png';
+  if (f.endsWith('.jpg') || f.endsWith('.jpeg')) return 'image/jpeg';
+  if (f.endsWith('.webp')) return 'image/webp';
+  return file.mime || 'application/octet-stream';
 }
 
 async function fetchGmailAttachment(
@@ -223,7 +256,7 @@ export async function fetchGmailMessage(
   const buckets = {
     plain: [] as string[],
     html: [] as string[],
-    pdfs: [] as Array<{ filename: string; attachmentId?: string; inlineData?: string }>,
+    files: [] as IntakeFilePart[],
   };
   collectParts(json.payload, buckets);
   let text = buckets.plain.join('\n\n').trim();
@@ -232,27 +265,29 @@ export async function fetchGmailMessage(
 
   const pdf_filenames: string[] = [];
   const pdf_sections: Array<{ filename: string; text: string }> = [];
-  // Cap PDF extracts so one huge mail cannot stall poll (same spirit as intake size limits).
-  for (const pdf of buckets.pdfs.slice(0, 8)) {
+  // Scan every booking-relevant attachment (PDF + confirmation screenshots). Cap keeps poll bounded.
+  for (const file of buckets.files.slice(0, 10)) {
     try {
       let bytes: Buffer;
-      if (pdf.inlineData) bytes = Buffer.from(pdf.inlineData.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-      else if (pdf.attachmentId)
-        bytes = await fetchGmailAttachment(accessToken, json.id, pdf.attachmentId);
+      if (file.inlineData)
+        bytes = Buffer.from(file.inlineData.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+      else if (file.attachmentId)
+        bytes = await fetchGmailAttachment(accessToken, json.id, file.attachmentId);
       else continue;
       if (bytes.length > 8 * 1024 * 1024) continue;
+      const mime = intakeMimeForFile(file);
       const { extractIntakeText } = await import('./booking-intake');
-      const extracted = await extractIntakeText('application/pdf', bytes, pdf.filename);
+      const extracted = await extractIntakeText(mime, bytes, file.filename);
       if (extracted.extractable && extracted.text?.trim()) {
-        const pdfText = extracted.text.trim();
-        pdf_filenames.push(pdf.filename);
-        pdf_sections.push({ filename: pdf.filename, text: pdfText });
+        const fileText = extracted.text.trim();
+        pdf_filenames.push(file.filename);
+        pdf_sections.push({ filename: file.filename, text: fileText });
         text = text
-          ? `${text}\n\n---\nPDF: ${pdf.filename}\n${pdfText}`
-          : pdfText;
+          ? `${text}\n\n---\nFILE: ${file.filename}\n${fileText}`
+          : fileText;
       }
     } catch {
-      /* keep body-only if one PDF fails */
+      /* keep body-only if one attachment fails */
     }
   }
 

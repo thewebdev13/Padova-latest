@@ -395,6 +395,29 @@ test('loose hotel enquiry / purchase subjects fill draft card fields without inv
   );
 });
 
+test('email attachment sections use every booking pattern not only Etihad', async () => {
+  const unitedBody = `United Airlines
+United confirmation number: PQNGJN
+Thanks Alex Traveler for choosing United!
+Flight UA 84
+Newark (EWR) to Los Angeles (LAX)
+Departing Thursday, April 16, 2026
+Total$412.00`;
+  const drafts = await prepareEmailIntakeDrafts({
+    mailbox: 'bookings@padovatravel.com',
+    subject: 'Fwd: Your United flight confirmation',
+    from_address: 'desk@padovatravel.com',
+    text: 'See attached confirmation.',
+    message_id: 'united-pdf-test',
+    pdf_sections: [{ filename: 'united-confirm.pdf', text: unitedBody }],
+  });
+  assert.equal(drafts.length, 1);
+  const entry = drafts[0].entry as Record<string, any>;
+  assert.equal(entry.product, 'Flight');
+  assert.equal(entry.primary_reference, 'PQNGJN');
+  assert.equal(entry.route, 'EWR-LAX');
+});
+
 test('email intake creates one draft per Etihad PDF passenger receipt', async () => {
   const { readFileSync } = await import('node:fs');
   const nechama = readFileSync(

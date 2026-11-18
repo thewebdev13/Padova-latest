@@ -15,7 +15,7 @@ const TRAVEL_SIGNAL =
   /\b(hotel|flight|airline|record locator|\bpnr\b|marriott|hilton|hyatt|st\.?\s*regis|united|delta|el al|amex travel|american express travel|expedia|taap|capital one travel|chase travel|travel reservation center|trip id|guest name|prepared for|check[- ]?out|resort|rosewood|aspen|nell)\b/i;
 
 const BOOKING_SENDER =
-  /\b(americanexpress|aexp\.com|united\.com|ual\.com|marriott|hilton|hyatt|expedia|travelocity|capitalone|chase\.com|delta\.com|elal|booking\.com|hotels\.com|amadeus|sabre|taap|rosewood)\b/i;
+  /\b(americanexpress|aexp\.com|united\.com|ual\.com|marriott|hilton|hyatt|expedia|travelocity|capitalone|chase\.com|delta\.com|elal|etihad|booking\.com|hotels\.com|amadeus|sabre|taap|rosewood|whotels|thelittlenell|stjulien|qatar|emirates|britishairways|lufthansa)\b/i;
 
 /**
  * Purchase confirmations + hotel direct-booking enquiries (often forwarded to bookings@).
