@@ -6,7 +6,10 @@ import {
 } from './booking-intake';
 import type { Database } from './db';
 import { looksLikeBookingRelatedEmail } from './booking-message-detect';
-import { intakeDraftHasMinimumShape } from './intake-email-hints';
+import {
+  intakeDraftHasAttachmentShape,
+  intakeDraftHasMinimumShape,
+} from './intake-email-hints';
 import {
   emailIntakeAliasMailboxes,
   fetchGmailMessage,
@@ -105,14 +108,38 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
     );
   }
 
-  const sections = (message.pdf_sections || []).filter((p) => p.text?.trim());
+  // Ignore tiny/garbage extracts (subject-only PNR spam). Need real file body text.
+  const sections = (message.pdf_sections || []).filter((p) => p.text && p.text.trim().length >= 40);
   if (sections.length >= 1) {
     const built = await Promise.all(
-      sections.map((file, index) =>
-        buildIntakeDraft({
+      sections.map(async (file, index) => {
+        // Parse the attachment alone first — do not let email subject invent empty drafts.
+        const fromFile = await buildIntakeDraft({
           source: 'email',
-          // Subject + file text so every normalizer pattern can run on the attachment.
-          text: `${message.subject || ''}\nFrom: ${message.from_address || ''}\n\n${file.text}`.trim(),
+          text: file.text,
+          mailbox,
+          fromAddress: message.from_address,
+          subject: undefined,
+          receivedAt: message.received_at,
+          filename: message.message_id
+            ? `email:${message.message_id}:${index}`
+            : `file:${file.filename}`,
+          mimeType: /\.pdf$/i.test(file.filename) ? 'application/pdf' : 'text/plain',
+          entryIndex: index,
+          entryCount: sections.length,
+        });
+        if (
+          !intakeDraftHasAttachmentShape({
+            entry: fromFile.entry as Record<string, unknown>,
+            recognized_fields: fromFile.recognized_fields,
+          })
+        ) {
+          return null;
+        }
+        // Keep provenance subject on the saved draft after the file itself proved useful.
+        return buildIntakeDraft({
+          source: 'email',
+          text: file.text,
           mailbox,
           fromAddress: message.from_address,
           subject: message.subject,
@@ -123,15 +150,10 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
           mimeType: /\.pdf$/i.test(file.filename) ? 'application/pdf' : 'text/plain',
           entryIndex: index,
           entryCount: sections.length,
-        }),
-      ),
-    );
-    const shaped = built.filter((b) =>
-      intakeDraftHasMinimumShape({
-        entry: b.entry as Record<string, unknown>,
-        recognized_fields: b.recognized_fields,
+        });
       }),
     );
+    const shaped = built.filter((b): b is NonNullable<typeof b> => Boolean(b));
     if (shaped.length) return shaped;
   }
 

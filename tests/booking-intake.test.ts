@@ -395,6 +395,26 @@ test('loose hotel enquiry / purchase subjects fill draft card fields without inv
   );
 });
 
+test('subject-only purchase PNR does not create multiple empty PDF drafts', async () => {
+  const drafts = await prepareEmailIntakeDrafts({
+    mailbox: 'bookings@padovatravel.com',
+    subject: 'Fwd: Thanks for your purchase, reference 88MRHN',
+    from_address: 'Shmuel Padawer <shpadawer@gmail.com>',
+    text: 'Thanks for your purchase. See attached.',
+    message_id: 'empty-pdfs-test',
+    pdf_sections: [
+      { filename: 'a.pdf', text: 'Page 1\nScanned by Gmail\nPlease download the app.' },
+      { filename: 'b.pdf', text: 'Page 1\nScanned by Gmail\nTerms and Conditions.' },
+      { filename: 'c.pdf', text: 'Page 1\nScanned by Gmail\nPrivacy Policy.' },
+    ],
+  });
+  // Useless PDF extracts must not become :0/:1/:2 blank cards — one body fallback at most.
+  assert.equal(drafts.length, 1);
+  const entry = drafts[0].entry as Record<string, any>;
+  assert.equal(entry.primary_reference, '88MRHN');
+  assert.notEqual(entry.intake_provenance?.filename, 'email:empty-pdfs-test:0');
+});
+
 test('email attachment sections use every booking pattern not only Etihad', async () => {
   const unitedBody = `United Airlines
 United confirmation number: PQNGJN

@@ -223,9 +223,15 @@ function extractChaseTravelPassengers(text: string): string[] {
 /** Etihad / airline EMD “Receipt for your extras” — passenger under the logo. */
 function extractEtihadPassengers(text: string): string[] {
   if (!isEtihadReceipt(text)) return [];
-  const match = text.match(
-    /\b(Mrs?|Ms|Miss|Mstr?)\.?\s+([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){1,4})\b/,
-  );
+  const collapsed = text.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]+/g, ' ');
+  const match =
+    collapsed.match(
+      /\b(Mrs?|Ms|Miss|Mstr?)\.?\s+([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){1,4})\b/,
+    ) ||
+    // PDF text layer sometimes splits title / name across lines.
+    collapsed.match(
+      /\b(Mrs?|Ms|Miss|Mstr?)\.?\s*\n\s*([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){1,4})\b/,
+    );
   if (!match) return [];
   const title = match[1].toLowerCase().startsWith('mrs')
     ? 'Mrs'
@@ -621,9 +627,9 @@ function extractConfirmations(text: string): {
     };
   }
 
-  // Etihad: Booking reference: 88MRHN
+  // Etihad: Booking reference: 88MRHN (PDF layer may glue/split words)
   const etihadRef = text.match(
-    /Booking reference\s*:?\s*([A-Z0-9]{5,8})\b/i,
+    /Booking\s*reference\s*:?\s*([A-Z0-9]{5,8})\b/i,
   )?.[1];
 
   // United: United confirmation number : PQNGJN
@@ -873,8 +879,12 @@ function extractCustomer(
 
 /** Etihad purchase / EMD extras receipt PDF (or forwarded purchase mail body). */
 function isEtihadReceipt(text: string): boolean {
-  if (/etihad/i.test(text) && /booking reference\s*:?\s*[A-Z0-9]{5,8}/i.test(text)) return true;
-  if (/noreply@etihad\.com/i.test(text) && /thanks for your (purchase|order)/i.test(text))
+  const t = text.replace(/\u00a0/g, ' ');
+  if (/etihad/i.test(t) && /booking\s*reference\s*:?\s*[A-Z0-9]{5,8}/i.test(t)) return true;
+  if (/etihad/i.test(t) && /receipt for your extras/i.test(t)) return true;
+  if (/noreply@etihad\.com/i.test(t) && /thanks for your (purchase|order)/i.test(t)) return true;
+  // Fare calc unique to Etihad EMD printouts even when branding OCR is weak.
+  if (/\b[A-Z]{3}\s+EY\s+[A-Z]{3}\d/i.test(t) && /booking\s*reference\s*:?\s*[A-Z0-9]{5,8}/i.test(t))
     return true;
   return false;
 }

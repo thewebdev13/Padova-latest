@@ -200,6 +200,20 @@ export function inferLooseIntakeHints(input: {
     }
   }
 
+  // Etihad EMD / fare-calc printouts (logo may be an image — branding text missing).
+  const etihadFare = combined.match(/\b([A-Z]{3})\s+EY\s+([A-Z]{3})\d/i);
+  if (etihadFare && etihadFare[1] !== etihadFare[2]) {
+    if (!hints.route) hints.route = `${etihadFare[1].toUpperCase()}-${etihadFare[2].toUpperCase()}`;
+    if (!hints.product) hints.product = 'Flight';
+    if (!hints.airline) hints.airline = 'Etihad Airways';
+  } else if (
+    /booking\s*reference\s*:?\s*[A-Z0-9]{5,8}/i.test(combined) &&
+    /receipt for your extras|pre reserved seat/i.test(combined)
+  ) {
+    if (!hints.product) hints.product = 'Flight';
+    if (!hints.airline && /etihad/i.test(combined)) hints.airline = 'Etihad Airways';
+  }
+
   if (!hints.product) {
     if (
       hints.property ||
@@ -239,6 +253,10 @@ export function mergeLooseIntakeHints<T extends Record<string, unknown>>(
   return out as T & Record<string, unknown>;
 }
 
+function filledString(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 /** True when the draft has at least one usable booking field (never invent money). */
 export function intakeDraftHasMinimumShape(input: {
   entry?: Record<string, unknown> | null;
@@ -254,7 +272,41 @@ export function intakeDraftHasMinimumShape(input: {
     entry.travel_start,
     entry.intake_provider_label,
   ];
-  const filled = values.filter((v) => typeof v === 'string' && v.trim().length > 0).length;
+  const filled = values.filter((v) => filledString(v)).length;
   if (filled >= 1) return true;
   return (input.recognized_fields?.length ?? 0) >= 1;
+}
+
+/**
+ * Per-attachment drafts must carry real file facts — not only a PNR copied from the email subject.
+ * Otherwise one forwarded purchase creates several empty :0/:1/:2 cards.
+ */
+export function intakeDraftHasAttachmentShape(input: {
+  entry?: Record<string, unknown> | null;
+  recognized_fields?: string[] | null;
+}): boolean {
+  const entry = input.entry || {};
+  const strong = [
+    entry.product,
+    entry.intake_customer_label,
+    entry.intake_traveler_label,
+    entry.pending_traveler,
+    entry.route,
+    entry.location,
+    entry.intake_provider_label,
+    entry.travel_start,
+  ].filter((v) => filledString(v));
+  // PNR alone (often copied from the email subject) is not enough for a per-file draft.
+  if (strong.length >= 1) return true;
+  const recognized = new Set(input.recognized_fields || []);
+  const strongKeys = [
+    'product',
+    'customer',
+    'traveler',
+    'route',
+    'property',
+    'airline',
+    'travel_start',
+  ];
+  return strongKeys.some((k) => recognized.has(k));
 }
