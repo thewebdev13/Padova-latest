@@ -3722,9 +3722,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             <dt>Customer</dt>
                             <dd>
                               {draft.intake_customer ||
-                                (draft.intake_source
-                                  ? 'No customer in intake'
-                                  : 'Not linked yet')}
+                                (draft.intake_source ? '—' : 'Not linked yet')}
                             </dd>
                           </div>
                           <div>

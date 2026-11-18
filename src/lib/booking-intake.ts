@@ -239,8 +239,8 @@ export async function buildIntakeDraft(input: {
     route,
     // Hotel form uses City / Location — map Route into it so the field is not blank.
     location: product === 'Hotel' ? route : '',
-    travel_start: fields.travel_start ?? '',
-    travel_end: fields.travel_end ?? '',
+    travel_start: typeof fields.travel_start === 'string' ? fields.travel_start : '',
+    travel_end: typeof fields.travel_end === 'string' ? fields.travel_end : '',
     primary_reference: primaryReference,
     flight_numbers: fields.flight_numbers ?? '',
     ticket_numbers: fields.ticket_numbers ?? '',

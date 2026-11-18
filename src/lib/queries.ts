@@ -772,6 +772,7 @@ export async function snapshot(db: Database, actor: Actor) {
             loose.property ||
             null;
           const pnrHint = entry?.primary_reference || loose.primary_reference || null;
+          const travelHint = entry?.travel_start || loose.travel_start || null;
           return {
             ...metadata,
             kind,
@@ -784,7 +785,7 @@ export async function snapshot(db: Database, actor: Actor) {
             intake_customer: customerHint,
             intake_product: productHint,
             intake_route: routeHint,
-            intake_travel_start: entry?.travel_start || null,
+            intake_travel_start: travelHint,
             intake_pnr: pnrHint,
             intake_sale: entry?.sale ?? null,
             display_title:

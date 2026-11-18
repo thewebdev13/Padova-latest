@@ -336,11 +336,13 @@ test('email intake mailboxes are limited to the Owner-approved addresses', async
 });
 
 test('loose hotel enquiry / purchase subjects fill draft card fields without inventing sale', async () => {
+  const { intakeDraftHasMinimumShape } = await import('../src/lib/intake-email-hints');
   const hotel = await prepareEmailIntakeDraft({
     mailbox: 'bookings@padovatravel.com',
     subject: 'Fw: W Aspen — direct booking enquiry',
     from_address: 'Chris.Sanchez@whotels.com',
-    text: 'Following up on the direct booking enquiry for W Aspen. Guest Name: Sam Guest',
+    text:
+      'Following up on the direct booking enquiry for W Aspen. Guest Name: Sam Guest\nCheck-in: March 12, 2027\nCheck-out: March 15, 2027',
   });
   const hotelEntry = hotel.entry as Record<string, any>;
   assert.equal(hotelEntry.product, 'Hotel');
@@ -348,7 +350,10 @@ test('loose hotel enquiry / purchase subjects fill draft card fields without inv
   assert.equal(hotelEntry.location, 'W Aspen');
   assert.equal(hotelEntry.intake_provider_label, 'W Aspen');
   assert.equal(hotelEntry.intake_customer_label, 'Sam Guest');
+  assert.equal(hotelEntry.travel_start, '2027-03-12');
+  assert.equal(hotelEntry.travel_end, '2027-03-15');
   assert.equal(hotelEntry.sale, undefined);
+  assert.equal(intakeDraftHasMinimumShape({ entry: hotelEntry, recognized_fields: hotel.recognized_fields }), true);
 
   const purchase = await prepareEmailIntakeDraft({
     mailbox: 'bookings@padovatravel.com',
@@ -359,6 +364,13 @@ test('loose hotel enquiry / purchase subjects fill draft card fields without inv
   const purchaseEntry = purchase.entry as Record<string, any>;
   assert.equal(purchaseEntry.primary_reference, '88MRHN');
   assert.equal(purchaseEntry.sale, undefined);
+  assert.equal(
+    intakeDraftHasMinimumShape({
+      entry: purchaseEntry,
+      recognized_fields: purchase.recognized_fields,
+    }),
+    true,
+  );
 
   const capitalOne = await prepareEmailIntakeDraft({
     mailbox: 'bookings@padovatravel.com',
@@ -369,6 +381,14 @@ test('loose hotel enquiry / purchase subjects fill draft card fields without inv
   const capitalEntry = capitalOne.entry as Record<string, any>;
   assert.equal(capitalEntry.intake_customer_label, 'Rachel');
   assert.equal(capitalEntry.sale, undefined);
+
+  assert.equal(
+    intakeDraftHasMinimumShape({
+      entry: { product: '', route: '', primary_reference: '', intake_customer_label: '' },
+      recognized_fields: [],
+    }),
+    false,
+  );
 });
 
 test('eml extract prefers text/plain and keeps Field: Value lines', async () => {

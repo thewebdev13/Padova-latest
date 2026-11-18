@@ -5,10 +5,8 @@ import {
   INTAKE_EMAIL_MAILBOXES,
 } from './booking-intake';
 import type { Database } from './db';
-import {
-  looksLikeBookingRelatedEmail,
-  looksLikePurchaseOrEnquiry,
-} from './booking-message-detect';
+import { looksLikeBookingRelatedEmail } from './booking-message-detect';
+import { intakeDraftHasMinimumShape } from './intake-email-hints';
 import {
   emailIntakeAliasMailboxes,
   fetchGmailMessage,
@@ -293,16 +291,13 @@ export async function pollEmailIntakeMailboxes(
             message_id: msg.id,
           });
           const entry = built.entry as Record<string, unknown>;
-          const reviewablePurchaseOrEnquiry = looksLikePurchaseOrEnquiry(
-            `${msg.subject || ''}\n${msg.text || ''}`,
-          );
-          const hasShape =
-            Boolean(entry.product) ||
-            Boolean(entry.intake_customer_label) ||
-            (built.recognized_fields?.length ?? 0) >= 2 ||
-            // Forwarded purchase / hotel enquiry — staff completes fields from raw mail.
-            reviewablePurchaseOrEnquiry;
-          if (!hasShape) {
+          // Keep draft when at least one real booking field is present (never invent sale).
+          if (
+            !intakeDraftHasMinimumShape({
+              entry,
+              recognized_fields: built.recognized_fields,
+            })
+          ) {
             result.skipped.push({
               message_id: item.id,
               reason: 'insufficient_booking_fields',
