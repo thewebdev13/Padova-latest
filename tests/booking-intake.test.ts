@@ -301,6 +301,29 @@ test('email intake mailboxes are limited to the Owner-approved addresses', async
     }),
     false,
   );
+  assert.equal(
+    looksLikeBookingRelatedEmail({
+      subject: "It's Time To Check In For Your Flight",
+      text:
+        'Online check-in is now open for your Delta flight. Download your boarding pass when ready.',
+      from_address: 'DeltaAirLines@t.delta.com',
+    }),
+    false,
+  );
+  assert.ok(
+    looksLikeBookingRelatedEmail({
+      subject: 'Fwd: Thanks for your purchase, reference 88MRHN',
+      text: 'Thanks for your purchase. Reference 88MRHN. Your order details are below.',
+      from_address: 'desk@padovatravel.com',
+    }),
+  );
+  assert.ok(
+    looksLikeBookingRelatedEmail({
+      subject: 'Fw: Kona Village, A Rosewood Resort — direct booking enquiry',
+      text: 'Guest asked about dates for a direct booking enquiry at the resort.',
+      from_address: 'sales@example.com',
+    }),
+  );
   await assert.rejects(
     () =>
       prepareEmailIntakeDraft({
@@ -310,6 +333,42 @@ test('email intake mailboxes are limited to the Owner-approved addresses', async
       }),
     /does not look like a booking/,
   );
+});
+
+test('loose hotel enquiry / purchase subjects fill draft card fields without inventing sale', async () => {
+  const hotel = await prepareEmailIntakeDraft({
+    mailbox: 'bookings@padovatravel.com',
+    subject: 'Fw: W Aspen — direct booking enquiry',
+    from_address: 'Chris.Sanchez@whotels.com',
+    text: 'Following up on the direct booking enquiry for W Aspen. Guest Name: Sam Guest',
+  });
+  const hotelEntry = hotel.entry as Record<string, any>;
+  assert.equal(hotelEntry.product, 'Hotel');
+  assert.equal(hotelEntry.route, 'W Aspen');
+  assert.equal(hotelEntry.location, 'W Aspen');
+  assert.equal(hotelEntry.intake_provider_label, 'W Aspen');
+  assert.equal(hotelEntry.intake_customer_label, 'Sam Guest');
+  assert.equal(hotelEntry.sale, undefined);
+
+  const purchase = await prepareEmailIntakeDraft({
+    mailbox: 'bookings@padovatravel.com',
+    subject: 'Fwd: Thanks for your purchase, reference 88MRHN',
+    from_address: 'shpadawer@gmail.com',
+    text: 'Thanks for your purchase. Reference 88MRHN. Details below.',
+  });
+  const purchaseEntry = purchase.entry as Record<string, any>;
+  assert.equal(purchaseEntry.primary_reference, '88MRHN');
+  assert.equal(purchaseEntry.sale, undefined);
+
+  const capitalOne = await prepareEmailIntakeDraft({
+    mailbox: 'bookings@padovatravel.com',
+    subject: 'Rachel, you have a new inquiry',
+    from_address: 'capitalone@notification.capitalone.com',
+    text: 'Rachel, you have a new inquiry on Capital One Travel. Please review the request.',
+  });
+  const capitalEntry = capitalOne.entry as Record<string, any>;
+  assert.equal(capitalEntry.intake_customer_label, 'Rachel');
+  assert.equal(capitalEntry.sale, undefined);
 });
 
 test('eml extract prefers text/plain and keeps Field: Value lines', async () => {

@@ -5,7 +5,10 @@ import {
   INTAKE_EMAIL_MAILBOXES,
 } from './booking-intake';
 import type { Database } from './db';
-import { looksLikeBookingRelatedEmail } from './booking-message-detect';
+import {
+  looksLikeBookingRelatedEmail,
+  looksLikePurchaseOrEnquiry,
+} from './booking-message-detect';
 import {
   emailIntakeAliasMailboxes,
   fetchGmailMessage,
@@ -281,15 +284,6 @@ export async function pollEmailIntakeMailboxes(
             });
             continue;
           }
-          if (dryRun) {
-            result.created.push({
-              id: 'dry-run',
-              title: msg.subject || 'Email intake dry-run',
-              message_id: item.id,
-              subject: msg.subject,
-            });
-            continue;
-          }
           const built = await prepareEmailIntakeDraft({
             mailbox,
             from_address: msg.from_address,
@@ -298,6 +292,33 @@ export async function pollEmailIntakeMailboxes(
             received_at: msg.received_at,
             message_id: msg.id,
           });
+          const entry = built.entry as Record<string, unknown>;
+          const reviewablePurchaseOrEnquiry = looksLikePurchaseOrEnquiry(
+            `${msg.subject || ''}\n${msg.text || ''}`,
+          );
+          const hasShape =
+            Boolean(entry.product) ||
+            Boolean(entry.intake_customer_label) ||
+            (built.recognized_fields?.length ?? 0) >= 2 ||
+            // Forwarded purchase / hotel enquiry — staff completes fields from raw mail.
+            reviewablePurchaseOrEnquiry;
+          if (!hasShape) {
+            result.skipped.push({
+              message_id: item.id,
+              reason: 'insufficient_booking_fields',
+              subject: msg.subject,
+            });
+            continue;
+          }
+          if (dryRun) {
+            result.created.push({
+              id: 'dry-run',
+              title: built.title || msg.subject || 'Email intake dry-run',
+              message_id: item.id,
+              subject: msg.subject,
+            });
+            continue;
+          }
           const saved = await execute(db, staff, {
             id: crypto.randomUUID(),
             kind: 'booking_draft',

@@ -8,6 +8,7 @@ import {
   INTAKE_EMAIL_MAILBOXES,
 } from './booking-intake-split';
 import { extractBinaryIntakeText } from './intake-file-text';
+import { inferLooseIntakeHints, mergeLooseIntakeHints } from './intake-email-hints';
 import { UNREAD_FILE_MESSAGE } from './intake-preview';
 import { redactOperationalText } from './operational-redaction';
 import { normalizePasteValue, parseQuickPaste } from './quick-paste';
@@ -176,6 +177,13 @@ export async function buildIntakeDraft(input: {
   const preview = parseQuickPaste(
     redacted || 'Notes: Intake with no extractable Field: Value lines',
   );
+  // Free-form hotel enquiry / purchase mail rarely has Field: Value — fill empty slots only.
+  const looseHints = inferLooseIntakeHints({
+    subject: input.subject,
+    text: redacted,
+    from_address: input.fromAddress,
+  });
+  const fields = mergeLooseIntakeHints(preview.fields as Record<string, unknown>, looseHints);
   const issues = [
     ...preview.issues,
     ...preview.unknown.map((u) => `${u.label}: ${u.value}`),
@@ -184,20 +192,16 @@ export async function buildIntakeDraft(input: {
   if (!redacted.trim() && !filename)
     issues.push('Provide plain text or a text file; intake creates a draft only');
 
-  const product = productFromPaste(preview.fields.product as string | undefined);
-  const route = typeof preview.fields.route === 'string' ? preview.fields.route : '';
-  const customerLabel =
-    typeof preview.fields.customer === 'string' ? preview.fields.customer.trim() : '';
-  const travelerLabel =
-    typeof preview.fields.traveler === 'string' ? preview.fields.traveler.trim() : '';
-  const propertyLabel =
-    typeof preview.fields.property === 'string' ? preview.fields.property.trim() : '';
-  const airlineLabel =
-    typeof preview.fields.airline === 'string' ? preview.fields.airline.trim() : '';
+  const product = productFromPaste(fields.product as string | undefined);
+  const route = typeof fields.route === 'string' ? fields.route : '';
+  const customerLabel = typeof fields.customer === 'string' ? fields.customer.trim() : '';
+  const travelerLabel = typeof fields.traveler === 'string' ? fields.traveler.trim() : '';
+  const propertyLabel = typeof fields.property === 'string' ? fields.property.trim() : '';
+  const airlineLabel = typeof fields.airline === 'string' ? fields.airline.trim() : '';
   // Never invent route/PNR from the file name (Site Feedback 3).
   const summary =
-    typeof preview.fields.reservation_summary === 'string'
-      ? preview.fields.reservation_summary
+    typeof fields.reservation_summary === 'string'
+      ? fields.reservation_summary
       : input.subject?.trim() ||
         (text_extractable
           ? product
@@ -223,6 +227,9 @@ export async function buildIntakeDraft(input: {
     entry_count: input.entryCount,
   };
 
+  const primaryReference =
+    typeof fields.primary_reference === 'string' ? fields.primary_reference : '';
+
   const entry: Record<string, unknown> = {
     product,
     traveler_ids: [],
@@ -232,16 +239,16 @@ export async function buildIntakeDraft(input: {
     route,
     // Hotel form uses City / Location — map Route into it so the field is not blank.
     location: product === 'Hotel' ? route : '',
-    travel_start: preview.fields.travel_start ?? '',
-    travel_end: preview.fields.travel_end ?? '',
-    primary_reference: preview.fields.primary_reference ?? '',
-    flight_numbers: preview.fields.flight_numbers ?? '',
-    ticket_numbers: preview.fields.ticket_numbers ?? '',
-    cabin: preview.fields.cabin ?? '',
-    room_type: preview.fields.room_type ?? '',
-    pickup_location: preview.fields.pickup_location ?? '',
-    dropoff_location: preview.fields.dropoff_location ?? '',
-    description: preview.fields.description ?? '',
+    travel_start: fields.travel_start ?? '',
+    travel_end: fields.travel_end ?? '',
+    primary_reference: primaryReference,
+    flight_numbers: fields.flight_numbers ?? '',
+    ticket_numbers: fields.ticket_numbers ?? '',
+    cabin: fields.cabin ?? '',
+    room_type: fields.room_type ?? '',
+    pickup_location: fields.pickup_location ?? '',
+    dropoff_location: fields.dropoff_location ?? '',
+    description: fields.description ?? '',
     reservation_summary: summary,
     summary_override: Boolean(summary),
     // Prefill traveler search box when Continue Draft opens.
@@ -259,7 +266,7 @@ export async function buildIntakeDraft(input: {
         : '',
     intake_provider_label: propertyLabel || airlineLabel || '',
     notes: [
-      typeof preview.fields.notes === 'string' ? preview.fields.notes : '',
+      typeof fields.notes === 'string' ? fields.notes : '',
       issues.length ? `Intake review notes:\n- ${issues.slice(0, 20).join('\n- ')}` : '',
     ]
       .filter(Boolean)
@@ -267,25 +274,24 @@ export async function buildIntakeDraft(input: {
     intake_provenance: provenance,
     intake_raw_text: redacted,
     recovery_paste: redacted,
-    intake_field_hints: preview.fields,
+    intake_field_hints: fields,
     intake_unresolved: preview.unknown,
     intake_party_hints: {
-      customer: preview.fields.customer ?? null,
-      traveler: preview.fields.traveler ?? null,
-      airline: preview.fields.airline ?? null,
-      property: preview.fields.property ?? null,
-      seller: preview.fields.seller ?? null,
-      method: preview.fields.method ?? null,
-      referring_organization: preview.fields.referring_organization ?? null,
+      customer: fields.customer ?? null,
+      traveler: fields.traveler ?? null,
+      airline: fields.airline ?? null,
+      property: fields.property ?? null,
+      seller: fields.seller ?? null,
+      method: fields.method ?? null,
+      referring_organization: fields.referring_organization ?? null,
     },
     intake_apply_on_open: true,
   };
 
-  if (preview.fields.sale !== undefined) entry.sale = preview.fields.sale;
-  if (preview.fields.customer_paid !== undefined)
-    entry.intake_customer_paid = preview.fields.customer_paid;
-  if (preview.fields.trip_type) {
-    const trip = normalizePasteValue(String(preview.fields.trip_type));
+  if (fields.sale !== undefined) entry.sale = fields.sale;
+  if (fields.customer_paid !== undefined) entry.intake_customer_paid = fields.customer_paid;
+  if (fields.trip_type) {
+    const trip = normalizePasteValue(String(fields.trip_type));
     entry.trip_type =
       trip === 'round trip'
         ? 'Round Trip'
@@ -300,17 +306,24 @@ export async function buildIntakeDraft(input: {
     customerLabel && !/^(unknown|n\/a)$/i.test(customerLabel) ? customerLabel : '',
     product || '',
     route || summary || '',
-    preview.fields.primary_reference ? String(preview.fields.primary_reference) : '',
+    primaryReference || '',
     input.entryCount && input.entryCount > 1
       ? `(${(input.entryIndex ?? 0) + 1}/${input.entryCount})`
       : '',
   ].filter(Boolean);
 
+  const recognized = new Set([
+    ...Object.keys(preview.fields),
+    ...Object.entries(looseHints)
+      .filter(([, v]) => Boolean(v))
+      .map(([k]) => k),
+  ]);
+
   return {
     title: titleParts.join(' · ').slice(0, 180) || 'Booking intake draft',
     entry,
     issues,
-    recognized_fields: Object.keys(preview.fields),
+    recognized_fields: [...recognized],
   };
 }
 

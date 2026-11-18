@@ -1,6 +1,7 @@
 import { draftKind } from './draft-kind';
 import { historicalDraftReview } from './historical-draft-review';
 import { historicalRecordPresentation } from './historical-record-presentation';
+import { inferLooseIntakeHints } from './intake-email-hints';
 import { Database, Row, one } from './db';
 import { economics, supplierOutstanding } from './finance';
 import { Actor, hasPermission, requirePermission, effectivePermissions } from './permissions';
@@ -741,6 +742,15 @@ export async function snapshot(db: Database, actor: Actor) {
           const facts = historicalRecordPresentation(entry);
           const customer = parties.find((p) => p.id === entry.customer_id)?.name;
           const intake = entry?.intake_provenance;
+          // Existing blank email drafts: derive display hints from subject/raw (no money invent).
+          const loose =
+            intake?.source === 'email'
+              ? inferLooseIntakeHints({
+                  subject: intake?.subject,
+                  text: entry?.intake_raw_text || entry?.recovery_paste || '',
+                  from_address: intake?.from_address,
+                })
+              : {};
           const customerHint =
             customer ||
             (typeof entry?.intake_customer_label === 'string' &&
@@ -751,7 +761,17 @@ export async function snapshot(db: Database, actor: Actor) {
             entry.intake_party_hints.customer.trim()
               ? entry.intake_party_hints.customer.trim()
               : null) ||
+            loose.customer ||
             null;
+          const productHint = entry?.product || loose.product || null;
+          const routeHint =
+            entry?.route ||
+            entry?.location ||
+            facts.route ||
+            loose.route ||
+            loose.property ||
+            null;
+          const pnrHint = entry?.primary_reference || loose.primary_reference || null;
           return {
             ...metadata,
             kind,
@@ -762,10 +782,10 @@ export async function snapshot(db: Database, actor: Actor) {
             intake_mailbox: intake?.mailbox ?? null,
             intake_received_at: intake?.received_at ?? null,
             intake_customer: customerHint,
-            intake_product: entry?.product || null,
-            intake_route: entry?.route || entry?.location || facts.route || null,
+            intake_product: productHint,
+            intake_route: routeHint,
             intake_travel_start: entry?.travel_start || null,
-            intake_pnr: entry?.primary_reference || null,
+            intake_pnr: pnrHint,
             intake_sale: entry?.sale ?? null,
             display_title:
               kind === 'historical_booking'
@@ -780,9 +800,9 @@ export async function snapshot(db: Database, actor: Actor) {
                   ? draft.summary
                   : [
                       customerHint,
-                      entry?.product,
-                      entry?.route || entry?.location,
-                      entry?.primary_reference,
+                      productHint,
+                      routeHint,
+                      pnrHint,
                     ]
                       .filter(Boolean)
                       .join(' · ') || draft.title,
