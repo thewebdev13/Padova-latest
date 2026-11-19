@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 /**
- * Padova WhatsApp Web QR reader (read-only → booking_draft).
+ * Padova WhatsApp Web QR helper (Baileys — unofficial PC link).
  *
  * Links a multi-device WhatsApp session on this PC (scan QR like WhatsApp Web),
- * reads inbound text only, and POSTs drafts to Padova. Never sends, never
- * replies, never marks chats in a way that posts outbound content.
+ * reads inbound reservation text → Padova booking_draft (Claude path on server).
+ * Never auto-replies to customers.
+ *
+ * Optional Owner-only alerts (professional / allowlisted):
+ *   allow_owner_alerts=true + owner_phones in helper config
+ *   Polls GET /api/ai/reminders/bridge and sendMessage ONLY to those numbers.
+ *   Still never invents money; never targets customer chats.
  *
  * Local browser page (same PC only):
  *   http://127.0.0.1:3927/
@@ -95,12 +100,21 @@ async function loadHelperConfig() {
         state_file: 'PADOVA_WHATSAPP_STATE_FILE',
         session_label: 'PADOVA_WHATSAPP_SESSION_LABEL',
         ui_port: 'PADOVA_WHATSAPP_UI_PORT',
+        reminders_url: 'PADOVA_WHATSAPP_REMINDERS_URL',
+        allow_owner_alerts: 'PADOVA_WHATSAPP_ALLOW_OWNER_ALERTS',
+        alert_interval_minutes: 'PADOVA_WHATSAPP_ALERT_INTERVAL_MINUTES',
       };
       for (const [from, envKey] of Object.entries(map)) {
         const value = data[from];
         if (value == null || value === '') continue;
         if (!(envKey in process.env) || !String(process.env[envKey] || '').trim()) {
           process.env[envKey] = String(value);
+        }
+      }
+      if (Array.isArray(data.owner_phones) && data.owner_phones.length) {
+        const joined = data.owner_phones.map(String).join(',');
+        if (!String(process.env.PADOVA_WHATSAPP_OWNER_PHONES || '').trim()) {
+          process.env.PADOVA_WHATSAPP_OWNER_PHONES = joined;
         }
       }
       console.log(`[whatsapp-web-reader] config: ${filePath}`);
@@ -127,6 +141,22 @@ const sessionLabel =
 const uiPort = Number(process.env.PADOVA_WHATSAPP_UI_PORT || 3927);
 const uiHost = process.env.PADOVA_WHATSAPP_UI_HOST?.trim() || '127.0.0.1';
 const openBrowser = process.env.PADOVA_WHATSAPP_OPEN_BROWSER !== '0';
+const allowOwnerAlerts = /^(1|true|yes)$/i.test(
+  String(process.env.PADOVA_WHATSAPP_ALLOW_OWNER_ALERTS || '').trim(),
+);
+const ownerPhones = String(process.env.PADOVA_WHATSAPP_OWNER_PHONES || '')
+  .split(/[,;\s]+/)
+  .map((p) => p.replace(/\D/g, ''))
+  .filter((p) => p.length >= 8 && p.length <= 15);
+const alertIntervalMinutes = Math.max(
+  30,
+  Number(process.env.PADOVA_WHATSAPP_ALERT_INTERVAL_MINUTES || 240) || 240,
+);
+const remindersUrl =
+  process.env.PADOVA_WHATSAPP_REMINDERS_URL?.trim() ||
+  (url
+    ? String(url).replace(/\/api\/booking-intake\/whatsapp\/?$/i, '/api/ai/reminders/bridge')
+    : '');
 const mode = process.argv[2] || 'run';
 
 const logger = pino({ level: 'silent' });
@@ -161,9 +191,14 @@ function requireConfig() {
 
 async function loadState() {
   try {
-    return JSON.parse(await fs.readFile(stateFile, 'utf8'));
+    const raw = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+    return {
+      processed: raw.processed || {},
+      last_alert_fingerprint: raw.last_alert_fingerprint || null,
+      last_alert_at: raw.last_alert_at || null,
+    };
   } catch {
-    return { processed: {} };
+    return { processed: {}, last_alert_fingerprint: null, last_alert_at: null };
   }
 }
 
@@ -175,6 +210,78 @@ async function saveState(state) {
     state.processed = Object.fromEntries(keep.map((k) => [k, state.processed[k]]));
   }
   await fs.writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+function phoneToJid(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  return `${digits}@s.whatsapp.net`;
+}
+
+async function fetchOwnerDigest() {
+  if (!remindersUrl || !token || !actorId) return null;
+  const endpoint = new URL(remindersUrl);
+  endpoint.searchParams.set('actor_id', actorId);
+  const response = await fetch(endpoint, {
+    headers: {
+      'x-padova-wa-bridge': token,
+      accept: 'application/json',
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.error || `reminders HTTP ${response.status}`);
+  }
+  return body;
+}
+
+/**
+ * Owner-only digest send. Never customers. Deduped by fingerprint + interval.
+ */
+async function maybeSendOwnerAlerts(sock, processed) {
+  if (!allowOwnerAlerts) return;
+  if (!ownerPhones.length) {
+    console.warn(
+      '[whatsapp-web-reader] owner alerts on but owner_phones empty — skip send',
+    );
+    return;
+  }
+  if (!sock) return;
+
+  const now = Date.now();
+  const lastAt = processed.last_alert_at ? Date.parse(processed.last_alert_at) : 0;
+  if (lastAt && now - lastAt < alertIntervalMinutes * 60_000) return;
+
+  const digest = await fetchOwnerDigest();
+  if (!digest?.text) return;
+  if (!digest.item_count) {
+    // Quiet when empty — still advance interval so we do not hammer API.
+    processed.last_alert_at = new Date().toISOString();
+    processed.last_alert_fingerprint = digest.fingerprint || 'empty';
+    await saveState(processed);
+    return;
+  }
+  if (
+    digest.fingerprint &&
+    digest.fingerprint === processed.last_alert_fingerprint &&
+    lastAt &&
+    now - lastAt < alertIntervalMinutes * 60_000 * 2
+  ) {
+    return;
+  }
+
+  for (const phone of ownerPhones) {
+    const jid = phoneToJid(phone);
+    if (!jid) continue;
+    await sock.sendMessage(jid, { text: String(digest.text) });
+    console.log(`[owner-alert] sent digest (${digest.item_count} items) → ${phone}`);
+  }
+  processed.last_alert_fingerprint = digest.fingerprint || null;
+  processed.last_alert_at = new Date().toISOString();
+  await saveState(processed);
+  setLive({
+    detail: `Listening. Owner alert sent (${digest.item_count} items).`,
+  });
 }
 
 function messageKeyId(msg) {
@@ -475,10 +582,20 @@ async function startReader() {
   requireConfig();
   await fs.mkdir(authDir, { recursive: true });
 
-  console.log('[whatsapp-web-reader] read-only → drafts (never send)');
+  console.log('[whatsapp-web-reader] inbound → drafts (never auto-reply to customers)');
   console.log(`[whatsapp-web-reader] padova api: ${url}`);
   console.log(`[whatsapp-web-reader] auth: ${authDir}`);
   console.log('[whatsapp-web-reader] phone: WhatsApp → Linked devices → Link a device');
+  if (allowOwnerAlerts && ownerPhones.length) {
+    console.log(
+      `[whatsapp-web-reader] Owner alerts ON → ${ownerPhones.join(', ')} every ${alertIntervalMinutes}m`,
+    );
+    console.log(`[whatsapp-web-reader] reminders: ${remindersUrl || '(missing url)'}`);
+  } else if (allowOwnerAlerts) {
+    console.warn('[whatsapp-web-reader] Owner alerts flagged but owner_phones missing');
+  } else {
+    console.log('[whatsapp-web-reader] Owner alerts OFF (set allow_owner_alerts + owner_phones)');
+  }
 
   const uiServer = startLocalUi();
 
@@ -486,7 +603,24 @@ async function startReader() {
   const { version } = await fetchLatestBaileysVersion();
   let sock;
   let stopping = false;
+  let alertTimer = null;
   const processed = await loadState();
+
+  const startOwnerAlertLoop = () => {
+    if (!allowOwnerAlerts || !ownerPhones.length || alertTimer) return;
+    const tick = async () => {
+      try {
+        await maybeSendOwnerAlerts(sock, processed);
+      } catch (err) {
+        console.error(
+          `[whatsapp-web-reader] owner alert failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    };
+    // First digest a minute after link (avoid race with reconnect).
+    setTimeout(tick, 60_000);
+    alertTimer = setInterval(tick, Math.min(alertIntervalMinutes, 60) * 60_000);
+  };
 
   const connect = async () => {
     sock = makeWASocket({
@@ -537,11 +671,14 @@ async function startReader() {
       if (connection === 'open') {
         setLive({
           status: 'linked',
-          detail: 'Leave this PC on. New inbound texts become drafts for staff approval.',
+          detail: allowOwnerAlerts
+            ? 'Linked. Inbound → drafts. Owner alerts enabled (allowlist only).'
+            : 'Leave this PC on. New inbound texts become drafts for staff approval.',
           qrDataUrl: null,
         });
         console.log('[whatsapp-web-reader] linked. Listening for inbound text…');
         console.log('[whatsapp-web-reader] Ctrl+C to stop. PC must stay online.');
+        startOwnerAlertLoop();
       }
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -705,6 +842,10 @@ async function startReader() {
     if (stopping) return;
     stopping = true;
     console.log('\n[whatsapp-web-reader] stopping…');
+    if (alertTimer) {
+      clearInterval(alertTimer);
+      alertTimer = null;
+    }
     try {
       uiServer.close();
     } catch {

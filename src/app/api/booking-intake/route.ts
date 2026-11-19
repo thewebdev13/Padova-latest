@@ -217,6 +217,8 @@ export async function POST(request: Request) {
       throw new Error(`Intake supports up to ${INTAKE_MAX_ENTRIES.toLocaleString()} entries`);
 
     const db = await database();
+    const { afterIntakeDraftSaved } = await import('@/lib/intake-after-save');
+    const { aiIntakeStatus } = await import('@/lib/claude-intake');
     const drafts = [];
     for (let i = 0; i < builtList.length; i++) {
       const built = builtList[i];
@@ -226,11 +228,17 @@ export async function POST(request: Request) {
         kind: 'booking_draft',
         data: { title: built.title, entry: built.entry },
       });
+      const promote = await afterIntakeDraftSaved(db, actor, String(result.id), built);
       drafts.push({
         id: result.id,
         title: built.title,
         issues: built.issues,
         recognized_fields: built.recognized_fields,
+        live_booking: promote.live,
+        booking_id: promote.live ? promote.booking_id : undefined,
+        booking_code: promote.live ? promote.booking_code : undefined,
+        ai_summary: promote.summary,
+        ai_promote_reason: promote.live ? undefined : promote.reason,
       });
     }
 
@@ -253,6 +261,9 @@ export async function POST(request: Request) {
         recognized_fields: drafts[0]?.recognized_fields ?? [],
         draft: true,
         posted: false,
+        posts_money: false,
+        live_booking: Boolean(drafts.some((d) => d.live_booking)),
+        ai: aiIntakeStatus(),
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );

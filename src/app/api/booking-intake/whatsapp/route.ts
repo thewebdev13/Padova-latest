@@ -12,6 +12,8 @@ import {
   prepareWhatsAppIntakeDraft,
   whatsappIntakeStatus,
 } from '@/lib/whatsapp-intake';
+import { afterIntakeDraftSaved } from '@/lib/intake-after-save';
+import { aiIntakeStatus } from '@/lib/claude-intake';
 
 export async function GET(request: Request) {
   try {
@@ -93,11 +95,13 @@ export async function POST(request: Request) {
     }
 
     const commandId = String(body.command_id || crypto.randomUUID());
-    const result = await execute(await database(), staff, {
+    const db = await database();
+    const result = await execute(db, staff, {
       id: commandId,
       kind: 'booking_draft',
       data: { title: built.title, entry: built.entry },
     });
+    const promote = await afterIntakeDraftSaved(db, staff, String(result.id), built);
     return NextResponse.json(
       {
         id: result.id,
@@ -106,8 +110,15 @@ export async function POST(request: Request) {
         recognized_fields: built.recognized_fields,
         draft: true,
         posted: false,
+        posts_money: false,
         sent: false,
+        live_booking: promote.live,
+        booking_id: promote.live ? promote.booking_id : undefined,
+        booking_code: promote.live ? promote.booking_code : undefined,
+        ai_summary: promote.summary,
+        ai_promote_reason: promote.live ? undefined : promote.reason,
         intake: whatsappIntakeStatus(),
+        ai: aiIntakeStatus(),
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );

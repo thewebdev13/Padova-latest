@@ -320,8 +320,9 @@ export async function snapshot(db: Database, actor: Actor) {
         booking_id: b.id,
         kind: 'Commission',
       });
+    // Final cost attention = supplier/acquisition incomplete only (not missing customer sale).
     if (
-      b.cost_incomplete ||
+      b.supplier_cost_incomplete ||
       (b.itinerary?.cost_status === undefined && Number(b.funding_cost) === 0 && Number(b.sale) > 0)
     )
       attention.push({

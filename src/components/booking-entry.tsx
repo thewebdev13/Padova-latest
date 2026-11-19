@@ -3,11 +3,13 @@ import {
   useState,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   type CSSProperties,
   type ReactNode,
   type FormEvent,
 } from 'react';
+import { Upload } from 'lucide-react';
 import SearchableSelect from './searchable-select';
 import AirportInput from './airport-input';
 import BookingTicketing from './booking-ticketing';
@@ -29,6 +31,7 @@ import {
   type BookingRecovery,
 } from '@/lib/booking-recovery';
 import { similarTravelerName } from '@/lib/traveler-candidates';
+import { fixedMenuStyleFromRect } from '@/lib/fixed-menu-style';
 import { assetUnit } from '@/lib/asset-units';
 import {
   derivedTravel,
@@ -54,6 +57,12 @@ import {
   quickPasteExample,
 } from '@/lib/quick-paste';
 import { formatIntakeProvenanceLine } from '@/lib/intake-channel-label';
+import {
+  buildIntakeMappingPreview,
+  INTAKE_REQUIRED_ROWS,
+  INTAKE_SAMPLE_PASTE,
+  UNREAD_FILE_MESSAGE,
+} from '@/lib/intake-preview';
 import {
   extractTextFromEml,
   looksLikeEml,
@@ -186,23 +195,72 @@ export default function BookingEntry(props: Props) {
       },
     ],
   );
-  const [paste, setPaste] = useState(
+  const initialPaste = String(
     props.config.defaults.recovery_paste ||
       props.config.defaults.intake_raw_text ||
       '',
   );
+  const [paste, setPaste] = useState(initialPaste);
   const [pasteIssues, setPasteIssues] = useState<string[]>([]);
   const [copyStatus, setCopyStatus] = useState('');
+  // Open when continuing a draft/recovery that already has paste text.
+  const [quickPasteOpen, setQuickPasteOpen] = useState(() => Boolean(initialPaste.trim()));
+  const [pasteDrag, setPasteDrag] = useState(false);
+  const [pasteFileName, setPasteFileName] = useState('');
   const intakeAutoApplied = useRef(false);
+  const pasteApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickPasteRef = useRef<HTMLDetailsElement>(null);
+  const ignoreQuickPasteToggle = useRef(false);
+  const userClosedQuickPaste = useRef(false);
+  const hadPasteContent = useRef(Boolean(initialPaste.trim()));
+  const livePastePreview = useMemo(
+    () =>
+      buildIntakeMappingPreview(paste, {
+        parties: (state.parties ?? []) as { name?: string }[],
+      }),
+    [paste, state.parties],
+  );
   const intakePartyKeys = useRef(new Map<string, string>());
+  const setQuickPasteOpenSafe = (open: boolean) => {
+    ignoreQuickPasteToggle.current = true;
+    setQuickPasteOpen(open);
+    if (quickPasteRef.current) quickPasteRef.current.open = open;
+    queueMicrotask(() => {
+      ignoreQuickPasteToggle.current = false;
+    });
+  };
+  useEffect(() => {
+    const has = Boolean(paste.trim());
+    if (!has) {
+      hadPasteContent.current = false;
+      userClosedQuickPaste.current = false;
+      return;
+    }
+    // First content (or returning from empty) → open and stay until user collapses.
+    if (!hadPasteContent.current && !userClosedQuickPaste.current) {
+      setQuickPasteOpenSafe(true);
+    }
+    hadPasteContent.current = true;
+  }, [paste]);
   const copy = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopyStatus(`${label} copied`);
+      window.setTimeout(() => setCopyStatus(''), 2000);
     } catch {
-      setCopyStatus('Clipboard unavailable. Select and copy the text below.');
+      setCopyStatus('Clipboard unavailable');
       setPaste(value);
+      window.setTimeout(() => setCopyStatus(''), 3000);
     }
+  };
+  const queueApplyPaste = (text: string) => {
+    if (pasteApplyTimer.current) clearTimeout(pasteApplyTimer.current);
+    pasteApplyTimer.current = setTimeout(() => {
+      if (text.trim()) {
+        if (!userClosedQuickPaste.current) setQuickPasteOpenSafe(true);
+        void applyPaste(text);
+      } else setPasteIssues([]);
+    }, 350);
   };
   const [traveler, setTraveler] = useState(
     props.config.defaults.pending_traveler || props.config.defaults.traveler_batch || '',
@@ -362,6 +420,7 @@ export default function BookingEntry(props: Props) {
     };
   }, [traveler]);
   const [error, setError] = useState('');
+  const [attemptedSave, setAttemptedSave] = useState(false);
   const [busy, setBusy] = useState(false);
   const [inline, setInline] = useState<R | null>(null);
   useEffect(() => {
@@ -380,6 +439,7 @@ export default function BookingEntry(props: Props) {
   const [hotelDirectoryNote, setHotelDirectoryNote] = useState('');
   /** Optional corp/IATA override only — Property / Hotel is the real hotel field. */
   const [hotelDirectoryQuery, setHotelDirectoryQuery] = useState('');
+  const [hotelTipsOpen, setHotelTipsOpen] = useState(false);
   const [travelerMenuStyle, setTravelerMenuStyle] = useState<CSSProperties | undefined>();
   const [recoveryAvailable, setRecoveryAvailable] = useState(true);
   const recovery = useRef<BookingRecovery | null>(null);
@@ -817,11 +877,52 @@ export default function BookingEntry(props: Props) {
   const derived = derivedTravel(v, selectedProvider?.name);
   const dateLabels = travelDateLabels(v.product, v.trip_type);
   const dateOrderIssue = travelDateOrderIssue(v);
-  const errorBannerRef = useRef<HTMLParagraphElement | null>(null);
+  const errorBannerRef = useRef<HTMLDivElement | null>(null);
+  const customerFieldRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!error) return;
+    if (/select a customer/i.test(error)) {
+      customerFieldRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
     errorBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [error]);
+  // Real-time: drop the save banner as soon as the related field is fixed.
+  useEffect(() => {
+    if (!error) return;
+    const msg = error.toLowerCase();
+    if (msg.includes('select a customer') && v.customer_id) setError('');
+    else if (msg.includes('typed name') && !traveler.trim()) setError('');
+    else if (
+      msg.includes('travel date') &&
+      (v.trip_type === 'Multi-City' ? v.segments?.[0]?.date : v.travel_start)
+    )
+      setError('');
+    else if (
+      (msg.includes('return') || msg.includes('check-out') || msg.includes('drop-off')) &&
+      v.travel_end
+    )
+      setError('');
+    else if (msg.includes('what this booking is for') && v.description?.trim()) setError('');
+    else if (msg.includes('partial customer payment') && v.received) setError('');
+    else if (msg.includes('customer payment status') && !v.customer_status_unresolved)
+      setError('');
+    else if (!dateOrderIssue && /check-in|check-out|drop-off|return|start.+end|end.+start/i.test(msg))
+      setError('');
+  }, [
+    error,
+    v.customer_id,
+    traveler,
+    v.trip_type,
+    v.segments,
+    v.travel_start,
+    v.travel_end,
+    v.description,
+    v.received,
+    v.customer_status_unresolved,
+    dateOrderIssue,
+  ]);
+  const customerMissing = attemptedSave && !v.customer_id;
   const percentPricing = v.pricing_method === 'Percentage Off Comparable Online Price';
   let calculatedSale: number | undefined;
   try {
@@ -871,19 +972,7 @@ export default function BookingEntry(props: Props) {
     const place = () => {
       const rect = travelerInput.current?.getBoundingClientRect();
       if (!rect) return;
-      const maxHeight = Math.min(280, Math.max(120, window.innerHeight - rect.bottom - 12));
-      const width = Math.max(rect.width, 220);
-      let left = rect.left;
-      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-      setTravelerMenuStyle({
-        position: 'fixed',
-        top: rect.bottom + 4,
-        left,
-        width,
-        maxHeight,
-        zIndex: 1200,
-        overflow: 'auto',
-      });
+      setTravelerMenuStyle(fixedMenuStyleFromRect(rect));
     };
     place();
     window.addEventListener('resize', place);
@@ -903,11 +992,12 @@ export default function BookingEntry(props: Props) {
     else if (sourceText !== paste && looksLikeEml(paste)) setPaste(sourceText);
     const preview = parseQuickPaste(sourceText),
       p = preview.fields,
-      issues = [...preview.issues, ...preview.unknown.map((x) => `Unknown ${x.label}: ${x.value}`)];
+      // Quiet successes / unknown labels — mapping panel covers them. Keep only blocking notes.
+      issues: string[] = [...preview.issues];
     const target = p.product
       ? products.find((x) => normalizePasteValue(x) === normalizePasteValue(p.product))
       : v.product;
-    if (!target) issues.push('Choose a valid Product');
+    if (p.product && !target) issues.push('Choose a valid Product');
     let next: R = transitionBookingProduct(v, target ?? '', rows('bookingSourceMethods'));
     const amount = (key: string) => {
       if (p[key] === undefined) return undefined;
@@ -915,7 +1005,7 @@ export default function BookingEntry(props: Props) {
         usd(p[key]);
         return p[key];
       } catch {
-        issues.push(`${key}: amount is unresolved; enter an exact dollar amount`);
+        issues.push(`${key}: enter an exact dollar amount`);
         return '';
       }
     };
@@ -968,9 +1058,7 @@ export default function BookingEntry(props: Props) {
               ? 'Multi-City'
               : '';
       if (!next.trip_type)
-        issues.push('Trip Type is unresolved; select One Way, Round Trip or Multi-City');
-      if (next.trip_type === 'Multi-City')
-        issues.push('Review and enter the individual Multi-City segments before Save.');
+        issues.push('Trip Type unclear — pick One Way, Round Trip, or Multi-City');
     }
     if (p.reservation_summary) next.summary_override = true;
     if (p.sale !== undefined && !can('edit_customer_charges')) {
@@ -1046,7 +1134,6 @@ export default function BookingEntry(props: Props) {
         if (!result?.id) throw new Error(`Create ${role} returned no id`);
         const row = { ...payload, ...result };
         setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), row] }));
-        issues.push(`Created ${role} “${label}” from intake and selected it.`);
         return result.id as string;
       } catch (err) {
         issues.push(
@@ -1221,9 +1308,6 @@ export default function BookingEntry(props: Props) {
       ['seller', 'seller_cost', 'seller_paid', 'bought'].some((key) => p[key] !== undefined)
     )
       issues.push('Funding claims were not applied: funding permission required');
-    issues.push(
-      'Review payment amounts and methods before Save. Pasted Paid labels are unverified entry claims.',
-    );
     if (
       next.product === 'Flight' &&
       next.trip_type === 'One Way' &&
@@ -1231,11 +1315,67 @@ export default function BookingEntry(props: Props) {
       !issues.some((i) => i.startsWith('Contradiction:'))
     )
       issues.push(
-        'Contradiction: One Way with Return Date. Return is not applied; review the Trip Type and Return line.',
+        'One Way with a return date — return was not applied; check Trip Type.',
       );
     next = transitionBookingProduct(next, next.product, rows('bookingSourceMethods'));
     setV(next);
+    setError('');
     setPasteIssues(issues);
+  }
+  async function loadBookingPasteFile(file: File) {
+    setError('');
+    setPasteIssues([]);
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error('File must be 10 MB or smaller');
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      if (
+        !isPdf &&
+        (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(file.name))
+      ) {
+        setError(
+          `“${file.name}” is an image — paste Field: Value text, or use Transactions → Intake draft for scans.`,
+        );
+        return;
+      }
+      setPasteFileName(file.name);
+      userClosedQuickPaste.current = false;
+      setQuickPasteOpenSafe(true);
+      setBusy(true);
+      if (isPdf) {
+        const data = new FormData();
+        data.set('source', 'staff_upload');
+        data.set('preview_only', '1');
+        data.set('file', file, file.name);
+        const response = await fetch('/api/booking-intake', {
+          method: 'POST',
+          body: data,
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Unable to read that PDF');
+        if (result.unread || !String(result.text || '').trim()) {
+          setError(
+            result.unread_message ||
+              `“${file.name}” has no readable text — paste the reservation text instead.`,
+          );
+          return;
+        }
+        const text = String(result.text).slice(0, 20000);
+        setPaste(text);
+        await applyPaste(text);
+        return;
+      }
+      const text = await file.text();
+      if (text.includes('\u0000'))
+        throw new Error('File looks binary — use plain text, .eml, or PDF');
+      const loaded = pasteTextFromUpload(text, file.name);
+      const nextText = loaded.text.slice(0, 20000);
+      setPaste(nextText);
+      await applyPaste(nextText);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to read that file');
+    } finally {
+      setBusy(false);
+    }
   }
   useEffect(() => {
     if (intakeAutoApplied.current) return;
@@ -1266,19 +1406,18 @@ export default function BookingEntry(props: Props) {
   async function save(e: FormEvent) {
     e.preventDefault();
     setError('');
+    setAttemptedSave(true);
     setBusy(true);
     try {
-      if (!v.customer_id) throw new Error('Select a customer, or save an incomplete Draft.');
+      if (!v.customer_id) throw new Error('Select a customer, or use Save Draft.');
       if (
         [...new Set([...ticketingDirty.current, ...ticketingCache.current.keys()])].some((id) =>
           v.traveler_ids.includes(id),
         )
       )
-        throw new Error(
-          'Save the edited traveler details to their profiles before saving the booking.',
-        );
+        throw new Error('Save traveler profile edits before saving the booking.');
       if (traveler.trim())
-        throw new Error('Select a traveler match or create the typed name before saving.');
+        throw new Error('Finish the traveler name (select a match or create) before saving.');
       if (v.product === 'Flight' && v.trip_type === 'Multi-City') {
         const segments = v.segments ?? [];
         if (
@@ -1286,17 +1425,17 @@ export default function BookingEntry(props: Props) {
           segments.some((s: R) => !s.origin?.trim() || !s.destination?.trim() || !s.date)
         )
           throw new Error(
-            'Enter at least two Multi-City segments with origin, destination and date',
+            'Enter at least two Multi-City segments with origin, destination and date.',
           );
       }
       if (!(v.trip_type === 'Multi-City' ? v.segments?.[0]?.date : v.travel_start))
-        throw new Error('Enter the travel date, or save a Draft.');
+        throw new Error('Enter the travel date, or use Save Draft.');
       if (
         ((v.product === 'Flight' && v.trip_type === 'Round Trip') ||
           ['Hotel', 'Car'].includes(v.product)) &&
         !v.travel_end
       )
-        throw new Error(`Enter ${dateLabels.end}, or save a Draft.`);
+        throw new Error(`Enter ${dateLabels.end}, or use Save Draft.`);
       const dateIssue = travelDateOrderIssue(v);
       if (dateIssue) throw new Error(dateIssue);
       if (v.product === 'Flight' && v.trip_type !== 'Multi-City') {
@@ -1305,14 +1444,14 @@ export default function BookingEntry(props: Props) {
           throw Error('Enter both From and To, or leave both unknown.');
       }
       if (v.product === 'Other' && !v.description?.trim())
-        throw new Error('Enter what this booking is for');
+        throw new Error('Enter what this booking is for.');
       if (v.payment_status === 'Partial' && !usd(v.received))
-        throw new Error('Enter the actual partial customer payment');
+        throw new Error('Enter the actual partial customer payment.');
       if (can('edit_payments') && v.customer_status_unresolved)
-        throw new Error('Resolve Customer Payment Status before saving');
+        throw new Error('Resolve Customer Payment Status before saving.');
       if (received > total && baseSale !== undefined)
         throw new Error(
-          'Amount received exceeds this sale. Record shared/excess customer credit in Payments.',
+          'Amount received exceeds this sale. Record shared/excess credit in Payments.',
         );
       const refs = [
         ...parseList(v.primary_reference ?? '').map((value) => ({
@@ -1663,16 +1802,17 @@ export default function BookingEntry(props: Props) {
           </button>
         </div>
         <div className="modal-body">
-          {error && (
-            <p
+          {error && !/select a customer/i.test(error) ? (
+            <div
               ref={errorBannerRef}
-              className="form-error form-error-sticky"
+              className="booking-entry-alert"
               role="alert"
               tabIndex={-1}
             >
-              {error}
-            </p>
-          )}
+              <strong>Needs a fix</strong>
+              <span>{error}</span>
+            </div>
+          ) : null}
           {props.config.defaults.intake_provenance?.source && (
             <div className="intake-provenance-banner" role="status">
               <strong>Intake draft — review before Save Booking</strong>
@@ -1682,145 +1822,268 @@ export default function BookingEntry(props: Props) {
               <span>Nothing posts money until you approve and Save Booking.</span>
             </div>
           )}
-          <div className="paste-tools">
-            <button
-              type="button"
-              className="btn small"
-              onClick={() => void copy(quickPasteAIInstructions, 'AI instructions')}
-            >
-              Copy AI Instructions
-            </button>
-            <button
-              type="button"
-              className="btn small"
-              onClick={() => void copy(quickPasteExample, 'Example')}
-            >
-              Copy Example
-            </button>
-            <span role="status">{copyStatus}</span>
-          </div>
-          <details className="quick-paste">
-            <OptionalSummary
-              title="Quick Paste / Intake"
-              hint="Paste or upload text → form or draft; never posts money"
-              filled={paste.trim() ? 1 : 0}
-            />
-            <textarea
-              aria-label="Quick Paste"
-              rows={4}
-              value={paste}
-              onChange={(e) => setPaste(e.target.value)}
-              placeholder="Customer: ABC Corp\nProduct: Flight\nRoute: EWR-TLV"
-            />
-            <label className="form-field">
-              Upload reservation text file
-              <input
-                type="file"
-                accept=".txt,.csv,.md,.eml,.json,text/plain,text/csv,message/rfc822"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = '';
-                  if (!file) return;
-                  void (async () => {
-                    try {
-                      if (file.size > 10 * 1024 * 1024)
-                        throw new Error('File must be 10 MB or smaller');
-                      if (
-                        file.type.startsWith('image/') ||
-                        file.type === 'application/pdf' ||
-                        /\.(pdf|png|jpe?g|gif|webp)$/i.test(file.name)
-                      ) {
-                        setPasteIssues([
-                          `“${file.name}” is not plain text. Create an intake draft from the API/upload path, or paste Field: Value text here. No booking is posted from the file alone.`,
-                        ]);
-                        return;
-                      }
-                      const text = await file.text();
-                      if (text.includes('\u0000'))
-                        throw new Error('File looks binary; use plain text or Field: Value paste');
-                      const loaded = pasteTextFromUpload(text, file.name);
-                      setPaste(loaded.text.slice(0, 20000));
-                      setPasteIssues([loaded.note]);
-                    } catch (err) {
-                      setPasteIssues([
-                        err instanceof Error ? err.message : 'Unable to read that file',
-                      ]);
-                    }
-                  })();
-                }}
-              />
-            </label>
-            <div className="btn-row">
-              <button type="button" className="btn" onClick={() => void applyPaste()}>
-                Preview / populate form
-              </button>
-              <button
-                type="button"
-                className="btn"
-                disabled={busy || !paste.trim()}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true);
-                    setError('');
-                    try {
-                      const eml = looksLikeEml(paste);
-                      const envelope = eml ? parseEmlEnvelope(paste) : {};
-                      const text = eml ? extractTextFromEml(paste) || paste : paste;
-                      const response = await fetch('/api/booking-intake', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          source: eml && envelope.mailbox ? 'email' : 'staff_paste',
-                          text,
-                          command_id: crypto.randomUUID(),
-                          from_address: envelope.from_address,
-                          subject: envelope.subject,
-                          mailbox: envelope.mailbox,
-                          filename: eml ? 'quick-paste.eml' : undefined,
-                        }),
-                      });
-                      const result = await response.json();
-                      if (!response.ok) throw new Error(result.error || 'Intake draft failed');
-                      setPasteIssues([
-                        `Intake draft saved (${result.title}). Open it from Drafts — approve/edit, then Save Booking. Nothing was posted.`,
-                        ...(result.issues ?? []).slice(0, 8),
-                      ]);
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : 'Intake draft failed');
-                    } finally {
-                      setBusy(false);
-                    }
-                  })();
-                }}
+          <details
+            ref={quickPasteRef}
+            className="booking-quick-paste"
+            open={quickPasteOpen}
+            onToggle={(e) => {
+              if (ignoreQuickPasteToggle.current) return;
+              const open = (e.currentTarget as HTMLDetailsElement).open;
+              setQuickPasteOpen(open);
+              if (paste.trim()) userClosedQuickPaste.current = !open;
+              else userClosedQuickPaste.current = false;
+            }}
+          >
+            <summary className="booking-quick-paste-summary">
+              <span className="booking-quick-paste-summary-copy">
+                <strong>Quick paste / intake</strong>
+                <small>
+                  Paste or drop a file — we fill matching fields; you review before Save Booking.
+                </small>
+              </span>
+              <span
+                className="paste-tools"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
               >
-                Save as intake draft
-              </button>
-            </div>
-            <p>
-              Review all populated fields, then Save Booking explicitly. Paste and intake drafts never
-              post money.
-            </p>
-            {pasteIssues.map((issue, i) => (
-              <p role="status" key={i}>
-                {issue}
-              </p>
-            ))}
-            {paste && (
-              <details>
-                <summary>
-                  {Object.keys(parseQuickPaste(paste).fields).length} recognized fields · inspect
-                  parsed values
-                </summary>
-                <dl>
-                  {Object.entries(parseQuickPaste(paste).fields).map(([key, value]) => (
-                    <div key={key}>
-                      <dt>{key.replaceAll('_', ' ')}</dt>
-                      <dd>{String(value)}</dd>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  onClick={() => void copy(quickPasteAIInstructions, 'AI instructions')}
+                >
+                  Copy AI Instructions
+                </button>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  onClick={() => void copy(quickPasteExample, 'Example')}
+                >
+                  Copy Example
+                </button>
+                {copyStatus ? <span role="status">{copyStatus}</span> : null}
+              </span>
+            </summary>
+            <div className="booking-quick-paste-panel">
+              <section className="intake-preview intake-preview-client booking-intake-preview">
+                <div className="intake-preview-grid">
+                  <div className="intake-preview-left">
+                    <div
+                      className={`intake-paste-box${pasteDrag ? ' is-dragging' : ''}`}
+                      onDragEnter={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!busy) setPasteDrag(true);
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!busy) setPasteDrag(true);
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setPasteDrag(false);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setPasteDrag(false);
+                        if (busy) return;
+                        const file = e.dataTransfer.files?.[0] ?? null;
+                        if (file) void loadBookingPasteFile(file);
+                      }}
+                    >
+                      <div className="intake-panel-head-row">
+                        <h3>What you pasted</h3>
+                      </div>
+                      <textarea
+                        className="intake-preview-raw intake-preview-editable"
+                        rows={10}
+                        value={paste}
+                        disabled={busy}
+                        aria-label="What you pasted"
+                        placeholder="Paste Field: Value lines here…"
+                        onChange={(e) => {
+                          const text = e.target.value;
+                          setPaste(text);
+                          queueApplyPaste(text);
+                        }}
+                      />
+                      <div className="intake-paste-actions">
+                        <label className="intake-file-link" htmlFor="booking-quick-paste-file">
+                          <Upload size={14} aria-hidden />
+                          Drop a file or browse
+                          <input
+                            id="booking-quick-paste-file"
+                            type="file"
+                            className="intake-file-input"
+                            disabled={busy}
+                            accept=".txt,.csv,.md,.eml,.json,.pdf,text/plain,text/csv,message/rfc822,application/pdf"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ?? null;
+                              e.target.value = '';
+                              if (file) void loadBookingPasteFile(file);
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="intake-sample-btn"
+                          disabled={busy}
+                          onClick={() => {
+                            setPasteFileName('');
+                            userClosedQuickPaste.current = false;
+                            setQuickPasteOpenSafe(true);
+                            setPaste(INTAKE_SAMPLE_PASTE);
+                            void applyPaste(INTAKE_SAMPLE_PASTE);
+                          }}
+                        >
+                          Use sample
+                        </button>
+                        {pasteFileName ? (
+                          <span className="intake-file-chip">
+                            {pasteFileName}
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              disabled={busy}
+                              onClick={() => setPasteFileName('')}
+                            >
+                              Remove
+                            </button>
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
+                  </div>
+                  <div className="intake-preview-right">
+                    <div className="intake-preview-right-head">
+                      <h3>What we’ll fill in</h3>
+                      {paste.trim() && !livePastePreview.unread ? (
+                        <span className="intake-preview-count">
+                          {livePastePreview.found} found
+                          {livePastePreview.missing
+                            ? ` · ${livePastePreview.missing} missing`
+                            : ''}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="intake-preview-scroll">
+                      {livePastePreview.unread ? (
+                        <p className="intake-preview-unread" role="alert">
+                          {livePastePreview.unreadMessage || UNREAD_FILE_MESSAGE}
+                        </p>
+                      ) : !paste.trim() ? (
+                        <div className="intake-preview-empty-state">
+                          <p>Mapping shows here after you paste or drop a file.</p>
+                        </div>
+                      ) : (
+                        <ul className="intake-preview-rows">
+                          {livePastePreview.rows.map((row) => {
+                            const required = INTAKE_REQUIRED_ROWS.has(row.id);
+                            const needsAttention = row.status === 'missing' && required;
+                            return (
+                              <li
+                                key={row.id}
+                                className={`${row.status}${needsAttention ? ' is-required-missing' : ''}`}
+                              >
+                                <div className="intake-preview-main">
+                                  <div className="intake-preview-meta">
+                                    <strong>
+                                      {row.fieldLabel}
+                                      {required ? (
+                                        <span className="intake-required-tag">Required</span>
+                                      ) : null}
+                                    </strong>
+                                    {(row.sourceLabel || row.sourceHint) &&
+                                    row.status === 'found' ? (
+                                      <small>
+                                        {row.sourceLabel ? `from “${row.sourceLabel}”` : ''}
+                                        {row.sourceLabel && row.sourceHint ? ' · ' : ''}
+                                        {row.sourceHint || ''}
+                                      </small>
+                                    ) : null}
+                                  </div>
+                                  <div className="intake-preview-result">
+                                    <span className="intake-preview-value">{row.value}</span>
+                                    <span
+                                      className="intake-preview-mark"
+                                      aria-label={
+                                        row.status === 'found' ? 'Found' : 'Missing'
+                                      }
+                                    >
+                                      {row.status === 'found' ? '✓' : '!'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <div className="btn-row quick-paste-actions">
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={busy || !paste.trim()}
+                  onClick={() => void applyPaste()}
+                >
+                  Re-apply to form
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy || !paste.trim()}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true);
+                      setError('');
+                      setPasteIssues([]);
+                      try {
+                        const eml = looksLikeEml(paste);
+                        const envelope = eml ? parseEmlEnvelope(paste) : {};
+                        const text = eml ? extractTextFromEml(paste) || paste : paste;
+                        const response = await fetch('/api/booking-intake', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            source: eml && envelope.mailbox ? 'email' : 'staff_paste',
+                            text,
+                            command_id: crypto.randomUUID(),
+                            from_address: envelope.from_address,
+                            subject: envelope.subject,
+                            mailbox: envelope.mailbox,
+                            filename: eml ? 'quick-paste.eml' : undefined,
+                          }),
+                        });
+                        const result = await response.json();
+                        if (!response.ok) throw new Error(result.error || 'Intake draft failed');
+                        setPasteIssues([
+                          `Draft saved${result.title ? ` (${result.title})` : ''} — open from Drafts to finish.`,
+                        ]);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'Intake draft failed');
+                      } finally {
+                        setBusy(false);
+                      }
+                    })();
+                  }}
+                >
+                  Save as intake draft
+                </button>
+              </div>
+              {pasteIssues.length > 0 ? (
+                <ul className="quick-paste-issues" aria-live="polite">
+                  {pasteIssues.map((issue, i) => (
+                    <li key={i}>{issue}</li>
                   ))}
-                </dl>
-              </details>
-            )}
+                </ul>
+              ) : null}
+            </div>
           </details>
           <nav className="booking-section-nav" aria-label="Booking sections">
             {[
@@ -1841,49 +2104,68 @@ export default function BookingEntry(props: Props) {
               <h3 className="form-section-title">
                 <span>1</span> Customer & Travelers<small>Who is billed and who is traveling</small>
               </h3>
-              {entity('customer_id', 'Customer', 'parties', 'party', { roles: ['customer'] })}
+              <div
+                ref={customerFieldRef}
+                className={
+                  customerMissing ? 'booking-field-wrap is-invalid full' : 'booking-field-wrap full'
+                }
+              >
+                {entity('customer_id', 'Customer', 'parties', 'party', { roles: ['customer'] })}
+                {customerMissing ? (
+                  <small className="field-hint-error" role="alert">
+                    Select a customer here, or use Save Draft if this booking is still incomplete.
+                  </small>
+                ) : null}
+              </div>
               {can('manage_commissions') && (
-                <details className="optional-block" open={Boolean(v.referring_organization_id)}>
-                  <OptionalSummary
-                    title="Referring organization (affiliate)"
-                    hint="Optional — applies that org’s accepted deal as Commission Payable"
-                    filled={v.referring_organization_id ? 1 : 0}
-                  />
-                  <Field label="Referring organization (affiliate)" full>
-                    <SearchableSelect
-                      id="entry-referring_organization_id"
-                      label="Referring organization (affiliate)"
-                      value={v.referring_organization_id ?? ''}
-                      options={[
-                        {
-                          value: '',
-                          label: 'None — no affiliate on this booking',
-                        },
-                        ...(state.referralOrganizations ?? []).map((r: R) => ({
-                          value: r.id,
-                          label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
-                            r.terms?.calculation === 'fixed'
-                              ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
-                              : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
-                          }`,
-                        })),
-                      ]}
-                      onChange={(id) => change('referring_organization_id', id || '')}
-                      emptyLabel="No matching organization — pick None or set up Partnerships"
-                      hideCount
+                <>
+                  <p className="full booking-commission-model">
+                    <strong>Affiliate on this booking</strong> (below) = Padova owes that org.
+                    After Save, <strong>Add commission</strong> = who owes Padova (IATA ~90% and
+                    optional secondary). Keep those three lines separate — never one combined amount.
+                  </p>
+                  <details className="optional-block" open={Boolean(v.referring_organization_id)}>
+                    <OptionalSummary
+                      title="Referring organization (affiliate)"
+                      hint="Optional — applies that org’s accepted deal as Commission Payable"
+                      filled={v.referring_organization_id ? 1 : 0}
                     />
-                    <small>
-                      Marks who referred this booking and creates the payable Padova owes that org
-                      (manual quarterly). Who owes Padova (IATA / secondary) is added after Save via
-                      Add commission — not duplicated here.
-                      {!state.partnershipsEnabled
-                        ? ' Partnerships CRM is not installed in this database.'
-                        : !(state.referralOrganizations ?? []).length
-                          ? ' No orgs with accepted agreement + accounting payee yet — set up in Partnerships first.'
-                          : ''}
-                    </small>
-                  </Field>
-                </details>
+                    <Field label="Referring organization (affiliate)" full>
+                      <SearchableSelect
+                        id="entry-referring_organization_id"
+                        label="Referring organization (affiliate)"
+                        value={v.referring_organization_id ?? ''}
+                        options={[
+                          {
+                            value: '',
+                            label: 'None — no affiliate on this booking',
+                          },
+                          ...(state.referralOrganizations ?? []).map((r: R) => ({
+                            value: r.id,
+                            label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
+                              r.terms?.calculation === 'fixed'
+                                ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
+                                : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
+                            }`,
+                          })),
+                        ]}
+                        onChange={(id) => change('referring_organization_id', id || '')}
+                        emptyLabel="No matching organization — pick None or set up Partnerships"
+                        hideCount
+                      />
+                      <small>
+                        Marks who referred this booking and creates the payable Padova owes that org
+                        (manual quarterly). Who owes Padova (IATA / secondary) is added after Save via
+                        Add commission — not duplicated here.
+                        {!state.partnershipsEnabled
+                          ? ' Partnerships CRM is not installed in this database.'
+                          : !(state.referralOrganizations ?? []).length
+                            ? ' No orgs with accepted agreement + accounting payee yet — set up in Partnerships first.'
+                            : ''}
+                      </small>
+                    </Field>
+                  </details>
+                </>
               )}
               <Field label="Travelers" full>
                 <div className="traveler-chips">
@@ -2243,191 +2525,207 @@ export default function BookingEntry(props: Props) {
                   {text('location', 'City / Location')}
                   <details
                     className="hotel-directory-lookup full"
-                    open={
-                      !!hotelDirectoryNote ||
-                      hotelDirectoryHits.length > 0 ||
-                      !!hotelDirectoryQuery.trim()
+                    open={hotelTipsOpen}
+                    onToggle={(e) =>
+                      setHotelTipsOpen((e.currentTarget as HTMLDetailsElement).open)
                     }
                   >
                     <summary>
-                      Optional: corp / IATA tips for this property
-                      <small>
-                        Not a second hotel field — uses Property / Hotel + City above
-                      </small>
+                      <span className="hotel-directory-lookup-title">
+                        <strong>Corp / IATA tips</strong>
+                        <small>Optional · uses Property and City above · never posts money</small>
+                      </span>
                     </summary>
-                    <label className="field">
-                      <span>Search corp code / IATA / other name (optional)</span>
-                      <input
-                        type="text"
-                        value={hotelDirectoryQuery}
-                        onChange={(e) => setHotelDirectoryQuery(e.target.value)}
-                        placeholder="Only if different from Property — e.g. corp code or IATA"
-                        disabled={busy}
-                        aria-label="Hotel directory search override"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="btn small"
-                      disabled={
-                        busy ||
-                        !(
-                          String(v.location || '').trim() ||
-                          hotelDirectoryQuery.trim() ||
-                          String(selectedProvider?.name || '').trim() ||
-                          String(v.intake_provider_label || '').trim()
-                        )
-                      }
-                      onClick={() => {
-                        void (async () => {
-                          setHotelDirectoryNote('');
-                          setHotelDirectoryHits([]);
-                          try {
-                            const location = String(v.location || '').trim();
-                            const q =
+                    <div className="hotel-directory-lookup-body">
+                      <div className="hotel-directory-lookup-row">
+                        <label className="hotel-directory-lookup-field">
+                          <span>Search override</span>
+                          <input
+                            type="text"
+                            value={hotelDirectoryQuery}
+                            onChange={(e) => setHotelDirectoryQuery(e.target.value)}
+                            placeholder="Corp code, IATA, or other name (if different from Property)"
+                            disabled={busy}
+                            aria-label="Hotel directory search override"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="btn primary small hotel-directory-lookup-go"
+                          disabled={
+                            busy ||
+                            !(
+                              String(v.location || '').trim() ||
                               hotelDirectoryQuery.trim() ||
                               String(selectedProvider?.name || '').trim() ||
-                              String(v.intake_provider_label || '').trim();
-                            const params = new URLSearchParams();
-                            if (location) params.set('location', location);
-                            if (q) params.set('q', q);
-                            if (location && q) params.set('match', 'any');
-                            if (!location && !q) {
-                              setHotelDirectoryNote(
-                                'Pick Property / Hotel or enter City first, then look up tips.',
-                              );
-                              return;
-                            }
-                            const response = await fetch(`/api/hotel-directory?${params}`);
-                            const data = await response.json();
-                            if (!response.ok)
-                              throw new Error(data.error || 'Hotel directory lookup failed');
-                            if (!data.enabled) {
-                              setHotelDirectoryNote(
-                                data.note ||
-                                  'Hotel directory is not installed in this database yet.',
-                              );
-                              return;
-                            }
-                            setHotelDirectoryHits(data.hotels ?? []);
-                            if (!(data.hotels ?? []).length) {
-                              if (!data.total_active) {
-                                setHotelDirectoryNote(
-                                  'Hotel directory catalog is empty. Add hotels under Partnerships → Hotels by location (tips only — does not post money).',
-                                );
-                              } else {
-                                setHotelDirectoryNote(
-                                  location && q
-                                    ? 'No directory match for that city or hotel name. Try the hotel name alone, or add it under Partnerships → Hotels.'
-                                    : location
-                                      ? 'No directory hotels for that city. Add one under Partnerships → Hotels by location.'
-                                      : 'No directory match for that hotel name / corp / IATA. Add it under Partnerships → Hotels.',
-                                );
-                              }
-                            }
-                          } catch (err) {
-                            setHotelDirectoryNote(
-                              err instanceof Error ? err.message : 'Hotel directory lookup failed',
-                            );
+                              String(v.intake_provider_label || '').trim()
+                            )
                           }
-                        })();
-                      }}
-                    >
-                      Look up corp / IATA tips
-                    </button>
-                    <small className="muted">
-                      Tips only (best book method, corp, IATA). Does not replace Property / Hotel and
-                      does not post money.
-                    </small>
-                    {hotelDirectoryNote && <p role="status">{hotelDirectoryNote}</p>}
-                    {hotelDirectoryHits.length > 0 && (
-                      <div className="hotel-directory-hits">
-                        {hotelDirectoryHits.slice(0, 8).map((h) => (
-                          <button
-                            type="button"
-                            className="btn small"
-                            key={h.id}
-                            onClick={() => {
-                              void (async () => {
-                                const tip = `Hotel directory: ${h.hotel_name} — best book: ${
-                                  h.best_book_method || 'n/a'
-                                }${h.corporate_code ? `; corp ${h.corporate_code}` : ''}${
-                                  h.iata_code ? `; IATA ${h.iata_code}` : ''
-                                }${
-                                  h.hotel_commission
-                                    ? `; hotel commission ${h.hotel_commission}`
-                                    : ''
-                                }${h.discounts ? `; discounts ${h.discounts}` : ''}`;
-                                setV((old) => ({
-                                  ...old,
-                                  location: h.location || old.location,
-                                  summary_override: true,
-                                  reservation_summary:
-                                    h.hotel_name || old.reservation_summary || '',
-                                  intake_provider_label: h.hotel_name || old.intake_provider_label,
-                                  ...(h.party_id ? { provider_id: h.party_id } : {}),
-                                }));
-                                if (h.party_id) {
-                                  setExtra((old) => ({
-                                    ...old,
-                                    parties: [
-                                      ...(old.parties ?? []).filter((p: R) => p.id !== h.party_id),
-                                      {
-                                        id: h.party_id,
-                                        name: h.party_name || h.hotel_name,
-                                        roles: ['property'],
-                                      },
-                                    ],
-                                  }));
-                                } else if (h.hotel_name) {
-                                  try {
-                                    const response = await fetch(
-                                      `/api/directory?role=property&q=${encodeURIComponent(h.hotel_name)}`,
+                          onClick={() => {
+                            void (async () => {
+                              setHotelDirectoryNote('');
+                              setHotelDirectoryHits([]);
+                              setHotelTipsOpen(true);
+                              try {
+                                const location = String(v.location || '').trim();
+                                const q =
+                                  hotelDirectoryQuery.trim() ||
+                                  String(selectedProvider?.name || '').trim() ||
+                                  String(v.intake_provider_label || '').trim();
+                                const params = new URLSearchParams();
+                                if (location) params.set('location', location);
+                                if (q) params.set('q', q);
+                                if (location && q) params.set('match', 'any');
+                                if (!location && !q) {
+                                  setHotelDirectoryNote(
+                                    'Pick Property / Hotel or enter City first, then look up tips.',
+                                  );
+                                  return;
+                                }
+                                const response = await fetch(`/api/hotel-directory?${params}`);
+                                const data = await response.json();
+                                if (!response.ok)
+                                  throw new Error(data.error || 'Hotel directory lookup failed');
+                                if (!data.enabled) {
+                                  setHotelDirectoryNote(
+                                    data.note ||
+                                      'Hotel directory is not installed in this database yet.',
+                                  );
+                                  return;
+                                }
+                                setHotelDirectoryHits(data.hotels ?? []);
+                                if (!(data.hotels ?? []).length) {
+                                  if (!data.total_active) {
+                                    setHotelDirectoryNote(
+                                      'Catalog empty — add hotels under Partnerships → Hotels.',
                                     );
-                                    const data = await response.json().catch(() => ({}));
-                                    const results = (data.results ?? []).filter((row: R) =>
-                                      eligibleParty(row, 'property'),
+                                  } else {
+                                    setHotelDirectoryNote(
+                                      location && q
+                                        ? 'No match for that city or name. Try hotel name alone, or add under Partnerships → Hotels.'
+                                        : location
+                                          ? 'No hotels for that city in the directory.'
+                                          : 'No match for that corp / IATA / name.',
                                     );
-                                    const found = exactEligibleMatch(
-                                      results,
-                                      String(h.hotel_name),
-                                      'property',
-                                    );
-                                    if (found) {
-                                      setExtra((old) => ({
-                                        ...old,
-                                        parties: [
-                                          ...(old.parties ?? []).filter(
-                                            (p: R) => p.id !== found.id,
-                                          ),
-                                          found,
-                                        ],
-                                      }));
-                                      change('provider_id', found.id);
-                                    }
-                                  } catch {
-                                    /* tip still applied; staff can pick property */
                                   }
                                 }
-                                setPasteIssues((old) => [
-                                  ...old.filter((x) => !x.startsWith('Hotel directory:')),
-                                  tip,
-                                ]);
-                                setHotelDirectoryHits([]);
+                              } catch (err) {
                                 setHotelDirectoryNote(
-                                  `Applied directory tip for ${h.hotel_name}. Review property before Save.`,
+                                  err instanceof Error
+                                    ? err.message
+                                    : 'Hotel directory lookup failed',
                                 );
-                              })();
-                            }}
-                          >
-                            {h.hotel_name}
-                            {h.location ? ` · ${h.location}` : ''}
-                            {h.corporate_code ? ` · corp ${h.corporate_code}` : ''}
-                            {h.iata_code ? ` · IATA ${h.iata_code}` : ''}
-                          </button>
-                        ))}
+                              }
+                            })();
+                          }}
+                        >
+                          Look up tips
+                        </button>
                       </div>
-                    )}
+                      {hotelDirectoryNote ? (
+                        <p className="hotel-directory-lookup-status" role="status">
+                          {hotelDirectoryNote}
+                        </p>
+                      ) : null}
+                      {hotelDirectoryHits.length > 0 ? (
+                        <div className="hotel-directory-hits">
+                          {hotelDirectoryHits.slice(0, 8).map((h) => (
+                            <button
+                              type="button"
+                              className="hotel-directory-hit"
+                              key={h.id}
+                              onClick={() => {
+                                void (async () => {
+                                  const tip = `Hotel directory: ${h.hotel_name} — best book: ${
+                                    h.best_book_method || 'n/a'
+                                  }${h.corporate_code ? `; corp ${h.corporate_code}` : ''}${
+                                    h.iata_code ? `; IATA ${h.iata_code}` : ''
+                                  }${
+                                    h.hotel_commission
+                                      ? `; hotel commission ${h.hotel_commission}`
+                                      : ''
+                                  }${h.discounts ? `; discounts ${h.discounts}` : ''}`;
+                                  setV((old) => ({
+                                    ...old,
+                                    location: h.location || old.location,
+                                    summary_override: true,
+                                    reservation_summary:
+                                      h.hotel_name || old.reservation_summary || '',
+                                    intake_provider_label:
+                                      h.hotel_name || old.intake_provider_label,
+                                    ...(h.party_id ? { provider_id: h.party_id } : {}),
+                                  }));
+                                  if (h.party_id) {
+                                    setExtra((old) => ({
+                                      ...old,
+                                      parties: [
+                                        ...(old.parties ?? []).filter(
+                                          (p: R) => p.id !== h.party_id,
+                                        ),
+                                        {
+                                          id: h.party_id,
+                                          name: h.party_name || h.hotel_name,
+                                          roles: ['property'],
+                                        },
+                                      ],
+                                    }));
+                                  } else if (h.hotel_name) {
+                                    try {
+                                      const response = await fetch(
+                                        `/api/directory?role=property&q=${encodeURIComponent(h.hotel_name)}`,
+                                      );
+                                      const data = await response.json().catch(() => ({}));
+                                      const results = (data.results ?? []).filter((row: R) =>
+                                        eligibleParty(row, 'property'),
+                                      );
+                                      const found = exactEligibleMatch(
+                                        results,
+                                        String(h.hotel_name),
+                                        'property',
+                                      );
+                                      if (found) {
+                                        setExtra((old) => ({
+                                          ...old,
+                                          parties: [
+                                            ...(old.parties ?? []).filter(
+                                              (p: R) => p.id !== found.id,
+                                            ),
+                                            found,
+                                          ],
+                                        }));
+                                        change('provider_id', found.id);
+                                      }
+                                    } catch {
+                                      /* tip still applied; staff can pick property */
+                                    }
+                                  }
+                                  setPasteIssues((old) => [
+                                    ...old.filter((x) => !x.startsWith('Hotel directory:')),
+                                    tip,
+                                  ]);
+                                  setHotelDirectoryHits([]);
+                                  setHotelDirectoryNote(
+                                    `Tip applied for ${h.hotel_name}. Review property before Save.`,
+                                  );
+                                })();
+                              }}
+                            >
+                              <strong>{h.hotel_name}</strong>
+                              <span>
+                                {[
+                                  h.location,
+                                  h.corporate_code ? `corp ${h.corporate_code}` : '',
+                                  h.iata_code ? `IATA ${h.iata_code}` : '',
+                                  h.best_book_method ? `book ${h.best_book_method}` : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </details>
                 </>
               )}
@@ -3812,16 +4110,6 @@ export default function BookingEntry(props: Props) {
           </p>
         </div>
         <div className="modal-footer">
-          {error && (
-            <p className="form-error form-error-footer" role="alert">
-              {error}
-            </p>
-          )}
-          {dateOrderIssue && !error && (
-            <p className="form-error form-error-footer" role="alert">
-              {dateOrderIssue}
-            </p>
-          )}
           <div className="modal-footer-actions">
             <button
               type="button"

@@ -38,7 +38,16 @@ export type InboundEmailMessage = {
 export type EmailPollResult = {
   mailbox: string;
   scanned: number;
-  created: Array<{ id: string; title: string; message_id: string; subject?: string }>;
+  created: Array<{
+    id: string;
+    title: string;
+    message_id: string;
+    subject?: string;
+    live_booking?: boolean;
+    booking_id?: string;
+    booking_code?: string;
+    ai_summary?: string;
+  }>;
   skipped: Array<{ message_id: string; reason: string; subject?: string }>;
   errors: Array<{ message_id?: string; error: string }>;
 };
@@ -430,17 +439,23 @@ export async function pollEmailIntakeMailboxes(
             }
             continue;
           }
+          const { afterIntakeDraftSaved } = await import('./intake-after-save');
           for (const built of shaped) {
             const saved = await execute(db, staff, {
               id: crypto.randomUUID(),
               kind: 'booking_draft',
               data: { title: built.title, entry: built.entry },
             });
+            const promote = await afterIntakeDraftSaved(db, staff, String(saved.id), built);
             result.created.push({
               id: String(saved.id),
               title: built.title,
               message_id: msg.id,
               subject: msg.subject,
+              live_booking: promote.live,
+              booking_id: promote.live ? promote.booking_id : undefined,
+              booking_code: promote.live ? promote.booking_code : undefined,
+              ai_summary: promote.summary,
             });
           }
           if (markRead) {

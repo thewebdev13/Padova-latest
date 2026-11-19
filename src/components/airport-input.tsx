@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { fixedMenuStyleFromRect } from '@/lib/fixed-menu-style';
 const airports = [
   ['EWR', 'Newark'],
   ['JFK', 'New York JFK'],
@@ -48,18 +49,7 @@ export default function AirportInput({
     const place = () => {
       const rect = input.current?.getBoundingClientRect();
       if (!rect) return;
-      const maxHeight = Math.min(280, Math.max(120, window.innerHeight - rect.bottom - 12));
-      const width = Math.max(rect.width, 220);
-      let left = rect.left;
-      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-      setMenuStyle({
-        position: 'fixed',
-        top: rect.bottom + 4,
-        left,
-        width,
-        maxHeight,
-        zIndex: 1200,
-      });
+      setMenuStyle(fixedMenuStyleFromRect(rect));
     };
     place();
     window.addEventListener('resize', place);
@@ -99,7 +89,7 @@ export default function AirportInput({
           setOpen(true);
         }}
         onBlur={() => {
-          blurClose.current = window.setTimeout(() => setOpen(false), 180);
+          blurClose.current = window.setTimeout(() => setOpen(false), 250);
         }}
         onChange={(e) => {
           setSearching(true);

@@ -7,6 +7,8 @@ import { readJSON } from '@/lib/http';
 import { redactOperationalText } from '@/lib/operational-redaction';
 import { databaseUnavailable, temporarilyUnavailable } from '@/lib/service-errors';
 import { AccessError } from '@/lib/users';
+import { afterIntakeDraftSaved } from '@/lib/intake-after-save';
+import { aiIntakeStatus } from '@/lib/claude-intake';
 
 /** Report mailbox allow-list and whether Workspace OAuth poller env is present. */
 export async function GET() {
@@ -42,11 +44,13 @@ export async function POST(request: Request) {
       message_id: body.message_id ? String(body.message_id) : undefined,
     });
     const commandId = String(body.command_id || crypto.randomUUID());
-    const result = await execute(await database(), actor, {
+    const db = await database();
+    const result = await execute(db, actor, {
       id: commandId,
       kind: 'booking_draft',
       data: { title: built.title, entry: built.entry },
     });
+    const promote = await afterIntakeDraftSaved(db, actor, String(result.id), built);
     return NextResponse.json(
       {
         id: result.id,
@@ -55,7 +59,14 @@ export async function POST(request: Request) {
         recognized_fields: built.recognized_fields,
         draft: true,
         posted: false,
+        posts_money: false,
+        live_booking: promote.live,
+        booking_id: promote.live ? promote.booking_id : undefined,
+        booking_code: promote.live ? promote.booking_code : undefined,
+        ai_summary: promote.summary,
+        ai_promote_reason: promote.live ? undefined : promote.reason,
         intake: emailIntakeStatus(),
+        ai: aiIntakeStatus(),
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );

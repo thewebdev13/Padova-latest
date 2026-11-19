@@ -17,7 +17,8 @@ export function intakeChannelBadge(source: IntakeChannelSource): string {
     case 'whatsapp':
       return 'WhatsApp intake';
     case 'instinct':
-      return 'Instinct intake';
+      // Unused path (PC helper only) — do not show product name in staff UI
+      return 'Intake';
     case 'staff_upload':
       return 'File intake';
     case 'staff_paste':

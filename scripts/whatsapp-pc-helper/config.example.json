@@ -2,5 +2,9 @@
   "url": "https://qa.padovatravel.com/api/booking-intake/whatsapp",
   "token": "REPLACE-WITH-SAME-TOKEN-AS-SERVER",
   "actor_id": "REPLACE-WITH-ACTIVE-STAFF-UUID",
-  "session_label": "owner-pc-helper"
+  "session_label": "owner-pc-helper",
+  "allow_owner_alerts": true,
+  "owner_phones": ["9725XXXXXXXX"],
+  "alert_interval_minutes": 240,
+  "reminders_url": "https://qa.padovatravel.com/api/ai/reminders/bridge"
 }

@@ -12,6 +12,11 @@ import { inferLooseIntakeHints, mergeLooseIntakeHints } from './intake-email-hin
 import { UNREAD_FILE_MESSAGE } from './intake-preview';
 import { redactOperationalText } from './operational-redaction';
 import { normalizePasteValue, parseQuickPaste } from './quick-paste';
+import {
+  aiDisclaimerLine,
+  aiIntakeEnabled,
+  extractBookingPasteWithClaude,
+} from './claude-intake';
 
 export {
   csvToIntakeBlocks,
@@ -46,6 +51,14 @@ export type IntakeProvenance = {
   mailbox?: string;
   entry_index?: number;
   entry_count?: number;
+  ai?: {
+    provider: 'openai' | 'anthropic' | 'claude';
+    used: boolean;
+    model: string | null;
+    skipped_reason: string | null;
+    error: string | null;
+    disclaimer: string | null;
+  };
 };
 
 const TEXT_TYPES = new Set([
@@ -175,8 +188,35 @@ export async function buildIntakeDraft(input: {
   }
 
   const redacted = redactOperationalText(text).slice(0, 20000);
+  let workingText = redacted;
+  let aiUsed = false;
+  let aiModelName: string | undefined;
+  let aiProviderName: 'openai' | 'anthropic' | undefined;
+  let aiError: string | undefined;
+  let aiSkipped: string | undefined;
+  // AI enrich for email/WA/instinct free-form (OpenAI or Claude from server key).
+  const tryAi =
+    aiIntakeEnabled() &&
+    Boolean(redacted.trim()) &&
+    (input.source === 'email' ||
+      input.source === 'whatsapp' ||
+      input.source === 'instinct' ||
+      String(process.env.PADOVA_AI_INTAKE_ALL_SOURCES || '').trim() === '1');
+  if (tryAi) {
+    const extracted = await extractBookingPasteWithClaude(redacted, {
+      subject: input.subject,
+    });
+    aiSkipped = extracted.skipped_reason;
+    aiError = extracted.error;
+    aiModelName = extracted.model;
+    aiProviderName = extracted.provider;
+    if (extracted.used && extracted.paste.trim()) {
+      workingText = extracted.paste;
+      aiUsed = true;
+    }
+  }
   const preview = parseQuickPaste(
-    redacted || 'Notes: Intake with no extractable Field: Value lines',
+    workingText || 'Notes: Intake with no extractable Field: Value lines',
   );
   // Free-form hotel enquiry / purchase mail rarely has Field: Value — fill empty slots only.
   const looseHints = inferLooseIntakeHints({
@@ -189,6 +229,7 @@ export async function buildIntakeDraft(input: {
     ...preview.issues,
     ...preview.unknown.map((u) => `${u.label}: ${u.value}`),
     ...(extract_note ? [extract_note] : []),
+    ...(aiError ? [`Claude extract note: ${aiError}`] : []),
   ];
   if (!redacted.trim() && !filename)
     issues.push('Provide plain text or a text file; intake creates a draft only');
@@ -268,15 +309,36 @@ export async function buildIntakeDraft(input: {
     intake_provider_label: propertyLabel || airlineLabel || '',
     notes: [
       typeof fields.notes === 'string' ? fields.notes : '',
+      aiUsed ? aiDisclaimerLine(aiProviderName) : '',
       issues.length ? `Intake review notes:\n- ${issues.slice(0, 20).join('\n- ')}` : '',
     ]
       .filter(Boolean)
       .join('\n\n'),
-    intake_provenance: provenance,
+    intake_provenance: {
+      ...provenance,
+      ...(aiUsed || aiSkipped || aiError
+        ? {
+            ai: {
+              provider: aiProviderName ?? 'openai',
+              used: aiUsed,
+              model: aiModelName ?? null,
+              skipped_reason: aiSkipped ?? null,
+              error: aiError ?? null,
+              disclaimer: aiUsed ? aiDisclaimerLine(aiProviderName) : null,
+            },
+          }
+        : {}),
+    },
     intake_raw_text: redacted,
-    recovery_paste: redacted,
+    recovery_paste: aiUsed ? workingText : redacted,
     intake_field_hints: fields,
     intake_unresolved: preview.unknown,
+    ...(aiUsed
+      ? {
+          ai_created: true,
+          ai_disclaimer: aiDisclaimerLine(aiProviderName),
+        }
+      : {}),
     intake_party_hints: {
       customer: fields.customer ?? null,
       traveler: fields.traveler ?? null,
@@ -442,10 +504,7 @@ export async function buildIntakeDraftsFromEntries(
   );
 }
 
-/**
- * Owner boxes + optional QA/dev mailbox from `PADOVA_EMAIL_INTAKE_TEST_MAILBOX`
- * (developer Gmail for auto-poll testing; remove / replace with client later).
- */
+/** Owner mailboxes + optional `PADOVA_EMAIL_INTAKE_TEST_MAILBOX` (local QA only). */
 export function intakeEmailMailboxes(): string[] {
   const boxes: string[] = [...INTAKE_EMAIL_MAILBOXES];
   const test = process.env.PADOVA_EMAIL_INTAKE_TEST_MAILBOX?.trim().toLowerCase();

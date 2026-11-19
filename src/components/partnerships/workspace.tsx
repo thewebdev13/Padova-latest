@@ -1066,6 +1066,13 @@ export default function Partnerships() {
                 ))}
               </tbody>
             </table>
+            {!(hotels.length ? hotels : state?.hotels ?? []).length &&
+              state?.enabled !== false && (
+                <p className={styles.empty}>
+                  No hotels yet. Use + Add hotel for location, corp code, IATA, commission, and best
+                  book tips. Booking form can look these up — tips only, never posts money.
+                </p>
+              )}
           </div>
           <footer className={styles.pager}>
             <span>{(hotels.length ? hotels : state?.hotels ?? []).length} hotels (max 500)</span>

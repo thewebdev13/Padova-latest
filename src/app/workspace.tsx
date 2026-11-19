@@ -105,8 +105,29 @@ import {
   ShieldCheck,
   Landmark,
   Coins,
+  Mail,
+  MessageCircle,
+  Trash2,
 } from 'lucide-react';
 type R = Record<string, any>;
+function draftProductIcon(product: unknown) {
+  const p = String(product || '').toLowerCase();
+  if (p.includes('hotel')) return Hotel;
+  if (p.includes('car')) return Car;
+  if (p.includes('flight')) return Plane;
+  if (p.includes('voucher')) return Ticket;
+  return FileText;
+}
+function draftChannelIcon(draft: R) {
+  if (draft.kind === 'voucher_sale') return Ticket;
+  if (draft.kind === 'historical_booking') return History;
+  const source = String(draft.intake_source || '').toLowerCase();
+  if (source.includes('email') || source.includes('gmail')) return Mail;
+  if (source.includes('whatsapp')) return MessageCircle;
+  if (source.includes('file') || source.includes('upload') || source.includes('staff'))
+    return Upload;
+  return FileText;
+}
 const refundValue = (refund: R, value: any) =>
   formatQuantity(Number(value), refund.unit ?? 'money');
 const money = (v: any) =>
@@ -527,6 +548,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         components: draft!.components,
         pending_traveler: draft!.traveler,
         recovery_paste: draft!.paste,
+        resume_recovery: true,
       },
     });
     setToast('Your unfinished booking has been restored.');
@@ -776,25 +798,23 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         };
       }
     }
-    if (kind === 'booking' && s?.actor?.id) clearBookingRecoverySnooze(s.actor.id);
-    const draft =
-      kind === 'booking' && !defaults.draft_id && s?.actor?.id
-        ? readBookingRecovery(s.actor.id)
-        : null;
-    setModal(
-      draft
-        ? {
-            kind,
-            key: draft.commandKey,
-            defaults: {
-              ...draft.values,
-              components: draft.components,
-              pending_traveler: draft.traveler,
-              recovery_paste: draft.paste,
-            },
-          }
-        : { kind, defaults, key: crypto.randomUUID() },
-    );
+    if (kind === 'booking' && s?.actor?.id) {
+      clearBookingRecoverySnooze(s.actor.id);
+      // Explicit New Booking starts blank — do not reuse prior paste/form recovery.
+      // Continue Draft / intake apply still pass draft_id or intake fields in defaults.
+      const continuing =
+        Boolean(defaults.draft_id) ||
+        Boolean(defaults.intake_apply_on_open) ||
+        Boolean(defaults.intake_raw_text) ||
+        Boolean(defaults.recovery_paste) ||
+        defaults.resume_recovery === true;
+      if (!continuing) {
+        clearBookingRecovery(s.actor.id);
+        setModal({ kind, defaults, key: crypto.randomUUID() });
+        return;
+      }
+    }
+    setModal({ kind, defaults, key: crypto.randomUUID() });
   };
   const command = async (kind: string, data: R, key = crypto.randomUUID()) => {
     const r = await fetch('/api/commands', {
@@ -944,8 +964,76 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       .join(' ')
       .toLowerCase()
       .includes(query.toLowerCase());
+  const openDraftFromSearch = async (draft: R) => {
+    setQuery('');
+    setError('');
+    try {
+      if (draft.kind === 'voucher_sale' || draft.kind === 'historical_booking') {
+        await openRecord('draft', draft.id);
+        return;
+      }
+      const response = await fetch(
+        `/api/state?type=draft&id=${encodeURIComponent(draft.id)}`,
+        { cache: 'no-store' },
+      );
+      if (!response.ok) throw new Error('Unable to open this draft');
+      const loaded = await response.json();
+      if (
+        draftKind({
+          summary: loaded.entry?.summary,
+          historical_status: loaded.entry?.itinerary?.historical_reconciliation_status,
+        }) !== 'booking'
+      ) {
+        setSelected({ type: 'draft', id: loaded.id });
+        setDetail(loaded);
+      } else
+        action('booking', {
+          ...loaded.entry,
+          draft_id: loaded.id,
+          intake_apply_on_open: true,
+        });
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const draftMatches = (d: R) =>
+    [
+      d.display_title,
+      d.title,
+      d.summary,
+      d.intake_source,
+      d.intake_from,
+      d.intake_subject,
+      d.intake_mailbox,
+      d.intake_customer,
+      d.intake_product,
+      d.intake_route,
+      d.intake_pnr,
+      d.kind,
+    ]
+      .filter((v) => typeof v === 'string' && v)
+      .join(' ')
+      .toLowerCase()
+      .includes(query.toLowerCase());
   const searchHits = query.trim()
     ? [
+        ...(s.bookingDrafts ?? []).filter(draftMatches).map((d: R) => ({
+          id: d.id,
+          label: `Draft · ${d.display_title || d.title || d.summary || 'Untitled'}`,
+          sub: [
+            d.kind === 'voucher_sale'
+              ? 'Voucher sale'
+              : d.kind === 'historical_booking'
+                ? 'Historical'
+                : intakeChannelBadge(d.intake_source),
+            d.intake_from || d.intake_mailbox || d.intake_customer || '',
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          open: () => {
+            void openDraftFromSearch(d);
+          },
+        })),
         ...bks.filter(matches).map((b) => ({
           type: 'booking',
           id: b.id,
@@ -3612,7 +3700,6 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   ['All', 'All'],
                   ['email', 'Email'],
                   ['whatsapp', 'WhatsApp'],
-                  ['instinct', 'Instinct'],
                   ['staff', 'Staff file/paste'],
                   ['manual', 'Manual'],
                   ['historical', 'Historical'],
@@ -3642,64 +3729,68 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </p>
                   );
                 }
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 12);
                 return (
                   <>
-                    {draftPager.items.map((draft: R) => (
+                    {draftPager.items.map((draft: R) => {
+                      const title =
+                        draft.display_title ??
+                        (draft.kind === 'voucher_sale' ? draft.summary : draft.title) ??
+                        'Untitled draft';
+                      const metaValue = (value: unknown, empty = '—') => {
+                        const text = String(value ?? '').trim();
+                        return text || empty;
+                      };
+                      const ProductIcon = draftProductIcon(draft.intake_product);
+                      const ChannelIcon = draftChannelIcon(draft);
+                      const channelLabel =
+                        draft.kind === 'voucher_sale'
+                          ? 'Voucher sale'
+                          : draft.kind === 'historical_booking'
+                            ? 'Historical'
+                            : intakeChannelBadge(draft.intake_source);
+                      return (
                       <article key={draft.id} className="intake-draft-card">
                         <div className="intake-draft-card-top">
-                          <strong>
-                            {draft.display_title ??
-                              (draft.kind === 'voucher_sale' ? draft.summary : draft.title)}
-                          </strong>
-                          <div className="intake-draft-card-top-actions">
-                            <span className="intake-draft-badge">
-                              {draft.kind === 'voucher_sale'
-                                ? 'Voucher sale'
-                                : draft.kind === 'historical_booking'
-                                  ? 'Historical'
-                                  : intakeChannelBadge(draft.intake_source)}
-                            </span>
-                            {canAction('booking_draft') && (
-                              <button
-                                type="button"
-                                className="btn small intake-draft-delete"
-                                disabled={busy}
-                                aria-label="Delete draft"
-                                onClick={async (e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  const label =
-                                    draft.display_title ||
-                                    draft.title ||
-                                    draft.summary ||
-                                    'this draft';
-                                  if (
-                                    !window.confirm(
-                                      `Delete “${String(label).slice(0, 80)}”? This removes the unposted draft only — not live bookings or money.`,
-                                    )
+                          <span className="intake-draft-badge">
+                            <ChannelIcon size={11} aria-hidden />
+                            {channelLabel}
+                          </span>
+                          {canAction('booking_draft') && (
+                            <button
+                              type="button"
+                              className="btn small intake-draft-delete"
+                              disabled={busy}
+                              aria-label="Delete draft"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const label = title || 'this draft';
+                                if (
+                                  !window.confirm(
+                                    `Delete “${String(label).slice(0, 80)}”? This removes the unposted draft only — not live bookings or money.`,
                                   )
-                                    return;
-                                  setBusy(true);
-                                  try {
-                                    await command('booking_draft_delete', {
-                                      draft_id: draft.id,
-                                    });
-                                    setSelected(null);
-                                    setDetail(null);
-                                    await refresh();
-                                    setToast('Draft deleted.');
-                                  } catch (err) {
-                                    setError((err as Error).message);
-                                  } finally {
-                                    setBusy(false);
-                                  }
-                                }}
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
+                                )
+                                  return;
+                                setBusy(true);
+                                try {
+                                  await command('booking_draft_delete', {
+                                    draft_id: draft.id,
+                                  });
+                                  setSelected(null);
+                                  setDetail(null);
+                                  await refresh();
+                                  setToast('Draft deleted.');
+                                } catch (err) {
+                                  setError((err as Error).message);
+                                } finally {
+                                  setBusy(false);
+                                }
+                              }}
+                            >
+                              <Trash2 size={13} aria-hidden />
+                            </button>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -3744,6 +3835,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             }
                           }}
                         >
+                          <div className="intake-draft-card-heading">
+                            <span className="intake-draft-product-icon" aria-hidden>
+                              <ProductIcon size={16} />
+                            </span>
+                            <strong className="intake-draft-card-title">{title}</strong>
+                          </div>
                           {(draft.intake_from ||
                             draft.intake_subject ||
                             draft.intake_mailbox ||
@@ -3762,25 +3859,27 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             <div>
                               <dt>Customer</dt>
                               <dd>
-                                {draft.intake_customer ||
-                                  (draft.intake_source ? '—' : 'Not linked yet')}
+                                {metaValue(
+                                  draft.intake_customer,
+                                  draft.intake_source ? '—' : 'Not linked yet',
+                                )}
                               </dd>
                             </div>
                             <div>
                               <dt>Product</dt>
-                              <dd>{draft.intake_product || '—'}</dd>
+                              <dd>{metaValue(draft.intake_product)}</dd>
                             </div>
                             <div>
-                              <dt>Route / place</dt>
-                              <dd>{draft.intake_route || '—'}</dd>
+                              <dt>Route</dt>
+                              <dd>{metaValue(draft.intake_route)}</dd>
                             </div>
                             <div>
                               <dt>Travel</dt>
-                              <dd>{draft.intake_travel_start || '—'}</dd>
+                              <dd>{metaValue(draft.intake_travel_start)}</dd>
                             </div>
                             <div>
                               <dt>PNR</dt>
-                              <dd>{draft.intake_pnr || '—'}</dd>
+                              <dd>{metaValue(draft.intake_pnr)}</dd>
                             </div>
                             <div>
                               <dt>Sale</dt>
@@ -3793,16 +3892,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           </dl>
                           <span className="intake-draft-action">
                             {draft.kind === 'voucher_sale'
-                              ? 'Review voucher details'
+                              ? 'Review voucher'
                               : draft.kind === 'historical_booking'
-                                ? 'View historical details'
+                                ? 'View details'
                                 : draft.intake_source
-                                  ? `Continue intake${draft.intake_filename ? ` · ${draft.intake_filename}` : ''}`
+                                  ? 'Continue intake'
                                   : 'Continue draft'}
+                            <ArrowRight size={13} aria-hidden />
                           </span>
                         </button>
                       </article>
-                    ))}
+                      );
+                    })}
                     <div className="intake-draft-more">
                       <ListPager
                         page={draftPager.page}
@@ -5338,19 +5439,39 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   <button
                     key={i}
                     className="search-result"
-                    onClick={() => (h.page ? go(h.page) : openRecord(h.type!, h.id!))}
+                    onClick={() =>
+                      'open' in h && h.open
+                        ? h.open()
+                        : h.page
+                          ? go(h.page)
+                          : openRecord(h.type!, h.id!)
+                    }
                   >
                     {h.label}
                     <small>{h.sub}</small>
                   </button>
                 ))
               ) : (
-                <Empty>No matching records.</Empty>
+                <Empty>
+                  {/^pdv[-\s]?\d+/i.test(query.trim()) && s.qaMode
+                    ? 'No matching records on QA. Production booking codes (PDV-…) usually live only on production — not in this QA database.'
+                    : 'No matching records.'}
+                </Empty>
               )}
             </div>
           )}
         </header>
         <div className="content">
+          {s.qaMode && !s.developmentData && (
+            <div className="demo-banner qa-host-banner">
+              <ShieldCheck size={13} />
+              <strong>QA — practice workspace</strong>
+              <span>
+                Intake and UX testing only. 2026 production books and Batch A history allocations are
+                not in this database until Owner moves work to production.
+              </span>
+            </div>
+          )}
           {s.developmentData && (
             <div className="demo-banner">
               <ShieldCheck size={13} />

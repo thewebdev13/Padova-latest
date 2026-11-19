@@ -34,7 +34,8 @@ export function calendarEntries(bookings: R[], components: R[], filter: string) 
         cancelled:
           ['Cancelled', 'Refund Pending'].includes(b.reservation_status) ||
           ['Cancelled', 'Refund Pending'].includes(c.status),
-        attention: !b.travelers || b.cost_incomplete,
+        // Missing customer sale alone must not flag supplier cost on the calendar.
+        attention: !b.travelers || Boolean(b.supplier_cost_incomplete),
       }));
   });
 }

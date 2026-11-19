@@ -1,17 +1,21 @@
-Padova WhatsApp helper (Owner PC) — read only
-=============================================
+Padova WhatsApp helper (Owner PC) — professional Baileys link
+=============================================================
 
 What this does
-- Links WhatsApp on THIS computer (like WhatsApp Web).
-- Reads incoming text only.
-- Creates booking DRAFTS in Padova for staff to approve.
-- Never sends WhatsApp messages. Never posts money by itself.
+- Links WhatsApp on THIS computer (like WhatsApp Web / Linked devices).
+- Reads incoming reservation text → Padova drafts / AI booking path.
+- Never auto-replies to customers.
+- Optional: sends YOU (Owner) reminder digests only (missing info, unpaid,
+  due tomorrow, Needs Review) — never invents money amounts.
 
 One-time setup (developer does this on your PC)
 1. Install Node.js 24 if needed.
 2. Put the Padova project folder on this PC.
-3. Copy config.example.json → config.json and fill url, token, actor_id
-   (or use .data/whatsapp-helper-config.json).
+3. Copy config.example.json → config.json and fill:
+   - url, token, actor_id (same as QA server)
+   - allow_owner_alerts: true
+   - owner_phones: your WhatsApp number(s) with country code digits only
+     example Israel: "9725XXXXXXXX"
 4. In Terminal once: npm ci
 
 Every day (you)
@@ -21,13 +25,15 @@ Every day (you)
 2. A browser page opens on this PC with a QR code.
 3. Phone: WhatsApp → Linked devices → Link a device → scan that QR.
 4. Leave the helper running and the PC on / awake.
-5. When a new chat text arrives, check Drafts in Padova and approve.
+5. Reservation chats → check Padova Drafts / bookings.
+6. If Owner alerts are on, you get a short digest on WhatsApp (not spam to clients).
 
 Stop
 - Close the Terminal window, or press Ctrl+C in that window.
 
 Important
-- This is NOT a public website login. The QR only works on this PC.
-- Unofficial link can still risk the WhatsApp account vs official Meta API.
-- First time only needs a scan; later days usually reconnect without a new QR
+- This is NOT Twilio / Meta Cloud API. It is an unofficial PC WhatsApp Web link.
+- Residual account risk vs official API — use a dedicated business phone if worried.
+- PC must stay online for intake + reminders.
+- First time needs a QR scan; later days usually reconnect without a new QR
   unless you logged out or cleared the session.

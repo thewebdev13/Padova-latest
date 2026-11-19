@@ -220,7 +220,10 @@ export default function CommissionBundleForm({
         <div className="modal-head commission-bundle-head">
           <div>
             <h2 id="commission-bundle-title">Add commission</h2>
-            <p>Commission on this booking – who pays Padova, and who Padova pays.</p>
+            <p>
+              Who owes Padova (receivable). Affiliate payout is separate — set Referring
+              organization on the booking when possible.
+            </p>
           </div>
           <button type="button" disabled={busy} onClick={onClose} aria-label="Close dialog">
             <X size={18} />
@@ -242,6 +245,14 @@ export default function CommissionBundleForm({
             />
           </label>
 
+          <p className="commission-model-hint">
+            <strong>IATA partner</strong> = agency that keeps supplier commission and owes Padova
+            ~90% of profit (mark the checkbox). <strong>Secondary</strong> = another party that also
+            owes Padova on this booking (add another payer, leave IATA unchecked).{' '}
+            <strong>Referring org</strong> = Padova owes them — prefer booking affiliate field, not
+            a second payout here.
+          </p>
+
           <div className="commission-payer-stack">
             {payers.map((p, index) => (
               <article key={index} className="commission-payer-card">
@@ -249,7 +260,9 @@ export default function CommissionBundleForm({
                   <strong className="commission-payer-title">
                     {p.is_iata_partner
                       ? `PAYER ${index + 1} · IATA PARTNER`
-                      : `PAYER ${index + 1}`}
+                      : index === 0
+                        ? `PAYER ${index + 1}`
+                        : `PAYER ${index + 1} · SECONDARY`}
                   </strong>
                   {payers.length > 1 && index > 0 && (
                     <button
@@ -261,6 +274,17 @@ export default function CommissionBundleForm({
                     </button>
                   )}
                 </header>
+
+                <label className="commission-iata-toggle">
+                  <input
+                    type="checkbox"
+                    checked={p.is_iata_partner}
+                    onChange={(e) =>
+                      updatePayer(index, { is_iata_partner: e.target.checked })
+                    }
+                  />
+                  <span>IATA partner (owes Padova the partner split — usually ~90%)</span>
+                </label>
 
                 <div className="commission-payer-row commission-payer-row--inline">
                   <label className="commission-field commission-field--payer">
@@ -328,7 +352,7 @@ export default function CommissionBundleForm({
               ])
             }
           >
-            + Add another payer
+            + Add secondary commission payer
           </button>
 
           {existingReferral ? (

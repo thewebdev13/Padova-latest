@@ -19,14 +19,24 @@ export type InboundWhatsAppMessage = {
 /** PC bridge posts here; Meta Cloud API send is out of scope. */
 export function whatsappIntakeStatus() {
   const bridgeToken = process.env.PADOVA_WHATSAPP_BRIDGE_TOKEN?.trim();
+  const ownerAlerts = /^(1|true|yes)$/i.test(
+    String(process.env.PADOVA_WHATSAPP_ALLOW_OWNER_ALERTS || '').trim(),
+  );
   return {
     mode: bridgeToken ? 'pc_bridge_token_present' : 'awaiting_owner_pc_bridge',
+    /** Customer chats: never auto-reply. */
     read_only: true,
     auto_send: false,
+    auto_reply_customers: false,
+    /** Optional Baileys send to allowlisted Owner phones only (PC helper). */
+    owner_alerts_configured: ownerAlerts,
     meta_cloud_api: false,
+    twilio: false,
     posts_money: false,
     note: bridgeToken
-      ? 'Bridge token is set. On the PC run npm run intake:whatsapp-web (QR link) or intake:whatsapp-bridge (folder). Never auto-send.'
+      ? ownerAlerts
+        ? 'PC Baileys helper: inbound → drafts; Owner-only reminder digests if owner_phones set. Never customer auto-reply.'
+        : 'Bridge token is set. Run npm run intake:whatsapp-helper on the PC. Inbound drafts only until allow_owner_alerts + owner_phones.'
       : 'Waiting on Owner PC linked WhatsApp session. Staff can still paste chat text via the shared booking-intake API with source=whatsapp.',
   };
 }

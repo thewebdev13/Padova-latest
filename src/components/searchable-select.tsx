@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react';
+import { fixedMenuStyleFromRect } from '@/lib/fixed-menu-style';
 type Option = {
   value: string;
   label: string;
@@ -78,18 +79,7 @@ export default function SearchableSelect({
     const place = () => {
       const rect = input.current?.getBoundingClientRect();
       if (!rect) return;
-      const maxHeight = Math.min(280, Math.max(120, window.innerHeight - rect.bottom - 12));
-      const width = Math.max(rect.width, 220);
-      let left = rect.left;
-      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
-      setMenuStyle({
-        position: 'fixed',
-        top: rect.bottom + 4,
-        left,
-        width,
-        maxHeight,
-        zIndex: 1200,
-      });
+      setMenuStyle(fixedMenuStyleFromRect(rect));
     };
     place();
     window.addEventListener('resize', place);
@@ -151,7 +141,7 @@ export default function SearchableSelect({
               const activeEl = document.activeElement;
               if (results.current?.contains(activeEl)) return;
               setOpen(false);
-            }, 180);
+            }, 250);
           }}
           onClick={(e) => {
             e.currentTarget.select();
