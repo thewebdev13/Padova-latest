@@ -3811,6 +3811,9 @@ export async function execute(
             ...values.itinerary,
             operational_entry: operational,
             sale_known: operational.sale_known,
+            ...(operational.intake_source
+              ? { intake_source: operational.intake_source }
+              : {}),
           };
           if (d.product === 'Flight')
             values.confirmation_status =

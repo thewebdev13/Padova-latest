@@ -6,7 +6,7 @@ export type FileTextExtract = {
   text: string;
   extractable: boolean;
   note?: string;
-  method?: 'pdf-text' | 'pdf-ocr' | 'ocr' | 'none';
+  method?: 'pdf-text' | 'pdf-ocr' | 'ocr' | 'whisper' | 'none';
 };
 
 const require = createRequire(import.meta.url);
@@ -192,14 +192,112 @@ export async function extractPdfText(
   };
 }
 
+function imageMimeFromName(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
 /**
- * Local free OCR (Tesseract.js) for confirmation screenshots.
- * Returns raw OCR text for the existing paste parser — does not invent fields.
+ * Hosted OCR via OpenAI vision (works on Vercel). Raw visible text only — no invented money.
+ */
+async function extractImageTextOpenAiVision(
+  bytes: Buffer,
+  filename = 'upload.png',
+): Promise<FileTextExtract | null> {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) return null;
+  const mime = imageMimeFromName(filename);
+  const dataUrl = `data:${mime};base64,${bytes.toString('base64')}`;
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        max_tokens: 2000,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extract all visible reservation / travel confirmation text from this screenshot exactly. Keep names, PNRs, dates, routes, amounts as shown. If unclear write Unknown. Do not invent missing money or parties. Return plain text only.',
+              },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+      }),
+    });
+    const raw = await response.text();
+    let data: { choices?: { message?: { content?: string } }[]; error?: { message?: string } };
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = {};
+    }
+    if (!response.ok) {
+      return {
+        text: '',
+        extractable: false,
+        method: 'none',
+        note: `Image “${filename}”: vision OCR failed (${response.status}${
+          data?.error?.message ? `: ${data.error.message}` : ''
+        }). ${UNREAD_FILE_MESSAGE}`,
+      };
+    }
+    const text = String(data.choices?.[0]?.message?.content || '')
+      .replace(/\u0000/g, '')
+      .trim();
+    if (!text) {
+      return {
+        text: '',
+        extractable: false,
+        method: 'none',
+        note: `Image “${filename}”: vision OCR found no text. ${UNREAD_FILE_MESSAGE}`,
+      };
+    }
+    return { text: `[Screenshot text]\n${text}`, extractable: true, method: 'ocr' };
+  } catch (err) {
+    return {
+      text: '',
+      extractable: false,
+      method: 'none',
+      note: `Image “${filename}”: vision OCR error (${
+        err instanceof Error ? err.message : 'error'
+      }). ${UNREAD_FILE_MESSAGE}`,
+    };
+  }
+}
+
+/**
+ * Screenshot OCR: OpenAI vision on hosted (Vercel); local Tesseract fallback off-cloud.
+ * Returns raw text for the paste parser — does not invent fields.
  */
 export async function extractImageTextOcr(
   bytes: Buffer,
   filename = 'upload.png',
 ): Promise<FileTextExtract> {
+  const vision = await extractImageTextOpenAiVision(bytes, filename);
+  if (vision) return vision;
+
+  // Tesseract is too heavy for Vercel serverless (FUNCTION_INVOCATION_TIMEOUT).
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return {
+      text: '',
+      extractable: false,
+      note: `Image “${filename}”: set OPENAI_API_KEY for screenshot OCR on hosted QA/prod. ${UNREAD_FILE_MESSAGE}`,
+      method: 'none',
+    };
+  }
+
   try {
     const { createWorker } = await import('tesseract.js');
     const worker = await createWorker('eng');
@@ -254,6 +352,24 @@ export async function extractBinaryIntakeText(
       };
     }
     return extractImageTextOcr(bytes, filename);
+  }
+  const { isAudioIntakeMime, extractAudioTranscript } = await import('./intake-audio-transcribe');
+  if (isAudioIntakeMime(mime, filename)) {
+    if (fast) {
+      return {
+        text: '',
+        extractable: false,
+        method: 'none',
+        note: `Audio “${filename}”: skipped in fast email poll. WhatsApp / staff intake will transcribe voice notes.`,
+      };
+    }
+    const audio = await extractAudioTranscript(bytes, filename, mime);
+    return {
+      text: audio.text,
+      extractable: audio.extractable,
+      method: audio.method,
+      note: audio.note,
+    };
   }
   return {
     text: '',

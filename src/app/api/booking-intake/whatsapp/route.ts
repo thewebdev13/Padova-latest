@@ -14,6 +14,11 @@ import {
 } from '@/lib/whatsapp-intake';
 import { afterIntakeDraftSaved } from '@/lib/intake-after-save';
 import { aiIntakeStatus } from '@/lib/claude-intake';
+import {
+  formatIntakeOwnerAlert,
+  formatWhatsAppIntakeStatusReply,
+  assessIntakeCapture,
+} from '@/lib/intake-confidence';
 
 export async function GET(request: Request) {
   try {
@@ -38,9 +43,9 @@ export async function GET(request: Request) {
 }
 
 /**
- * Incoming WhatsApp text → booking_draft (read-only bridge).
+ * Incoming WhatsApp text → booking_draft (read-only bridge) + optional live promote.
  * Auth: individual staff session OR Owner-PC bridge token header `x-padova-wa-bridge`.
- * Never sends WhatsApp; never posts money.
+ * Never auto-replies to customers. Owner alert text returned for PC helper allowlist send.
  */
 export async function POST(request: Request) {
   try {
@@ -53,7 +58,8 @@ export async function POST(request: Request) {
     }
     if (!actor && !bridge) throw new AccessError('Sign in required', 401);
 
-    const body = await readJSON(request);
+    // Base64 of up to 10 MB file ≈ 14 MB JSON; default readJSON 100 KB was rejecting real PDFs.
+    const body = await readJSON(request, 14 * 1024 * 1024);
     let bytes: Buffer | undefined;
     if (body.file_base64) {
       const raw = String(body.file_base64);
@@ -101,7 +107,21 @@ export async function POST(request: Request) {
       kind: 'booking_draft',
       data: { title: built.title, entry: built.entry },
     });
-    const promote = await afterIntakeDraftSaved(db, staff, String(result.id), built);
+    const after = await afterIntakeDraftSaved(db, staff, String(result.id), built, {
+      channel: 'whatsapp',
+      chat_or_mailbox: body.chat_name
+        ? String(body.chat_name)
+        : body.from_number
+          ? String(body.from_number)
+          : undefined,
+    });
+    const promote = after.promote;
+    const customer_status_text = formatWhatsAppIntakeStatusReply({
+      live: promote.live,
+      draft_id: String(result.id),
+      booking_code: promote.live ? promote.booking_code : undefined,
+      ai_generated: after.capture.ai_generated,
+    });
     return NextResponse.json(
       {
         id: result.id,
@@ -116,7 +136,13 @@ export async function POST(request: Request) {
         booking_id: promote.live ? promote.booking_id : undefined,
         booking_code: promote.live ? promote.booking_code : undefined,
         ai_summary: promote.summary,
+        ai_created: after.capture.ai_generated,
         ai_promote_reason: promote.live ? undefined : promote.reason,
+        intake_tags: after.capture.tags,
+        intake_confidence: after.capture.confidence,
+        intake_missing: after.capture.missing,
+        owner_alert_text: after.owner_alert_text,
+        customer_status_text,
         intake: whatsappIntakeStatus(),
         ai: aiIntakeStatus(),
       },
@@ -127,6 +153,18 @@ export async function POST(request: Request) {
       e instanceof Error ? e.message : 'WhatsApp intake failed',
     );
     console.error(message);
+    const chatter = /chatter skipped|unrelated skipped|does not look like a booking/i.test(
+      message,
+    );
+    const owner_alert_text = chatter
+      ? null
+      : formatIntakeOwnerAlert({
+          channel: 'whatsapp',
+          title: 'WhatsApp intake failed',
+          live: false,
+          capture: assessIntakeCapture({ entry: {}, issues: [message] }),
+          reason: message,
+        });
     return NextResponse.json(
       {
         error: databaseUnavailable(e)
@@ -134,6 +172,13 @@ export async function POST(request: Request) {
           : message.includes('violates')
             ? 'Operation conflicts with an existing record or database constraint'
             : message,
+        owner_alert_text,
+        skipped_chatter: chatter,
+        customer_status_text: formatWhatsAppIntakeStatusReply({
+          live: false,
+          error: message,
+          skipped_chatter: chatter,
+        }),
       },
       {
         status:

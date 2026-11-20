@@ -6,5 +6,7 @@
   "allow_owner_alerts": true,
   "owner_phones": ["9725XXXXXXXX"],
   "alert_interval_minutes": 240,
+  "react_on_seen": true,
+  "reply_intake_status": false,
   "reminders_url": "https://qa.padovatravel.com/api/ai/reminders/bridge"
 }

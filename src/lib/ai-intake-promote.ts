@@ -298,11 +298,37 @@ export async function maybePromoteIntakeToLiveBooking(
           cost_status: 'Pending',
           sale_known,
           ...(product === 'Hotel' && providerLabel ? { hotel_name: providerLabel } : {}),
+          ai_created: true,
+          created_by: 'ai',
+          ...(() => {
+            const src = String(
+              (entry.intake_provenance as { source?: string } | undefined)?.source || '',
+            ).trim();
+            return src === 'whatsapp' ||
+              src === 'email' ||
+              src === 'staff_paste' ||
+              src === 'staff_upload' ||
+              src === 'instinct'
+              ? { intake_source: src }
+              : { intake_source: 'manual' as const };
+          })(),
         },
         operational: {
           version: 1,
           trip_type: product === 'Flight' ? (trip_type as 'One Way' | 'Round Trip' | 'Multi-City') : undefined,
           draft_id,
+          intake_source: (() => {
+            const src = String(
+              (entry.intake_provenance as { source?: string } | undefined)?.source || '',
+            ).trim();
+            return src === 'whatsapp' ||
+              src === 'email' ||
+              src === 'staff_paste' ||
+              src === 'staff_upload' ||
+              src === 'instinct'
+              ? (src as 'whatsapp' | 'email' | 'staff_paste' | 'staff_upload' | 'instinct')
+              : ('manual' as const);
+          })(),
           new_travelers,
           references: refs,
           notes,

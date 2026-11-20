@@ -17,6 +17,7 @@ import {
   aiIntakeEnabled,
   extractBookingPasteWithClaude,
 } from './claude-intake';
+import { applyIntakeCaptureToEntry, assessIntakeCapture } from './intake-confidence';
 
 export {
   csvToIntakeBlocks,
@@ -148,6 +149,8 @@ export async function buildIntakeDraft(input: {
   receivedAt?: string;
   entryIndex?: number;
   entryCount?: number;
+  /** Cron time budget: skip LLM, keep pattern/rules only. */
+  skipAi?: boolean;
 }): Promise<BuiltIntakeDraft> {
   const received_at = input.receivedAt ?? new Date().toISOString();
   const bytes = input.bytes;
@@ -190,29 +193,58 @@ export async function buildIntakeDraft(input: {
   const redacted = redactOperationalText(text).slice(0, 20000);
   let workingText = redacted;
   let aiUsed = false;
+  let patternUsed = false;
+  let patternId: string | undefined;
   let aiModelName: string | undefined;
   let aiProviderName: 'openai' | 'anthropic' | undefined;
   let aiError: string | undefined;
   let aiSkipped: string | undefined;
   // AI enrich for email/WA/instinct free-form (OpenAI or Claude from server key).
   const tryAi =
+    !input.skipAi &&
     aiIntakeEnabled() &&
     Boolean(redacted.trim()) &&
     (input.source === 'email' ||
       input.source === 'whatsapp' ||
       input.source === 'instinct' ||
       String(process.env.PADOVA_AI_INTAKE_ALL_SOURCES || '').trim() === '1');
-  if (tryAi) {
-    const extracted = await extractBookingPasteWithClaude(redacted, {
-      subject: input.subject,
-    });
-    aiSkipped = extracted.skipped_reason;
-    aiError = extracted.error;
-    aiModelName = extracted.model;
-    aiProviderName = extracted.provider;
-    if (extracted.used && extracted.paste.trim()) {
-      workingText = extracted.paste;
-      aiUsed = true;
+  if (input.skipAi && redacted.trim()) aiSkipped = 'cron_time_budget';
+  if (tryAi || (input.skipAi && redacted.trim())) {
+    let db: Awaited<ReturnType<typeof import('./db').database>> | null = null;
+    try {
+      const { database } = await import('./db');
+      db = await database();
+    } catch {
+      db = null;
+    }
+    const { tryLearnedIntakePaste, learnIntakePatternFireAndForget } = await import(
+      './intake-patterns'
+    );
+    // Pattern learn first (cheap). LLM only when tryAi and no pattern hit.
+    const learned = await tryLearnedIntakePaste(db, redacted, input.subject);
+    if (learned?.paste?.trim()) {
+      workingText = learned.paste;
+      patternUsed = true;
+      patternId = learned.pattern_id;
+      aiSkipped = 'learned_pattern';
+    } else if (tryAi) {
+      const extracted = await extractBookingPasteWithClaude(redacted, {
+        subject: input.subject,
+      });
+      aiSkipped = extracted.skipped_reason;
+      aiError = extracted.error;
+      aiModelName = extracted.model;
+      aiProviderName = extracted.provider;
+      if (extracted.used && extracted.paste.trim()) {
+        workingText = extracted.paste;
+        aiUsed = true;
+        learnIntakePatternFireAndForget(db, {
+          raw: redacted,
+          subject: input.subject,
+          aiPaste: extracted.paste,
+          source_hint: input.source,
+        });
+      }
     }
   }
   const preview = parseQuickPaste(
@@ -310,13 +342,16 @@ export async function buildIntakeDraft(input: {
     notes: [
       typeof fields.notes === 'string' ? fields.notes : '',
       aiUsed ? aiDisclaimerLine(aiProviderName) : '',
+      patternUsed
+        ? 'Filled from a saved intake pattern (no new AI call). Verify money and parties.'
+        : '',
       issues.length ? `Intake review notes:\n- ${issues.slice(0, 20).join('\n- ')}` : '',
     ]
       .filter(Boolean)
       .join('\n\n'),
     intake_provenance: {
       ...provenance,
-      ...(aiUsed || aiSkipped || aiError
+      ...(aiUsed || aiSkipped || aiError || patternUsed
         ? {
             ai: {
               provider: aiProviderName ?? 'openai',
@@ -326,11 +361,20 @@ export async function buildIntakeDraft(input: {
               error: aiError ?? null,
               disclaimer: aiUsed ? aiDisclaimerLine(aiProviderName) : null,
             },
+            ...(patternUsed
+              ? {
+                  pattern: {
+                    used: true,
+                    pattern_id: patternId ?? null,
+                    skipped_ai: true,
+                  },
+                }
+              : {}),
           }
         : {}),
     },
     intake_raw_text: redacted,
-    recovery_paste: aiUsed ? workingText : redacted,
+    recovery_paste: aiUsed || patternUsed ? workingText : redacted,
     intake_field_hints: fields,
     intake_unresolved: preview.unknown,
     ...(aiUsed
@@ -339,6 +383,7 @@ export async function buildIntakeDraft(input: {
           ai_disclaimer: aiDisclaimerLine(aiProviderName),
         }
       : {}),
+    ...(patternUsed ? { pattern_created: true } : {}),
     intake_party_hints: {
       customer: fields.customer ?? null,
       traveler: fields.traveler ?? null,
@@ -382,11 +427,15 @@ export async function buildIntakeDraft(input: {
       .map(([k]) => k),
   ]);
 
+  const recognized_fields = [...recognized];
+  const capture = assessIntakeCapture({ entry, issues, recognized_fields });
+  applyIntakeCaptureToEntry(entry, capture);
+
   return {
     title: titleParts.join(' · ').slice(0, 180) || 'Booking intake draft',
     entry,
     issues,
-    recognized_fields: [...recognized],
+    recognized_fields,
   };
 }
 

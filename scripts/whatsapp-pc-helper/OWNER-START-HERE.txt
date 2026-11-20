@@ -3,10 +3,15 @@ Padova WhatsApp helper (Owner PC) — professional Baileys link
 
 What this does
 - Links WhatsApp on THIS computer (like WhatsApp Web / Linked devices).
-- Reads incoming reservation text → Padova drafts / AI booking path.
-- Never auto-replies to customers.
-- Optional: sends YOU (Owner) reminder digests only (missing info, unpaid,
-  due tomorrow, Needs Review) — never invents money amounts.
+- Reads incoming reservations in all common formats:
+  text · PDF · screenshots/images · voice notes (Whisper transcript)
+  → Padova drafts / AI booking path.
+- When a reservation is seen: reacts 👀 (👀 / ✅ / 📝 / ⚠️). No chat text
+  to the customer by default — filing stays silent in the thread.
+- AI-created bookings are tagged AI in Padova so staff books stay distinct.
+- Optional: Owner reminder digests (missing info, unpaid, Needs Review).
+- Optional only: reply_intake_status: true if you want a short filed/failed
+  line in the same chat (off by default so users are not messaged).
 
 One-time setup (developer does this on your PC)
 1. Install Node.js 24 if needed.

@@ -47,6 +47,10 @@ export type EmailPollResult = {
     booking_id?: string;
     booking_code?: string;
     ai_summary?: string;
+    intake_tags?: string[];
+    intake_confidence?: string;
+    intake_missing?: string[];
+    owner_alert_text?: string;
   }>;
   skipped: Array<{ message_id: string; reason: string; subject?: string }>;
   errors: Array<{ message_id?: string; error: string }>;
@@ -82,7 +86,7 @@ export function emailIntakeStatus() {
     draft_only: true,
     poll_path: '/api/booking-intake/email/poll',
     note: configured
-      ? 'OAuth env present. Poll creates booking drafts from unread booking-related mail. Never posts money.'
+      ? 'OAuth env present. Poll → drafts (+ high-confidence live). Pattern before AI; cron skips LLM near timeout. Never invents money.'
       : 'Automatic mailbox poll is not configured. Connect Shmuel@ / mindy@ / bookings@ via hosted OAuth — see docs/EMAIL_INTAKE_OAUTH.md.',
   };
 }
@@ -99,7 +103,10 @@ export async function prepareEmailIntakeDraft(message: InboundEmailMessage) {
  * Falls back to the email body when no attachment yields booking fields.
  * Never invents sale amounts.
  */
-export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
+export async function prepareEmailIntakeDrafts(
+  message: InboundEmailMessage,
+  opts?: { skipAi?: boolean },
+) {
   const mailbox = assertAllowedIntakeMailbox(message.mailbox);
   const probe = [message.subject, message.text, ...(message.pdf_sections || []).map((p) => p.text)]
     .filter(Boolean)
@@ -117,6 +124,7 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
     );
   }
 
+  const skipAi = Boolean(opts?.skipAi);
   // Ignore tiny/garbage extracts (subject-only PNR spam). Need real file body text.
   const sections = (message.pdf_sections || []).filter((p) => p.text && p.text.trim().length >= 40);
   if (sections.length >= 1) {
@@ -136,6 +144,7 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
           mimeType: /\.pdf$/i.test(file.filename) ? 'application/pdf' : 'text/plain',
           entryIndex: index,
           entryCount: sections.length,
+          skipAi,
         });
         if (
           !intakeDraftHasAttachmentShape({
@@ -159,6 +168,7 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
           mimeType: /\.pdf$/i.test(file.filename) ? 'application/pdf' : 'text/plain',
           entryIndex: index,
           entryCount: sections.length,
+          skipAi,
         });
       }),
     );
@@ -166,17 +176,26 @@ export async function prepareEmailIntakeDrafts(message: InboundEmailMessage) {
     if (shaped.length) return shaped;
   }
 
-  if (!message.text?.trim()) throw new Error('Email intake requires message text');
+  // Subject-only / empty body but booking-related: still capture (Phase 4 parity).
+  const bodyText =
+    message.text?.trim() ||
+    [
+      message.subject ? `Subject: ${message.subject}` : '',
+      'Notes: Email body empty or unread — draft kept for human review. Do not invent money.',
+    ]
+      .filter(Boolean)
+      .join('\n');
   return [
     await buildIntakeDraft({
       source: 'email',
-      text: message.text,
+      text: bodyText,
       mailbox,
       fromAddress: message.from_address,
       subject: message.subject,
       receivedAt: message.received_at,
       filename: message.message_id ? `email:${message.message_id}` : undefined,
       mimeType: 'message/rfc822',
+      skipAi,
     }),
   ];
 }
@@ -280,8 +299,8 @@ export function readEmailPollAuthHeader(request: Request): string | null {
 }
 
 /**
- * Poll allow-listed mailboxes for unread booking-related mail → booking_draft only.
- * Idempotent on Gmail message id. Never invents money / never live booking.
+ * Poll allow-listed mailboxes for unread booking-related mail → draft (+ optional live promote).
+ * Idempotent on Gmail message id. Never invents money.
  */
 export async function pollEmailIntakeMailboxes(
   db: Database,
@@ -296,7 +315,13 @@ export async function pollEmailIntakeMailboxes(
     /** Max PDF/image files to extract per message (cron free = 30s → keep low). */
     maxAttachments?: number;
   },
-): Promise<{ results: EmailPollResult[]; intake: ReturnType<typeof emailIntakeStatus> }> {
+): Promise<{
+  results: EmailPollResult[];
+  intake: ReturnType<typeof emailIntakeStatus>;
+  owner_alerts: string[];
+  live_booking_count: number;
+  draft_count: number;
+}> {
   if (!emailIntakePollingConfigured()) {
     throw new Error('Email intake OAuth is not configured');
   }
@@ -310,7 +335,13 @@ export async function pollEmailIntakeMailboxes(
   const dryRun = Boolean(opts?.dryRun);
   const deadlineAt = opts?.deadlineAt;
   const results: EmailPollResult[] = [];
+  const owner_alerts: string[] = [];
+  let live_booking_count = 0;
+  let draft_count = 0;
   const pastDeadline = () => Boolean(deadlineAt && Date.now() >= deadlineAt);
+  /** Leave headroom for DB writes — skip LLM when under ~8s remain. */
+  const preferRulesOnly = () =>
+    Boolean(deadlineAt && deadlineAt - Date.now() < 8_000);
 
   for (const mailbox of boxes) {
     if (pastDeadline()) {
@@ -397,39 +428,51 @@ export async function pollEmailIntakeMailboxes(
             });
             continue;
           }
-          if (!msg.text?.trim()) {
-            result.skipped.push({
-              message_id: item.id,
-              reason: 'empty_body',
+          const drafts = await prepareEmailIntakeDrafts(
+            {
+              mailbox,
+              from_address: msg.from_address,
               subject: msg.subject,
-            });
-            continue;
-          }
-          const drafts = await prepareEmailIntakeDrafts({
-            mailbox,
-            from_address: msg.from_address,
-            subject: msg.subject,
-            text: msg.text,
-            received_at: msg.received_at,
-            message_id: msg.id,
-            pdf_sections: msg.pdf_sections,
-          });
+              text: msg.text || '',
+              received_at: msg.received_at,
+              message_id: msg.id,
+              pdf_sections: msg.pdf_sections,
+            },
+            { skipAi: preferRulesOnly() },
+          );
           const shaped = drafts.filter((built) =>
             intakeDraftHasMinimumShape({
               entry: built.entry as Record<string, unknown>,
               recognized_fields: built.recognized_fields,
             }),
           );
+          // Phase 1: booking-related mail always keeps at least one draft (no silent drop).
+          const toSave =
+            shaped.length > 0
+              ? shaped
+              : drafts.length > 0
+                ? drafts
+                : [
+                    await buildIntakeDraft({
+                      source: 'email',
+                      text: msg.text,
+                      subject: msg.subject,
+                      fromAddress: msg.from_address,
+                      mailbox,
+                      receivedAt: msg.received_at,
+                      filename: `email:${msg.id}`,
+                    }),
+                  ];
           if (!shaped.length) {
-            result.skipped.push({
-              message_id: item.id,
-              reason: 'insufficient_booking_fields',
-              subject: msg.subject,
-            });
-            continue;
+            for (const built of toSave) {
+              built.issues = [
+                ...(built.issues || []),
+                'Low field recognition — draft kept for human review (no silent drop)',
+              ];
+            }
           }
           if (dryRun) {
-            for (const built of shaped) {
+            for (const built of toSave) {
               result.created.push({
                 id: 'dry-run',
                 title: built.title || msg.subject || 'Email intake dry-run',
@@ -440,13 +483,20 @@ export async function pollEmailIntakeMailboxes(
             continue;
           }
           const { afterIntakeDraftSaved } = await import('./intake-after-save');
-          for (const built of shaped) {
+          for (const built of toSave) {
             const saved = await execute(db, staff, {
               id: crypto.randomUUID(),
               kind: 'booking_draft',
               data: { title: built.title, entry: built.entry },
             });
-            const promote = await afterIntakeDraftSaved(db, staff, String(saved.id), built);
+            const after = await afterIntakeDraftSaved(db, staff, String(saved.id), built, {
+              channel: 'email',
+              chat_or_mailbox: mailbox || msg.from_address || msg.subject,
+            });
+            const promote = after.promote;
+            draft_count += 1;
+            if (promote.live) live_booking_count += 1;
+            if (after.owner_alert_text) owner_alerts.push(after.owner_alert_text);
             result.created.push({
               id: String(saved.id),
               title: built.title,
@@ -456,6 +506,10 @@ export async function pollEmailIntakeMailboxes(
               booking_id: promote.live ? promote.booking_id : undefined,
               booking_code: promote.live ? promote.booking_code : undefined,
               ai_summary: promote.summary,
+              intake_tags: after.capture.tags,
+              intake_confidence: after.capture.confidence,
+              intake_missing: after.capture.missing,
+              owner_alert_text: after.owner_alert_text || undefined,
             });
           }
           if (markRead) {
@@ -481,5 +535,11 @@ export async function pollEmailIntakeMailboxes(
     results.push(result);
   }
 
-  return { results, intake: emailIntakeStatus() };
+  return {
+    results,
+    intake: emailIntakeStatus(),
+    owner_alerts: owner_alerts.slice(0, 20),
+    live_booking_count,
+    draft_count,
+  };
 }

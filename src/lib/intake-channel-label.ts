@@ -10,6 +10,27 @@ export type IntakeChannelSource =
   | null
   | undefined;
 
+/** Short table tag for live bookings on Transactions. */
+export function intakeSourceTableTag(source: IntakeChannelSource): {
+  label: string;
+  tone: string;
+} {
+  switch (source) {
+    case 'email':
+      return { label: 'Email', tone: 'blue' };
+    case 'whatsapp':
+      return { label: 'WhatsApp', tone: 'green' };
+    case 'staff_upload':
+      return { label: 'File', tone: 'gray' };
+    case 'staff_paste':
+      return { label: 'Paste', tone: 'gray' };
+    case 'instinct':
+      return { label: 'Intake', tone: 'gray' };
+    default:
+      return { label: 'Manual', tone: 'gray' };
+  }
+}
+
 export function intakeChannelBadge(source: IntakeChannelSource): string {
   switch (source) {
     case 'email':

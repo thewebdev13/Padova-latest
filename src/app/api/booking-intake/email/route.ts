@@ -50,7 +50,11 @@ export async function POST(request: Request) {
       kind: 'booking_draft',
       data: { title: built.title, entry: built.entry },
     });
-    const promote = await afterIntakeDraftSaved(db, actor, String(result.id), built);
+    const after = await afterIntakeDraftSaved(db, actor, String(result.id), built, {
+      channel: 'email',
+      chat_or_mailbox: body.from_address ? String(body.from_address) : undefined,
+    });
+    const promote = after.promote;
     return NextResponse.json(
       {
         id: result.id,
@@ -65,6 +69,10 @@ export async function POST(request: Request) {
         booking_code: promote.live ? promote.booking_code : undefined,
         ai_summary: promote.summary,
         ai_promote_reason: promote.live ? undefined : promote.reason,
+        intake_tags: after.capture.tags,
+        intake_confidence: after.capture.confidence,
+        intake_missing: after.capture.missing,
+        owner_alert_text: after.owner_alert_text,
         intake: emailIntakeStatus(),
         ai: aiIntakeStatus(),
       },

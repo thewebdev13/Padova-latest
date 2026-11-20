@@ -20,11 +20,13 @@ export const dynamic = 'force-dynamic';
 function pollJson(out: Awaited<ReturnType<typeof pollEmailIntakeMailboxes>>) {
   return NextResponse.json(
     {
+      ...out,
       draft: true,
       posted: false,
-      live_booking: false,
       posts_money: false,
-      ...out,
+      invents_amounts: false,
+      live_booking: out.live_booking_count > 0,
+      owner_alert_text: out.owner_alerts[0] || null,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   );
@@ -54,9 +56,9 @@ function pollError(e: unknown) {
 }
 
 /**
- * Poll allow-listed mailboxes → booking_draft only.
+ * Poll allow-listed mailboxes → draft (+ optional high-confidence live promote).
  * Auth: staff session OR Bearer cron secret / x-padova-email-poll / Vercel CRON_SECRET.
- * Never posts money / never live booking.
+ * Never invents money. Owner alerts returned for PC helper allowlist.
  */
 export async function POST(request: Request) {
   try {

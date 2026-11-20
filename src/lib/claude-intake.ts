@@ -113,6 +113,9 @@ const SYSTEM_EXTRA = `Additional rules for Padova server intake:
 - Add a one-line Summary of what was booked when facts exist.
 - Do not output API keys, passwords, or full card numbers.`;
 
+/** Keep AI off the hang path — Vercel/cron friendly. */
+const AI_FETCH_TIMEOUT_MS = 20_000;
+
 async function callOpenAi(key: string, model: string, userBody: string): Promise<string> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -129,6 +132,7 @@ async function callOpenAi(key: string, model: string, userBody: string): Promise
         { role: 'user', content: userBody },
       ],
     }),
+    signal: AbortSignal.timeout(AI_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
@@ -156,6 +160,7 @@ async function callAnthropic(key: string, model: string, userBody: string): Prom
       system: `${quickPasteAIInstructions}\n\n${SYSTEM_EXTRA}`,
       messages: [{ role: 'user', content: userBody }],
     }),
+    signal: AbortSignal.timeout(AI_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
@@ -226,12 +231,19 @@ export async function extractBookingPasteWithClaude(
         : undefined;
     return { used: true, paste, model, provider, summary };
   } catch (e) {
+    const aborted =
+      (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) ||
+      (typeof e === 'object' && e && 'name' in e && String((e as { name: string }).name) === 'AbortError');
     return {
       used: false,
       paste: redacted,
       model,
       provider,
-      error: e instanceof Error ? e.message : 'AI request failed',
+      error: aborted
+        ? `AI timed out after ${AI_FETCH_TIMEOUT_MS / 1000}s — draft kept for human review`
+        : e instanceof Error
+          ? e.message
+          : 'AI request failed',
     };
   }
 }

@@ -787,6 +787,15 @@ export async function snapshot(db: Database, actor: Actor) {
             null;
           const pnrHint = entry?.primary_reference || loose.primary_reference || null;
           const travelHint = entry?.travel_start || loose.travel_start || null;
+          const capture =
+            entry?.intake_capture && typeof entry.intake_capture === 'object'
+              ? entry.intake_capture
+              : null;
+          const intakeTags = Array.isArray(entry?.intake_tags)
+            ? entry.intake_tags
+            : Array.isArray(capture?.tags)
+              ? capture.tags
+              : [];
           return {
             ...metadata,
             kind,
@@ -802,6 +811,11 @@ export async function snapshot(db: Database, actor: Actor) {
             intake_travel_start: travelHint,
             intake_pnr: pnrHint,
             intake_sale: entry?.sale ?? null,
+            intake_confidence: capture?.confidence ?? null,
+            intake_missing: Array.isArray(capture?.missing) ? capture.missing : [],
+            intake_tags: intakeTags,
+            intake_ai_generated: Boolean(entry?.ai_created || intake?.ai?.used),
+            intake_pattern: Boolean(entry?.pattern_created || intake?.pattern?.used),
             display_title:
               kind === 'historical_booking'
                 ? [
@@ -858,7 +872,75 @@ export async function snapshot(db: Database, actor: Actor) {
     developmentData: !process.env.DATABASE_URL,
     qaMode: process.env.PADOVA_QA === '1',
     today,
-    bookings: bookings.map((b) => bookingVisibility(b, actor)),
+    bookings: await (async () => {
+      // Prefer stamped itinerary fields; else recover intake_source / AI flag from linked draft.
+      const missing = bookings.filter(
+        (b) =>
+          !(
+            b.itinerary?.intake_source ||
+            b.itinerary?.operational_entry?.intake_source
+          ) || !(b.itinerary?.ai_created || b.itinerary?.created_by === 'ai'),
+      );
+      const fromDraft = new Map<string, { intake_source?: string; ai_created?: boolean }>();
+      if (missing.length) {
+        try {
+          const rows = (
+            await db.query(
+              `SELECT c.result->>'id' AS booking_id,
+                      d.entry->'intake_provenance'->>'source' AS intake_source,
+                      COALESCE(
+                        (d.entry->>'ai_created')::boolean,
+                        (d.entry->>'ai_generated')::boolean,
+                        (d.entry->'intake_provenance'->'ai'->>'used')::boolean,
+                        false
+                      ) AS ai_created
+               FROM commands c
+               JOIN booking_drafts d
+                 ON d.id = NULLIF(c.payload->'operational'->>'draft_id','')::uuid
+               WHERE c.kind = 'booking'
+                 AND c.result IS NOT NULL
+                 AND c.payload->'operational'->>'draft_id' IS NOT NULL
+                 AND c.result->>'id' = ANY($1::text[])`,
+              [missing.map((b) => String(b.id))],
+            )
+          ).rows as {
+            booking_id: string;
+            intake_source: string | null;
+            ai_created: boolean | null;
+          }[];
+          for (const row of rows) {
+            if (!row.booking_id) continue;
+            fromDraft.set(String(row.booking_id), {
+              intake_source: row.intake_source ? String(row.intake_source) : undefined,
+              ai_created: Boolean(row.ai_created),
+            });
+          }
+        } catch {
+          /* booking_drafts / commands shape may differ on older fixtures — tags stay Manual */
+        }
+      }
+      return bookings.map((b) => {
+        const draftMeta = fromDraft.get(String(b.id));
+        const stamped =
+          b.itinerary?.intake_source ||
+          b.itinerary?.operational_entry?.intake_source ||
+          draftMeta?.intake_source ||
+          null;
+        const aiCreated = Boolean(
+          b.itinerary?.ai_created ||
+            b.itinerary?.created_by === 'ai' ||
+            draftMeta?.ai_created,
+        );
+        return bookingVisibility(
+          {
+            ...b,
+            intake_source: stamped,
+            ai_created: aiCreated,
+          },
+          actor,
+        );
+      });
+    })(),
     parties: parties.map((p) => partyVisibility(p, actor)),
     relationships,
     travelerLinks,

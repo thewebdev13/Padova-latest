@@ -126,7 +126,7 @@ export async function collectOpsReminders(db: SQL, actor: Actor): Promise<{
   try {
     const drafts = (
       await db.query(
-        `SELECT d.id::text AS id, d.title
+        `SELECT d.id::text AS id, d.title, d.entry
          FROM booking_drafts d
          WHERE NOT EXISTS (
            SELECT 1 FROM commands c
@@ -139,11 +139,20 @@ export async function collectOpsReminders(db: SQL, actor: Actor): Promise<{
       )
     ).rows;
     for (const d of drafts) {
+      const entry =
+        d.entry && typeof d.entry === 'object' ? (d.entry as Record<string, unknown>) : {};
+      const capture =
+        entry.intake_capture && typeof entry.intake_capture === 'object'
+          ? (entry.intake_capture as { needs_owner_alert?: boolean; missing?: string[] })
+          : null;
+      const missing = Array.isArray(capture?.missing) ? capture!.missing!.join(', ') : '';
       items.push({
-        kind: 'Open draft',
+        kind: capture?.needs_owner_alert ? 'Intake needs review' : 'Open draft',
         title: String(d.title || d.id),
-        detail: 'Intake draft not yet saved as a live booking',
-        urgency: 'open',
+        detail: capture?.needs_owner_alert
+          ? `Missing: ${missing || 'review fields'} — human check before trusting AI`
+          : 'Intake draft not yet saved as a live booking',
+        urgency: capture?.needs_owner_alert ? 'missing_info' : 'open',
       });
     }
   } catch {

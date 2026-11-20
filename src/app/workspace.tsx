@@ -42,6 +42,7 @@ import {
   formatIntakeProvenanceLine,
   intakeChannelBadge,
   intakeChannelFilterKey,
+  intakeSourceTableTag,
 } from '@/lib/intake-channel-label';
 import {
   applyIntakeFieldOverrides,
@@ -157,8 +158,20 @@ const Icon = ({ name, size = 16 }: { name?: string; size?: number }) =>
   ) : (
     <Plane size={size} />
   );
-function Badge({ children, tone = '' }: { children: React.ReactNode; tone?: string }) {
-  return <span className={`badge ${tone}`}>{children}</span>;
+function Badge({
+  children,
+  tone = '',
+  title,
+}: {
+  children: React.ReactNode;
+  tone?: string;
+  title?: string;
+}) {
+  return (
+    <span className={`badge ${tone}`} title={title}>
+      {children}
+    </span>
+  );
 }
 function Card({
   title,
@@ -1083,6 +1096,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               <th>Booked / sold</th>
               <th>Transaction</th>
               <th>Customer / traveler</th>
+              <th>Source</th>
               <th>Status</th>
               <th>Payment / follow-up</th>
               {canSale && <th className="money">Price</th>}
@@ -1128,6 +1142,40 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     {kind === 'booking' && r.travelers && (
                       <span className="transaction-meta"> · {r.travelers}</span>
                     )}
+                  </span>
+                </td>
+                <td>
+                  <span className="transaction-indicators">
+                    {(() => {
+                      const src =
+                        kind === 'booking'
+                          ? r.intake_source ||
+                            r.itinerary?.intake_source ||
+                            r.itinerary?.operational_entry?.intake_source ||
+                            null
+                          : 'manual';
+                      const tag = intakeSourceTableTag(src);
+                      const aiMade =
+                        kind === 'booking' &&
+                        (r.ai_created ||
+                          r.itinerary?.ai_created ||
+                          r.itinerary?.created_by === 'ai');
+                      return (
+                        <>
+                          <Badge tone={tag.tone} title="How this booking entered Padova">
+                            {tag.label}
+                          </Badge>
+                          {aiMade ? (
+                            <Badge
+                              tone="amber"
+                              title="AI-assisted intake — verify money and parties; not the same as staff-entered books"
+                            >
+                              AI
+                            </Badge>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </span>
                 </td>
                 <td>
@@ -2148,325 +2196,423 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </p>
                   )}
                   {(detail.travelComponents ?? []).map((t: R) => (
-                    <div className="note travel-detail-card" key={t.id}>
-                      <strong>
-                        {t.product} · {t.summary}
-                      </strong>
-                      <Badge tone={t.status === 'Cancelled' ? 'danger' : ''}>
-                        {t.status ?? 'Booked'}
-                      </Badge>
-                      {can('operations') && (
-                        <button
-                          className="btn small"
-                          onClick={() =>
-                            action('revise_travel', {
-                              ...t.details,
-                              ...t,
-                              travel_component_id: t.id,
-                              description:
-                                t.product === 'Other'
-                                  ? t.details?.description ||
-                                    b.itinerary?.operational_entry?.other_description ||
-                                    t.summary
-                                  : undefined,
-                              booking_id: b.id,
-                              confirmations: (t.details?.confirmations ?? []).join('\n'),
-                              flight_numbers: (t.details?.flight_numbers ?? []).join('\n'),
-                              ticket_numbers: (t.details?.ticket_numbers ?? []).join('\n'),
-                              booking_source_confirmation: (
-                                t.details?.booking_source_confirmation ?? []
-                              ).join('\n'),
-                              traveler_ids:
-                                t.details?.traveler_ids ??
-                                detail.travelers
-                                  .filter((p: R) => p.status !== 'Cancelled')
-                                  .map((p: R) => p.id),
-                            })
-                          }
-                        >
-                          Edit this travel
-                        </button>
-                      )}
-                      <p>
-                        {person(t.provider_id)} · {t.channel || 'Channel unknown'} ·{' '}
-                        {t.travel_start} – {t.travel_end}
-                      </p>
+                    <article className="travel-detail-card" key={t.id}>
+                      <header className="travel-detail-head">
+                        <div className="travel-detail-title-block">
+                          <div className="travel-detail-kicker">
+                            <span className="travel-detail-product">{t.product}</span>
+                            <Badge
+                              tone={
+                                t.status === 'Cancelled'
+                                  ? 'red'
+                                  : t.status === 'Refund Pending'
+                                    ? 'amber'
+                                    : 'green'
+                              }
+                            >
+                              {t.status ?? 'Booked'}
+                            </Badge>
+                          </div>
+                          <h3 className="travel-detail-title">{t.summary}</h3>
+                          <p className="travel-detail-subtitle">
+                            {[
+                              person(t.provider_id),
+                              t.channel || 'Channel unknown',
+                              t.travel_start && t.travel_end
+                                ? `${dateLabel(t.travel_start)} – ${dateLabel(t.travel_end)}`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        </div>
+                        {can('operations') && (
+                          <button
+                            className="btn small ghost travel-detail-edit"
+                            onClick={() =>
+                              action('revise_travel', {
+                                ...t.details,
+                                ...t,
+                                travel_component_id: t.id,
+                                description:
+                                  t.product === 'Other'
+                                    ? t.details?.description ||
+                                      b.itinerary?.operational_entry?.other_description ||
+                                      t.summary
+                                    : undefined,
+                                booking_id: b.id,
+                                confirmations: (t.details?.confirmations ?? []).join('\n'),
+                                flight_numbers: (t.details?.flight_numbers ?? []).join('\n'),
+                                ticket_numbers: (t.details?.ticket_numbers ?? []).join('\n'),
+                                booking_source_confirmation: (
+                                  t.details?.booking_source_confirmation ?? []
+                                ).join('\n'),
+                                traveler_ids:
+                                  t.details?.traveler_ids ??
+                                  detail.travelers
+                                    .filter((p: R) => p.status !== 'Cancelled')
+                                    .map((p: R) => p.id),
+                              })
+                            }
+                          >
+                            Edit this travel
+                          </button>
+                        )}
+                      </header>
+
+                      <dl className="travel-detail-facts">
+                        {t.details?.confirmations?.length > 0 && (
+                          <div>
+                            <dt>Confirmation</dt>
+                            <dd>{t.details.confirmations.join(' · ')}</dd>
+                          </div>
+                        )}
+                        {t.details?.booking_source_confirmation?.length > 0 && (
+                          <div>
+                            <dt>Booked Through confirmation</dt>
+                            <dd>{t.details.booking_source_confirmation.join(' · ')}</dd>
+                          </div>
+                        )}
+                        {t.details?.traveler_ids?.length > 0 && (
+                          <div>
+                            <dt>Travelers</dt>
+                            <dd>{t.details.traveler_ids.map(person).join(' · ')}</dd>
+                          </div>
+                        )}
+                        {(t.details?.route ||
+                          t.details?.hotel ||
+                          t.details?.hotel_name ||
+                          t.details?.origin ||
+                          t.details?.destination) && (
+                          <div>
+                            <dt>
+                              {t.product === 'Flight'
+                                ? 'Route'
+                                : t.product === 'Hotel'
+                                  ? 'Property'
+                                  : 'Details'}
+                            </dt>
+                            <dd>
+                              {t.details.route ||
+                                t.details.hotel ||
+                                t.details.hotel_name ||
+                                [t.details.origin, t.details.destination]
+                                  .filter(Boolean)
+                                  .join(' → ')}
+                            </dd>
+                          </div>
+                        )}
+                        {t.details?.room_type && (
+                          <div>
+                            <dt>Room</dt>
+                            <dd>{t.details.room_type}</dd>
+                          </div>
+                        )}
+                        {t.details?.flight_numbers?.length > 0 && (
+                          <div>
+                            <dt>Flights</dt>
+                            <dd>
+                              {t.details.flight_numbers.join(' · ')}
+                              {t.details.cabin ? ` · ${t.details.cabin}` : ''}
+                            </dd>
+                          </div>
+                        )}
+                        {t.details?.ticket_numbers?.length > 0 && (
+                          <div>
+                            <dt>Tickets</dt>
+                            <dd>{t.details.ticket_numbers.join(' · ')}</dd>
+                          </div>
+                        )}
+                        {t.acquisition_source_id && (
+                          <div>
+                            <dt>Purchased From</dt>
+                            <dd>{person(t.acquisition_source_id)}</dd>
+                          </div>
+                        )}
+                        {(t.details?.pickup_location || t.details?.dropoff_location) && (
+                          <div>
+                            <dt>Pickup / drop-off</dt>
+                            <dd>
+                              {t.details.pickup_location || 'Unknown'} →{' '}
+                              {t.details.dropoff_location || 'Unknown'}
+                            </dd>
+                          </div>
+                        )}
+                        {(t.details?.departure_local || t.details?.arrival_local) && (
+                          <div>
+                            <dt>Local times</dt>
+                            <dd>
+                              {t.details.departure_local ?? 'Unknown'} →{' '}
+                              {t.details.arrival_local ?? 'Unknown'}
+                            </dd>
+                          </div>
+                        )}
+                        {t.details?.benefits && (
+                          <div>
+                            <dt>Benefits</dt>
+                            <dd>{t.details.benefits}</dd>
+                          </div>
+                        )}
+                        {t.details?.restrictions && (
+                          <div>
+                            <dt>Restrictions</dt>
+                            <dd>{t.details.restrictions}</dd>
+                          </div>
+                        )}
+                      </dl>
+
                       {t.details?.segments?.length > 0 && (
-                        <ul className="plain-list">
+                        <ul className="travel-detail-segments">
                           {t.details.segments.map((segment: R, i: number) => (
                             <li key={i}>
-                              {segment.origin} → {segment.destination} · {dateLabel(segment.date)}{' '}
-                              {segment.flight_number}
+                              <strong>
+                                {segment.origin} → {segment.destination}
+                              </strong>
+                              <span>
+                                {dateLabel(segment.date)}
+                                {segment.flight_number ? ` · ${segment.flight_number}` : ''}
+                              </span>
                             </li>
                           ))}
                         </ul>
                       )}
-                      {t.details?.confirmations?.length > 0 && (
-                        <p>Confirmations: {t.details.confirmations.join(' · ')}</p>
-                      )}
+
                       {t.details?.provider_references?.map((r: R) => (
-                        <p key={`${r.provider_id}:${r.value}`}>
+                        <p className="travel-detail-note" key={`${r.provider_id}:${r.value}`}>
                           {person(r.provider_id)} · PNR {r.value}
                         </p>
                       ))}
-                      {t.details?.booking_source_confirmation?.length > 0 && (
-                        <p>
-                          Booking Source Confirmation:{' '}
-                          {t.details.booking_source_confirmation.join(' · ')}
-                        </p>
-                      )}
                       {t.details?.reservation_summary &&
                         t.details.reservation_summary !== t.summary && (
-                          <p style={{ whiteSpace: 'pre-wrap' }}>
-                            Reservation Summary: {t.details.reservation_summary}
+                          <p className="travel-detail-note" style={{ whiteSpace: 'pre-wrap' }}>
+                            {t.details.reservation_summary}
                           </p>
                         )}
-                      {(t.details?.pickup_location || t.details?.dropoff_location) && (
-                        <p>
-                          Pickup: {t.details.pickup_location || 'Unknown'} · Drop-off:{' '}
-                          {t.details.dropoff_location || 'Unknown'}
-                        </p>
-                      )}
-                      {(t.details?.route ||
-                        t.details?.hotel ||
-                        t.details?.hotel_name ||
-                        t.details?.origin ||
-                        t.details?.destination) && (
-                        <p>
-                          {t.details.route ||
-                            t.details.hotel ||
-                            t.details.hotel_name ||
-                            [t.details.origin, t.details.destination].filter(Boolean).join(' → ')}
-                        </p>
-                      )}
-                      {t.acquisition_source_id && (
-                        <p>Acquired from: {person(t.acquisition_source_id)}</p>
-                      )}
-                      {t.details?.traveler_ids?.length > 0 && (
-                        <p>Travelers: {t.details.traveler_ids.map(person).join(' · ')}</p>
-                      )}
-                      {t.details?.flight_numbers?.length > 0 && (
-                        <p>
-                          Flights: {t.details.flight_numbers.join(' · ')}
-                          {t.details.cabin ? ` · ${t.details.cabin}` : ''}
-                        </p>
-                      )}
-                      {t.details?.ticket_numbers?.length > 0 && (
-                        <p>Tickets: {t.details.ticket_numbers.join(' · ')}</p>
-                      )}
-                      {(t.details?.departure_local || t.details?.arrival_local) && (
-                        <p>
-                          Local times: {t.details.departure_local ?? 'Unknown'} →{' '}
-                          {t.details.arrival_local ?? 'Unknown'}
-                        </p>
-                      )}
-                      {t.details?.room_type && <p>Room: {t.details.room_type}</p>}
-                      {t.details?.benefits && <p>Benefits: {t.details.benefits}</p>}
-                      {t.details?.restrictions && <p>Restrictions: {t.details.restrictions}</p>}
-                      {(detail.fulfillments ?? [])
-                        .filter((f: R) => f.travel_component_id === t.id)
-                        .map((f: R) => (
-                          <div key={f.id}>
-                            {f.role === 'Ancillary' ? 'Extra benefit' : 'Main trip'} ·{' '}
-                            {f.asset_ownership === 'Customer' ? 'Customer-owned value' : f.mode} ·{' '}
-                            {f.instrument ??
-                              (f.mode === 'Outside source'
-                                ? (f.terms?.supplied ?? 'Agreed seller price')
-                                : f.mode === 'Owned inventory'
-                                  ? 'Owned value'
-                                  : f.terms?.operational_kind === 'Customer card'
-                                    ? 'Customer direct card'
-                                    : 'Cash/Card')}{' '}
-                            {f.quantity != null && <>· {formatQuantity(f.quantity, f.unit)}</>}
-                            {canCosts && <> · Cost {money(f.cost)}</>}
-                            {f.terms?.mechanism && (
-                              <p>
-                                {f.terms.mechanism} ·{' '}
-                                {f.terms.booked_through ?? 'Booking channel not supplied'}
-                              </p>
-                            )}
-                            {f.terms?.account_holder_id && (
-                              <p>Account holder: {person(f.terms.account_holder_id)}</p>
-                            )}
-                            {canCosts && f.terms?.quoted_rate && (
-                              <p>
-                                Quoted rate: {f.terms.quoted_rate}{' '}
-                                {f.terms.rate_unit ?? '(unit not supplied)'} · Quote only; actual
-                                cost shown above
-                              </p>
-                            )}
-                            {f.terms?.notes && <p>{f.terms.notes}</p>}
-                            {canCosts && f.terms?.portal_price !== undefined && (
-                              <p>
-                                Portal cash price: {money(f.terms.portal_price)} ·{' '}
-                                {f.terms?.reference_price !== undefined &&
-                                  `Reference / online price: ${money(f.terms.reference_price)} · `}
-                                Comparison evidence only
-                              </p>
-                            )}
-                            {canCosts &&
-                              f.terms?.rate_cents_numerator !== undefined &&
-                              f.terms?.rate_points_denominator && (
-                                <p>
-                                  Actual redemption quote: {money(f.terms.rate_cents_numerator)} for{' '}
-                                  {Number(f.terms.rate_points_denominator).toLocaleString()} points
-                                  · No additional revenue
-                                </p>
-                              )}
-                            {f.status !== 'Active' && f.status && (
-                              <Badge tone="gray">{f.status} · original history</Badge>
-                            )}
-                            {can('manage_funding') && (!f.status || f.status === 'Active') && (
-                              <details className="travel-corrections">
-                                <summary>Cost actions</summary>
-                                <div className="traveler-record-actions">
-                                  <button
-                                    className="btn small"
-                                    onClick={() =>
-                                      action('revise_fulfillment', {
-                                        ...f,
-                                        ...f.terms,
-                                        fulfillment_id: f.id,
-                                        booking_id: b.id,
-                                        quantity:
-                                          f.quantity == null
-                                            ? undefined
-                                            : f.unit === 'money'
-                                              ? Number(f.quantity) / 100
-                                              : Number(f.quantity),
-                                        cost: Number(f.cost) / 100,
-                                        portal_price:
-                                          f.terms?.portal_price !== undefined
-                                            ? Number(f.terms.portal_price) / 100
-                                            : undefined,
-                                        reference_price:
-                                          f.terms?.reference_price !== undefined
-                                            ? Number(f.terms.reference_price) / 100
-                                            : undefined,
-                                        rate_cents_numerator:
-                                          f.terms?.rate_cents_numerator !== undefined
-                                            ? Number(f.terms.rate_cents_numerator) / 100
-                                            : undefined,
-                                        confirm_cost: f.terms?.cost_complete ?? true,
-                                        settled: false,
-                                        cash_method:
-                                          detail.funding.find(
-                                            (x: R) => x.id === f.funding_component_id,
-                                          )?.kind === 'Bank'
-                                            ? 'Bank'
-                                            : detail.funding.find(
-                                                  (x: R) => x.id === f.funding_component_id,
-                                                )?.kind === 'Cash'
-                                              ? 'Cash'
-                                              : 'Card',
-                                      })
-                                    }
-                                  >
-                                    Edit cost / payment
-                                  </button>
-                                  <button
-                                    className="btn small"
-                                    onClick={() =>
-                                      action('reverse_fulfillment', {
-                                        booking_id: b.id,
-                                        fulfillment_id: f.id,
-                                        edit_version: f.edit_version,
-                                      })
-                                    }
-                                  >
-                                    Reverse this cost
-                                  </button>
+
+                      {(detail.fulfillments ?? []).filter((f: R) => f.travel_component_id === t.id)
+                        .length > 0 && (
+                        <div className="travel-detail-costs">
+                          <h4>Linked costs / payments</h4>
+                          {(detail.fulfillments ?? [])
+                            .filter((f: R) => f.travel_component_id === t.id)
+                            .map((f: R) => (
+                              <div className="travel-cost-row" key={f.id}>
+                                <div className="travel-cost-main">
+                                  <strong>
+                                    {f.role === 'Ancillary' ? 'Extra benefit' : 'Main trip'} ·{' '}
+                                    {f.asset_ownership === 'Customer'
+                                      ? 'Customer-owned value'
+                                      : f.mode}
+                                  </strong>
+                                  <span>
+                                    {f.instrument ??
+                                      (f.mode === 'Outside source'
+                                        ? (f.terms?.supplied ?? 'Agreed seller price')
+                                        : f.mode === 'Owned inventory'
+                                          ? 'Owned value'
+                                          : f.terms?.operational_kind === 'Customer card'
+                                            ? 'Customer direct card'
+                                            : 'Cash/Card')}
+                                    {f.quantity != null && (
+                                      <> · {formatQuantity(f.quantity, f.unit)}</>
+                                    )}
+                                    {canCosts && <> · Cost {money(f.cost)}</>}
+                                  </span>
+                                  {f.terms?.mechanism && (
+                                    <span>
+                                      {f.terms.mechanism} ·{' '}
+                                      {f.terms.booked_through ?? 'Booking channel not supplied'}
+                                    </span>
+                                  )}
+                                  {f.terms?.account_holder_id && (
+                                    <span>Account holder: {person(f.terms.account_holder_id)}</span>
+                                  )}
+                                  {canCosts && f.terms?.quoted_rate && (
+                                    <span>
+                                      Quoted rate: {f.terms.quoted_rate}{' '}
+                                      {f.terms.rate_unit ?? '(unit not supplied)'} · Quote only
+                                    </span>
+                                  )}
+                                  {f.terms?.notes && <span>{f.terms.notes}</span>}
+                                  {canCosts && f.terms?.portal_price !== undefined && (
+                                    <span>
+                                      Portal cash price: {money(f.terms.portal_price)}
+                                      {f.terms?.reference_price !== undefined
+                                        ? ` · Reference: ${money(f.terms.reference_price)}`
+                                        : ''}{' '}
+                                      · Comparison evidence only
+                                    </span>
+                                  )}
+                                  {canCosts &&
+                                    f.terms?.rate_cents_numerator !== undefined &&
+                                    f.terms?.rate_points_denominator && (
+                                      <span>
+                                        Actual redemption quote:{' '}
+                                        {money(f.terms.rate_cents_numerator)} for{' '}
+                                        {Number(f.terms.rate_points_denominator).toLocaleString()}{' '}
+                                        points · No additional revenue
+                                      </span>
+                                    )}
+                                  {f.status !== 'Active' && f.status && (
+                                    <Badge tone="gray">{f.status} · original history</Badge>
+                                  )}
                                 </div>
-                              </details>
-                            )}
-                          </div>
-                        ))}
-                      {can('manage_funding') && (
-                        <button
-                          className="btn small"
-                          disabled={t.status === 'Cancelled' || t.status === 'Refund Pending'}
-                          title="Canceled travel keeps its history. Use a new component for replacement travel."
-                          onClick={() =>
-                            action('fulfill', {
-                              booking_id: b.id,
-                              travel_component_id: t.id,
-                              source_id: t.acquisition_source_id,
-                              unit: 'money',
-                            })
-                          }
-                        >
-                          Record cost / payment
-                        </button>
+                                {can('manage_funding') && (!f.status || f.status === 'Active') && (
+                                  <details className="travel-corrections">
+                                    <summary>Cost actions</summary>
+                                    <div className="traveler-record-actions">
+                                      <button
+                                        className="btn small"
+                                        onClick={() =>
+                                          action('revise_fulfillment', {
+                                            ...f,
+                                            ...f.terms,
+                                            fulfillment_id: f.id,
+                                            booking_id: b.id,
+                                            quantity:
+                                              f.quantity == null
+                                                ? undefined
+                                                : f.unit === 'money'
+                                                  ? Number(f.quantity) / 100
+                                                  : Number(f.quantity),
+                                            cost: Number(f.cost) / 100,
+                                            portal_price:
+                                              f.terms?.portal_price !== undefined
+                                                ? Number(f.terms.portal_price) / 100
+                                                : undefined,
+                                            reference_price:
+                                              f.terms?.reference_price !== undefined
+                                                ? Number(f.terms.reference_price) / 100
+                                                : undefined,
+                                            rate_cents_numerator:
+                                              f.terms?.rate_cents_numerator !== undefined
+                                                ? Number(f.terms.rate_cents_numerator) / 100
+                                                : undefined,
+                                            confirm_cost: f.terms?.cost_complete ?? true,
+                                            settled: false,
+                                            cash_method:
+                                              detail.funding.find(
+                                                (x: R) => x.id === f.funding_component_id,
+                                              )?.kind === 'Bank'
+                                                ? 'Bank'
+                                                : detail.funding.find(
+                                                      (x: R) => x.id === f.funding_component_id,
+                                                    )?.kind === 'Cash'
+                                                  ? 'Cash'
+                                                  : 'Card',
+                                          })
+                                        }
+                                      >
+                                        Edit cost / payment
+                                      </button>
+                                      <button
+                                        className="btn small"
+                                        onClick={() =>
+                                          action('reverse_fulfillment', {
+                                            booking_id: b.id,
+                                            fulfillment_id: f.id,
+                                            edit_version: f.edit_version,
+                                          })
+                                        }
+                                      >
+                                        Reverse this cost
+                                      </button>
+                                    </div>
+                                  </details>
+                                )}
+                              </div>
+                            ))}
+                        </div>
                       )}
-                      <details className="travel-corrections">
-                        <summary className="btn small">More travel actions</summary>
-                        <div className="traveler-record-actions">
-                          {can('manage_funding') && (
-                            <button
-                              className="btn small"
-                              onClick={() =>
-                                action('link_fulfillment', {
-                                  booking_id: b.id,
-                                  travel_component_id: t.id,
-                                })
-                              }
-                            >
-                              Link existing cost
-                            </button>
-                          )}
-                          {can('manage_funding') && (
-                            <button
-                              className="btn small"
-                              onClick={() =>
-                                action('confirm_travel_no_cost', {
-                                  booking_id: b.id,
-                                  travel_component_id: t.id,
-                                })
-                              }
-                            >
-                              Confirm no supplier cost
-                            </button>
-                          )}
-                          {can('issue_refunds') && (
-                            <button
-                              className="btn small danger"
-                              onClick={() => {
-                                const linked = (detail.fulfillments ?? []).filter(
-                                  (f: R) =>
-                                    f.travel_component_id === t.id &&
-                                    (!f.status || f.status === 'Active'),
-                                );
-                                action('cancel', {
-                                  booking_id: b.id,
-                                  travel_component_id: t.id,
-                                  ...(linked.length === 1
-                                    ? { funding_component_id: linked[0].funding_component_id }
-                                    : {}),
-                                });
-                              }}
-                            >
-                              {t.status === 'Cancelled'
-                                ? 'Add linked refund case'
-                                : 'Cancel this travel'}
-                            </button>
-                          )}
-                          {can('manage_funding') &&
-                            ['Cancelled', 'Refund Pending'].includes(t.status) && (
+
+                      <footer className="travel-detail-actions">
+                        {can('manage_funding') && (
+                          <button
+                            className="btn small primary"
+                            disabled={t.status === 'Cancelled' || t.status === 'Refund Pending'}
+                            title="Canceled travel keeps its history. Use a new component for replacement travel."
+                            onClick={() =>
+                              action('fulfill', {
+                                booking_id: b.id,
+                                travel_component_id: t.id,
+                                source_id: t.acquisition_source_id,
+                                unit: 'money',
+                              })
+                            }
+                          >
+                            Record cost / payment
+                          </button>
+                        )}
+                        <details className="travel-corrections travel-more-actions">
+                          <summary>More travel actions</summary>
+                          <div className="traveler-record-actions">
+                            {can('manage_funding') && (
                               <button
                                 className="btn small"
                                 onClick={() =>
-                                  action('cancellation_cost', {
+                                  action('link_fulfillment', {
                                     booking_id: b.id,
                                     travel_component_id: t.id,
                                   })
                                 }
                               >
-                                Add actual cancellation cost
+                                Link existing cost
                               </button>
                             )}
-                        </div>
-                      </details>
-                    </div>
+                            {can('manage_funding') && (
+                              <button
+                                className="btn small"
+                                onClick={() =>
+                                  action('confirm_travel_no_cost', {
+                                    booking_id: b.id,
+                                    travel_component_id: t.id,
+                                  })
+                                }
+                              >
+                                Confirm no supplier cost
+                              </button>
+                            )}
+                            {can('issue_refunds') && (
+                              <button
+                                className="btn small danger"
+                                onClick={() => {
+                                  const linked = (detail.fulfillments ?? []).filter(
+                                    (f: R) =>
+                                      f.travel_component_id === t.id &&
+                                      (!f.status || f.status === 'Active'),
+                                  );
+                                  action('cancel', {
+                                    booking_id: b.id,
+                                    travel_component_id: t.id,
+                                    ...(linked.length === 1
+                                      ? { funding_component_id: linked[0].funding_component_id }
+                                      : {}),
+                                  });
+                                }}
+                              >
+                                {t.status === 'Cancelled'
+                                  ? 'Add linked refund case'
+                                  : 'Cancel this travel'}
+                              </button>
+                            )}
+                            {can('manage_funding') &&
+                              ['Cancelled', 'Refund Pending'].includes(t.status) && (
+                                <button
+                                  className="btn small"
+                                  onClick={() =>
+                                    action('cancellation_cost', {
+                                      booking_id: b.id,
+                                      travel_component_id: t.id,
+                                    })
+                                  }
+                                >
+                                  Add actual cancellation cost
+                                </button>
+                              )}
+                          </div>
+                        </details>
+                      </footer>
+                    </article>
                   ))}
                 </div>
               </Card>
@@ -3756,6 +3902,21 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             <ChannelIcon size={11} aria-hidden />
                             {channelLabel}
                           </span>
+                          {draft.intake_confidence === 'low' && (
+                            <span className="intake-draft-badge intake-draft-badge-warn">
+                              Needs review
+                            </span>
+                          )}
+                          {draft.intake_ai_generated && (
+                            <span className="intake-draft-badge intake-draft-badge-ai">
+                              AI
+                            </span>
+                          )}
+                          {draft.intake_pattern && (
+                            <span className="intake-draft-badge intake-draft-badge-pattern">
+                              Pattern
+                            </span>
+                          )}
                           {canAction('booking_draft') && (
                             <button
                               type="button"
@@ -3853,6 +4014,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 mailbox: draft.intake_mailbox,
                                 filename: draft.intake_filename,
                               })}
+                            </p>
+                          )}
+                          {Array.isArray(draft.intake_missing) && draft.intake_missing.length > 0 && (
+                            <p className="intake-draft-missing">
+                              Missing: {draft.intake_missing.join(', ')}
                             </p>
                           )}
                           <dl className="intake-draft-meta">

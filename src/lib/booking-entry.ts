@@ -91,6 +91,10 @@ export const operationalEntry = z.object({
     })
     .optional(),
   draft_id: uuid.optional(),
+  /** How the booking was captured: whatsapp | email | staff_paste | staff_upload | manual. */
+  intake_source: z
+    .enum(['whatsapp', 'email', 'staff_paste', 'staff_upload', 'instinct', 'manual'])
+    .optional(),
   source_method_id: uuid.nullish(),
   award_program_id: uuid.nullish(),
   new_travelers: z.array(label).max(100).default([]),

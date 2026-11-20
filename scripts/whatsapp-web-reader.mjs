@@ -3,8 +3,8 @@
  * Padova WhatsApp Web QR helper (Baileys — unofficial PC link).
  *
  * Links a multi-device WhatsApp session on this PC (scan QR like WhatsApp Web),
- * reads inbound reservation text → Padova booking_draft (Claude path on server).
- * Never auto-replies to customers.
+ * reads inbound reservation text / PDF / images / voice notes → Padova booking_draft.
+ * Reacts + short status reply after filing (no invented money).
  *
  * Optional Owner-only alerts (professional / allowlisted):
  *   allow_owner_alerts=true + owner_phones in helper config
@@ -103,6 +103,8 @@ async function loadHelperConfig() {
         reminders_url: 'PADOVA_WHATSAPP_REMINDERS_URL',
         allow_owner_alerts: 'PADOVA_WHATSAPP_ALLOW_OWNER_ALERTS',
         alert_interval_minutes: 'PADOVA_WHATSAPP_ALERT_INTERVAL_MINUTES',
+        reply_intake_status: 'PADOVA_WHATSAPP_REPLY_INTAKE_STATUS',
+        react_on_seen: 'PADOVA_WHATSAPP_REACT_ON_SEEN',
       };
       for (const [from, envKey] of Object.entries(map)) {
         const value = data[from];
@@ -143,6 +145,17 @@ const uiHost = process.env.PADOVA_WHATSAPP_UI_HOST?.trim() || '127.0.0.1';
 const openBrowser = process.env.PADOVA_WHATSAPP_OPEN_BROWSER !== '0';
 const allowOwnerAlerts = /^(1|true|yes)$/i.test(
   String(process.env.PADOVA_WHATSAPP_ALLOW_OWNER_ALERTS || '').trim(),
+);
+/** React 👀 when a reservation message is seen (default on). */
+const reactOnSeen = !/^(0|false|no)$/i.test(
+  String(process.env.PADOVA_WHATSAPP_REACT_ON_SEEN || 'true').trim(),
+);
+/**
+ * Short intake status reply after filing (default off — do not message users).
+ * Opt-in via reply_intake_status: true. Status only — never invents money.
+ */
+const replyIntakeStatus = /^(1|true|yes)$/i.test(
+  String(process.env.PADOVA_WHATSAPP_REPLY_INTAKE_STATUS || 'false').trim(),
 );
 const ownerPhones = String(process.env.PADOVA_WHATSAPP_OWNER_PHONES || '')
   .split(/[,;\s]+/)
@@ -357,6 +370,89 @@ function isPdfDocumentMessage(msg) {
   return mime.includes('pdf') || /\.pdf$/i.test(name);
 }
 
+/** Screenshot / photo reservation (Capital One, airline apps, etc.). */
+function isImageMediaMessage(msg) {
+  const m = msg?.message;
+  if (!m) return false;
+  if (m.imageMessage) return true;
+  const doc = m.documentMessage;
+  if (!doc) return false;
+  const mime = String(doc.mimetype || '').toLowerCase();
+  const name = String(doc.fileName || doc.title || '');
+  return mime.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(name);
+}
+
+function imageMeta(msg) {
+  const img = msg?.message?.imageMessage;
+  if (img) {
+    const mime = String(img.mimetype || 'image/jpeg').toLowerCase();
+    const ext = mime.includes('png')
+      ? 'png'
+      : mime.includes('webp')
+        ? 'webp'
+        : mime.includes('gif')
+          ? 'gif'
+          : 'jpg';
+    return {
+      mime_type: mime.startsWith('image/') ? mime : 'image/jpeg',
+      filename: `whatsapp-${msg.key?.id || 'image'}.${ext}`,
+    };
+  }
+  const doc = msg?.message?.documentMessage;
+  if (doc) {
+    return {
+      mime_type: String(doc.mimetype || 'image/jpeg'),
+      filename: doc.fileName || doc.title || `whatsapp-${msg.key?.id || 'image'}.jpg`,
+    };
+  }
+  return { mime_type: 'image/jpeg', filename: 'whatsapp-image.jpg' };
+}
+
+/** Voice notes (PTT) + audio files. */
+function isAudioMediaMessage(msg) {
+  const m = msg?.message;
+  if (!m) return false;
+  if (m.audioMessage) return true;
+  const doc = m.documentMessage;
+  if (!doc) return false;
+  const mime = String(doc.mimetype || '').toLowerCase();
+  const name = String(doc.fileName || doc.title || '');
+  return (
+    mime.startsWith('audio/') ||
+    mime === 'application/ogg' ||
+    /\.(ogg|opus|mp3|m4a|wav|webm|aac|oga)$/i.test(name)
+  );
+}
+
+function audioMeta(msg) {
+  const audio = msg?.message?.audioMessage;
+  if (audio) {
+    const mime = String(audio.mimetype || 'audio/ogg; codecs=opus').toLowerCase();
+    const ptt = Boolean(audio.ptt);
+    const base = mime.split(';')[0].trim();
+    const ext =
+      base.includes('mpeg') || base.includes('mp3')
+        ? 'mp3'
+        : base.includes('mp4') || base.includes('m4a')
+          ? 'm4a'
+          : base.includes('wav')
+            ? 'wav'
+            : 'ogg';
+    return {
+      mime_type: base || 'audio/ogg',
+      filename: `whatsapp-${ptt ? 'voice' : 'audio'}-${msg.key?.id || 'clip'}.${ext}`,
+    };
+  }
+  const doc = msg?.message?.documentMessage;
+  if (doc) {
+    return {
+      mime_type: String(doc.mimetype || 'audio/ogg'),
+      filename: doc.fileName || doc.title || `whatsapp-audio-${msg.key?.id || 'clip'}.ogg`,
+    };
+  }
+  return { mime_type: 'audio/ogg', filename: 'whatsapp-voice.ogg' };
+}
+
 function jidToNumber(jid) {
   if (!jid) return undefined;
   const user = String(jid).split('@')[0] || '';
@@ -376,6 +472,50 @@ async function resolveChatName(sock, jid) {
   }
   const num = jidToNumber(jid);
   return num ? `wa:${num}` : jid;
+}
+
+async function reactToMessage(sock, msg, emoji = '👀') {
+  if (!sock || !msg?.key || msg.key.fromMe) return;
+  try {
+    await sock.sendMessage(msg.key.remoteJid, {
+      react: { text: emoji, key: msg.key },
+    });
+  } catch (err) {
+    console.warn(
+      `[whatsapp-web-reader] react failed: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
+async function sendIntakeStatusReply(sock, remoteJid, text, fromMe) {
+  if (!replyIntakeStatus || !sock || !text || fromMe) return;
+  try {
+    await sock.sendMessage(remoteJid, { text: String(text).slice(0, 1200) });
+  } catch (err) {
+    console.warn(
+      `[whatsapp-web-reader] status reply failed: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
+/**
+ * Immediate Owner-only alert from intake API (missing fields / draft-only / failure).
+ * Never sends free-form chat — allowlisted owner_phones only.
+ */
+async function sendOwnerImmediateAlert(sock, text) {
+  if (!allowOwnerAlerts || !sock || !text) return;
+  if (!ownerPhones.length) {
+    console.warn(
+      '[whatsapp-web-reader] owner_alert_text present but owner_phones empty — skip',
+    );
+    return;
+  }
+  for (const phone of ownerPhones) {
+    const jid = phoneToJid(phone);
+    if (!jid) continue;
+    await sock.sendMessage(jid, { text: String(text).slice(0, 3500) });
+    console.log(`[owner-alert] immediate intake alert → ${phone}`);
+  }
 }
 
 async function postDraft(payload) {
@@ -407,9 +547,13 @@ async function postDraft(payload) {
     data = { raw: text };
   }
   if (!response.ok) {
-    throw new Error(
+    const err = new Error(
       `POST ${response.status}: ${typeof data === 'object' ? JSON.stringify(data) : text}`,
     );
+    err.owner_alert_text = data?.owner_alert_text || null;
+    err.skipped_chatter = Boolean(data?.skipped_chatter);
+    err.customer_status_text = data?.customer_status_text || null;
+    throw err;
   }
   return data;
 }
@@ -738,15 +882,22 @@ async function startReader() {
           )
             continue;
 
-          const text = extractText(msg).trim();
+          let text = extractText(msg).trim();
           const pdfDoc = isPdfDocumentMessage(msg);
-          if (!text && !pdfDoc) continue;
+          const imageMedia = isImageMediaMessage(msg);
+          const audioMedia = isAudioMediaMessage(msg);
+          if (!text && !pdfDoc && !imageMedia && !audioMedia) continue;
 
           const id = messageKeyId(msg);
           if (processed.processed[id]) continue;
 
-          // Text-only: skip chatter unless PDF (server extracts + re-checks booking-ness).
-          if (!pdfDoc && !looksLikeBookingRelatedWhatsApp(text)) {
+          // Text-only: skip chatter unless PDF/image/voice (server extract + re-checks).
+          if (
+            !pdfDoc &&
+            !imageMedia &&
+            !audioMedia &&
+            !looksLikeBookingRelatedWhatsApp(text)
+          ) {
             processed.processed[id] = new Date().toISOString();
             await saveState(processed);
             console.log(
@@ -765,7 +916,8 @@ async function startReader() {
           let file_base64;
           let filename;
           let mime_type;
-          if (pdfDoc) {
+          if (pdfDoc || imageMedia || audioMedia) {
+            const kind = pdfDoc ? 'PDF' : imageMedia ? 'image' : 'voice/audio';
             try {
               const buf = await downloadMediaMessage(
                 msg,
@@ -778,54 +930,113 @@ async function startReader() {
               );
               const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
               if (bytes.length > 10 * 1024 * 1024) {
-                console.log('[skip] PDF larger than 10 MB');
+                console.log(`[skip] ${kind} larger than 10 MB`);
                 processed.processed[id] = new Date().toISOString();
                 await saveState(processed);
                 continue;
               }
               file_base64 = bytes.toString('base64');
-              filename =
-                msg.message.documentMessage.fileName ||
-                msg.message.documentMessage.title ||
-                `whatsapp-${msg.key?.id || id}.pdf`;
-              mime_type = msg.message.documentMessage.mimetype || 'application/pdf';
+              if (pdfDoc) {
+                filename =
+                  msg.message.documentMessage.fileName ||
+                  msg.message.documentMessage.title ||
+                  `whatsapp-${msg.key?.id || id}.pdf`;
+                mime_type = msg.message.documentMessage.mimetype || 'application/pdf';
+              } else if (imageMedia) {
+                const meta = imageMeta(msg);
+                filename = meta.filename;
+                mime_type = meta.mime_type;
+              } else {
+                const meta = audioMeta(msg);
+                filename = meta.filename;
+                mime_type = meta.mime_type;
+              }
             } catch (err) {
               console.error(
-                `[whatsapp-web-reader] PDF download failed: ${err instanceof Error ? err.message : err}`,
+                `[whatsapp-web-reader] ${kind} download failed: ${err instanceof Error ? err.message : err}`,
               );
+              // Never silent-drop reservation media — post note for staff.
               if (!text) {
-                processed.processed[id] = new Date().toISOString();
-                await saveState(processed);
-                continue;
+                text = pdfDoc
+                  ? `WhatsApp PDF could not be downloaded for extract. Filename: ${
+                      msg.message.documentMessage.fileName ||
+                      msg.message.documentMessage.title ||
+                      'document.pdf'
+                    }. Staff must open chat and re-send or paste.`
+                  : imageMedia
+                    ? `WhatsApp screenshot/image could not be downloaded for OCR. Staff must open chat and re-send, or paste confirmation text.`
+                    : `WhatsApp voice note could not be downloaded for transcription. Staff must listen or ask the sender to paste text.`;
               }
             }
           }
 
-          // Intentionally no sock.sendMessage / no replies — read-only intake.
-          const result = await postDraft({
-            chat_name: chatName,
-            from_number: fromNumber,
-            text,
-            received_at: receivedAt,
-            message_id: msg.key?.id || id,
-            file_base64,
-            filename,
-            mime_type,
-          });
+          // Seen → react; after filing → short status reply (no invented money).
+          if (reactOnSeen) await reactToMessage(sock, msg, '👀');
+
+          let result;
+          try {
+            result = await postDraft({
+              chat_name: chatName,
+              from_number: fromNumber,
+              text,
+              received_at: receivedAt,
+              message_id: msg.key?.id || id,
+              file_base64,
+              filename,
+              mime_type,
+            });
+          } catch (postErr) {
+            if (reactOnSeen) await reactToMessage(sock, msg, '⚠️');
+            await sendIntakeStatusReply(
+              sock,
+              remoteJid,
+              postErr?.customer_status_text ||
+                'Padova received your message but could not file it automatically. Staff will review.',
+              msg.key?.fromMe,
+            );
+            throw postErr;
+          }
 
           processed.processed[id] = new Date().toISOString();
           await saveState(processed);
 
+          if (reactOnSeen) {
+            await reactToMessage(sock, msg, result?.live_booking ? '✅' : '📝');
+          }
+          await sendIntakeStatusReply(
+            sock,
+            remoteJid,
+            result?.customer_status_text,
+            msg.key?.fromMe,
+          );
+
+          if (result?.owner_alert_text) {
+            try {
+              await sendOwnerImmediateAlert(sock, result.owner_alert_text);
+            } catch (alertErr) {
+              console.error(
+                `[whatsapp-web-reader] owner alert failed: ${
+                  alertErr instanceof Error ? alertErr.message : alertErr
+                }`,
+              );
+            }
+          }
+
           const draftId = result?.draft?.id || result?.id || '?';
           const guest = result?.draft?.guest_name || result?.guest_name || '';
+          const liveBit = result?.live_booking
+            ? ` live=${result.booking_code || result.booking_id}`
+            : '';
+          const conf = result?.intake_confidence ? ` conf=${result.intake_confidence}` : '';
+          const aiBit = result?.ai_created ? ' AI' : '';
           setLive({
             draftsPosted: live.draftsPosted + 1,
             lastDraftAt: new Date().toISOString(),
             lastChat: chatName,
-            detail: `Listening. Last draft ${draftId}${guest ? ` (${guest})` : ''}.`,
+            detail: `Listening. Last draft ${draftId}${guest ? ` (${guest})` : ''}${liveBit}${conf}${aiBit}.`,
           });
           console.log(
-            `[draft] ${draftId}${guest ? ` (${guest})` : ''} ← ${chatName}${
+            `[draft] ${draftId}${guest ? ` (${guest})` : ''}${liveBit}${conf}${aiBit} ← ${chatName}${
               msg.key?.fromMe ? ' [from linked phone]' : ''
             }`,
           );
@@ -833,6 +1044,13 @@ async function startReader() {
           console.error(
             `[whatsapp-web-reader] message failed: ${err instanceof Error ? err.message : err}`,
           );
+          if (err?.owner_alert_text && !err?.skipped_chatter) {
+            try {
+              await sendOwnerImmediateAlert(sock, err.owner_alert_text);
+            } catch {
+              /* ignore secondary */
+            }
+          }
         }
       }
     });

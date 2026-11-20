@@ -923,6 +923,16 @@ export default function BookingEntry(props: Props) {
     dateOrderIssue,
   ]);
   const customerMissing = attemptedSave && !v.customer_id;
+  const travelStartMissing =
+    attemptedSave &&
+    !(v.trip_type === 'Multi-City' ? v.segments?.[0]?.date : v.travel_start);
+  const travelEndMissing =
+    attemptedSave &&
+    ((v.product === 'Flight' && v.trip_type === 'Round Trip') ||
+      ['Hotel', 'Car'].includes(v.product)) &&
+    !v.travel_end;
+  const otherDescriptionMissing =
+    attemptedSave && v.product === 'Other' && !String(v.description || '').trim();
   const percentPricing = v.pricing_method === 'Percentage Off Comparable Online Price';
   let calculatedSale: number | undefined;
   try {
@@ -1688,6 +1698,22 @@ export default function BookingEntry(props: Props) {
               : undefined,
           version: 1,
           draft_id: v.draft_id,
+          intake_source: (() => {
+            const src = String(
+              v.intake_provenance?.source ||
+                props.config.defaults.intake_provenance?.source ||
+                '',
+            ).trim();
+            if (
+              src === 'whatsapp' ||
+              src === 'email' ||
+              src === 'staff_paste' ||
+              src === 'staff_upload' ||
+              src === 'instinct'
+            )
+              return src;
+            return v.draft_id ? undefined : ('manual' as const);
+          })(),
           source_method_id: v.source_method_id || null,
           award_program_id: method?.award ? v.award_program_id || null : null,
           new_travelers: v.new_travelers,
@@ -1795,13 +1821,17 @@ export default function BookingEntry(props: Props) {
             {state.developmentData && (
               <strong className="test-dialog-label">TEST / SYNTHETIC — PRACTICE ONLY</strong>
             )}
-            <p>Customer, travel and payment details in one place.</p>
+            <p>Enter each fact once — money can stay Unknown until known.</p>
           </div>
           <button type="button" onClick={closeBooking} disabled={busy} aria-label="Close dialog">
             ×
           </button>
         </div>
         <div className="modal-body">
+          <p className="booking-essentials-hint" role="note">
+            <strong>Need to save:</strong> Customer · Product · Travel dates · Booked Through.
+            Money, PNR, and affiliate can stay empty or Unknown — use <em>Save Draft</em> anytime.
+          </p>
           {error && !/select a customer/i.test(error) ? (
             <div
               ref={errorBannerRef}
@@ -1836,9 +1866,10 @@ export default function BookingEntry(props: Props) {
           >
             <summary className="booking-quick-paste-summary">
               <span className="booking-quick-paste-summary-copy">
-                <strong>Quick paste / intake</strong>
+                <strong>Quick start</strong>
                 <small>
-                  Paste or drop a file — we fill matching fields; you review before Save Booking.
+                  Paste or drop a reservation — we fill matching fields; you review before Save
+                  Booking.
                 </small>
               </span>
               <span
@@ -2118,54 +2149,48 @@ export default function BookingEntry(props: Props) {
                 ) : null}
               </div>
               {can('manage_commissions') && (
-                <>
-                  <p className="full booking-commission-model">
-                    <strong>Affiliate on this booking</strong> (below) = Padova owes that org.
-                    After Save, <strong>Add commission</strong> = who owes Padova (IATA ~90% and
-                    optional secondary). Keep those three lines separate — never one combined amount.
-                  </p>
-                  <details className="optional-block" open={Boolean(v.referring_organization_id)}>
-                    <OptionalSummary
-                      title="Referring organization (affiliate)"
-                      hint="Optional — applies that org’s accepted deal as Commission Payable"
-                      filled={v.referring_organization_id ? 1 : 0}
+                <details
+                  className="optional-block"
+                  open={Boolean(v.referring_organization_id) || undefined}
+                >
+                  <OptionalSummary
+                    title="Referring organization (affiliate)"
+                    hint="Optional — Padova owes that org; IATA / secondary stay under Add commission after Save"
+                    filled={v.referring_organization_id ? 1 : 0}
+                  />
+                  <Field label="Referring organization (affiliate)" full>
+                    <SearchableSelect
+                      id="entry-referring_organization_id"
+                      label="Referring organization (affiliate)"
+                      value={v.referring_organization_id ?? ''}
+                      options={[
+                        {
+                          value: '',
+                          label: 'None — no affiliate on this booking',
+                        },
+                        ...(state.referralOrganizations ?? []).map((r: R) => ({
+                          value: r.id,
+                          label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
+                            r.terms?.calculation === 'fixed'
+                              ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
+                              : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
+                          }`,
+                        })),
+                      ]}
+                      onChange={(id) => change('referring_organization_id', id || '')}
+                      emptyLabel="No matching organization — pick None or set up Partnerships"
+                      hideCount
                     />
-                    <Field label="Referring organization (affiliate)" full>
-                      <SearchableSelect
-                        id="entry-referring_organization_id"
-                        label="Referring organization (affiliate)"
-                        value={v.referring_organization_id ?? ''}
-                        options={[
-                          {
-                            value: '',
-                            label: 'None — no affiliate on this booking',
-                          },
-                          ...(state.referralOrganizations ?? []).map((r: R) => ({
-                            value: r.id,
-                            label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
-                              r.terms?.calculation === 'fixed'
-                                ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
-                                : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
-                            }`,
-                          })),
-                        ]}
-                        onChange={(id) => change('referring_organization_id', id || '')}
-                        emptyLabel="No matching organization — pick None or set up Partnerships"
-                        hideCount
-                      />
-                      <small>
-                        Marks who referred this booking and creates the payable Padova owes that org
-                        (manual quarterly). Who owes Padova (IATA / secondary) is added after Save via
-                        Add commission — not duplicated here.
-                        {!state.partnershipsEnabled
-                          ? ' Partnerships CRM is not installed in this database.'
-                          : !(state.referralOrganizations ?? []).length
-                            ? ' No orgs with accepted agreement + accounting payee yet — set up in Partnerships first.'
-                            : ''}
-                      </small>
-                    </Field>
-                  </details>
-                </>
+                    <small>
+                      Creates the org payable only (manual quarterly). Who owes Padova is separate.
+                      {!state.partnershipsEnabled
+                        ? ' Partnerships CRM is not installed in this database.'
+                        : !(state.referralOrganizations ?? []).length
+                          ? ' No orgs with accepted agreement + accounting payee yet — set up in Partnerships first.'
+                          : ''}
+                    </small>
+                  </Field>
+                </details>
               )}
               <Field label="Travelers" full>
                 <div className="traveler-chips">
@@ -2361,24 +2386,31 @@ export default function BookingEntry(props: Props) {
                 </div>
               )}
               {onInlineCommand && (
-                <BookingTicketing
-                  cache={ticketingCache.current}
-                  people={v.traveler_ids
-                    .map((id: string) => rows('parties').find((p: R) => p.id === id))
-                    .filter(Boolean)}
-                  date={
-                    v.product === 'Flight' && v.trip_type === 'Multi-City'
-                      ? (v.segments?.[0]?.date ?? '')
-                      : (v.travel_start ?? '')
-                  }
-                  state={state}
-                  command={onInlineCommand}
-                  onFull={setTravelerDetailsId}
-                  onDirty={(id, dirty) => {
-                    if (dirty) ticketingDirty.current.add(id);
-                    else ticketingDirty.current.delete(id);
-                  }}
-                />
+                <details className="optional-block">
+                  <OptionalSummary
+                    title="Traveler travel docs (optional)"
+                    hint="Passport / ticket details — skip unless needed now"
+                    filled={v.traveler_ids.length ? 1 : 0}
+                  />
+                  <BookingTicketing
+                    cache={ticketingCache.current}
+                    people={v.traveler_ids
+                      .map((id: string) => rows('parties').find((p: R) => p.id === id))
+                      .filter(Boolean)}
+                    date={
+                      v.product === 'Flight' && v.trip_type === 'Multi-City'
+                        ? (v.segments?.[0]?.date ?? '')
+                        : (v.travel_start ?? '')
+                    }
+                    state={state}
+                    command={onInlineCommand}
+                    onFull={setTravelerDetailsId}
+                    onDirty={(id, dirty) => {
+                      if (dirty) ticketingDirty.current.add(id);
+                      else ticketingDirty.current.delete(id);
+                    }}
+                  />
+                </details>
               )}
             </section>
             <section className="booking-section full form-grid" id="booking-travel">
@@ -2390,10 +2422,10 @@ export default function BookingEntry(props: Props) {
                 entity(
                   'provider_id',
                   v.product === 'Flight'
-                    ? 'Airline'
+                    ? 'Travel provider (airline)'
                     : v.product === 'Hotel'
-                      ? 'Property / Hotel'
-                      : 'Rental company',
+                      ? 'Travel provider (property)'
+                      : 'Travel provider (rental)',
                   'parties',
                   'party',
                   { kind: 'company', roles: [providerRole(v.product)] },
@@ -2578,7 +2610,7 @@ export default function BookingEntry(props: Props) {
                                 if (location && q) params.set('match', 'any');
                                 if (!location && !q) {
                                   setHotelDirectoryNote(
-                                    'Pick Property / Hotel or enter City first, then look up tips.',
+                                    'Pick Travel provider (property) or enter City first, then look up tips.',
                                   );
                                   return;
                                 }
@@ -2735,23 +2767,64 @@ export default function BookingEntry(props: Props) {
                   {text('dropoff_location', 'Drop-off location')}
                 </>
               )}
-              {v.product === 'Other' && text('description', 'What is it?', 'text', true)}
-              {!(v.product === 'Flight' && v.trip_type === 'Multi-City') &&
-                text(
-                  'travel_start',
-                  v.product === 'Hotel' ? 'Check-in date' : dateLabels.start,
-                  'date',
-                )}
-              {(v.product !== 'Flight' || v.trip_type === 'Round Trip') &&
-                text(
-                  'travel_end',
-                  v.product === 'Hotel'
-                    ? 'Check-out date'
-                    : v.product === 'Car'
-                      ? 'Drop-off date'
-                      : dateLabels.end!,
-                  'date',
-                )}
+              {v.product === 'Other' && (
+                <div
+                  className={
+                    otherDescriptionMissing
+                      ? 'booking-field-wrap is-invalid full'
+                      : 'booking-field-wrap full'
+                  }
+                >
+                  {text('description', 'What is it?', 'text', true)}
+                  {otherDescriptionMissing ? (
+                    <small className="field-hint-error" role="alert">
+                      Enter what this booking is for, or use Save Draft.
+                    </small>
+                  ) : null}
+                </div>
+              )}
+              {!(v.product === 'Flight' && v.trip_type === 'Multi-City') && (
+                <div
+                  className={
+                    travelStartMissing
+                      ? 'booking-field-wrap is-invalid'
+                      : 'booking-field-wrap'
+                  }
+                >
+                  {text(
+                    'travel_start',
+                    v.product === 'Hotel' ? 'Check-in date' : dateLabels.start,
+                    'date',
+                  )}
+                  {travelStartMissing ? (
+                    <small className="field-hint-error" role="alert">
+                      Enter the travel date, or use Save Draft.
+                    </small>
+                  ) : null}
+                </div>
+              )}
+              {(v.product !== 'Flight' || v.trip_type === 'Round Trip') && (
+                <div
+                  className={
+                    travelEndMissing ? 'booking-field-wrap is-invalid' : 'booking-field-wrap'
+                  }
+                >
+                  {text(
+                    'travel_end',
+                    v.product === 'Hotel'
+                      ? 'Check-out date'
+                      : v.product === 'Car'
+                        ? 'Drop-off date'
+                        : dateLabels.end!,
+                    'date',
+                  )}
+                  {travelEndMissing ? (
+                    <small className="field-hint-error" role="alert">
+                      Enter {dateLabels.end}, or use Save Draft.
+                    </small>
+                  ) : null}
+                </div>
+              )}
               {dateOrderIssue && (
                 <p className="form-error full date-order-error" role="alert">
                   {dateOrderIssue}
@@ -3029,7 +3102,7 @@ export default function BookingEntry(props: Props) {
                             <>
                               {entity(
                                 `seller-${i}`,
-                                'Seller',
+                                'Purchased From',
                                 'parties',
                                 'party',
                                 { roles: ['seller'] },
