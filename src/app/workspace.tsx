@@ -280,6 +280,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [followupSelected, setFollowupSelected] = useState('Needs Attention'),
     [bookingPage, setBookingPage] = useState(1),
     [tablePage, setTablePage] = useState(1),
+    [activityPage, setActivityPage] = useState(1),
     [expectedPage, setExpectedPage] = useState(1),
     [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7)),
     [day, setDay] = useState(''),
@@ -4450,164 +4451,171 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               onClick={() => {
                 setFilter(v);
                 setTablePage(1);
+                setActivityPage(1);
               }}
             >
               {pretty(v)}
             </button>
           ))}
         </div>
-        <Card title="Cash, card and bank activity" count={activity.length}>
-          <p className="section-body">
-            Actual money movements from the accounting ledger, including direct Padova payments and
-            refunds. Each movement appears once.
-          </p>
+        <div className="payments-stack">
           {(() => {
-            const activityPager = pageSlice<R>(activity, tablePage, 12);
+            const activityPager = pageSlice<R>(activity, activityPage, 12);
             return (
-              <>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date / booking</th>
-                  <th>Activity</th>
-                  <th>Account / reference</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activityPager.items.map((a: R) => (
-                  <tr key={a.id}>
-                    <td>
-                      {dateLabel(a.date)}
-                      {a.booking_id && (
-                        <button
-                          className="booking-code"
-                          onClick={() => openRecord('booking', a.booking_id)}
-                        >
-                          {a.code}
-                        </button>
-                      )}
-                    </td>
-                    <td>
-                      {a.event}
-                      <small>{a.actor}</small>
-                    </td>
-                    <td>
-                      {a.account}
-                      <small>{a.reference}</small>
-                    </td>
-                    <td className="money">{money(a.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <ListPager
-            page={activityPager.page}
-            totalPages={activityPager.totalPages}
-            total={activityPager.total}
-            from={activityPager.from}
-            to={activityPager.to}
-            onPage={setTablePage}
-            label="activity rows"
-          />
-              </>
+              <div className="payments-block">
+                <Card title="Cash, card and bank activity" count={activity.length}>
+                  <p className="section-body payments-card-intro">
+                    Actual money movements from the accounting ledger, including direct Padova
+                    payments and refunds. Each movement appears once.
+                  </p>
+                  <div className="table-wrap payments-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date / booking</th>
+                          <th>Activity</th>
+                          <th>Account / reference</th>
+                          <th>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activityPager.items.map((a: R) => (
+                          <tr key={a.id}>
+                            <td>
+                              {dateLabel(a.date)}
+                              {a.booking_id && (
+                                <button
+                                  className="booking-code"
+                                  onClick={() => openRecord('booking', a.booking_id)}
+                                >
+                                  {a.code}
+                                </button>
+                              )}
+                            </td>
+                            <td>
+                              {a.event}
+                              <small>{a.actor}</small>
+                            </td>
+                            <td>
+                              {a.account}
+                              <small>{a.reference}</small>
+                            </td>
+                            <td className="money">{money(a.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+                <ListPager
+                  page={activityPager.page}
+                  totalPages={activityPager.totalPages}
+                  total={activityPager.total}
+                  from={activityPager.from}
+                  to={activityPager.to}
+                  onPage={setActivityPage}
+                  label="activity rows"
+                />
+              </div>
             );
           })()}
-        </Card>
-        <Card title="Receipts, payments and allocations" count={list.length}>
           {(() => {
             const paymentPager = pageSlice<R>(list, tablePage, 12);
             return (
-              <>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Payer / payee</th>
-                  <th>Direction</th>
-                  <th>Date / reference</th>
-                  <th>Method</th>
-                  <th className="money">Amount</th>
-                  <th className="money">Unallocated</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paymentPager.items.map((p: R) => (
-                  <tr key={p.id}>
-                    <td>
-                      <strong>{p.party}</strong>
-                      <small>{p.id.slice(0, 8)}</small>
-                    </td>
-                    <td>
-                      <Badge tone={['customer', 'commission'].includes(p.direction) ? '' : 'gray'}>
-                        {pretty(p.direction)}
-                      </Badge>
-                    </td>
-                    <td>
-                      {dateLabel(p.paid_on)}
-                      <small>{p.reference || 'No reference'}</small>
-                    </td>
-                    <td>
-                      {p.method}
-                      <small>{p.verification}</small>
-                    </td>
-                    <td className="money">{money(p.current_amount)}</td>
-                    <td className="money">
-                      {['customer', 'supplier', 'commission'].includes(p.direction)
-                        ? money(
-                            Number(p.current_amount) -
-                              Number(p.allocated) -
-                              Number(p.commission_allocated),
-                          )
-                        : '—'}
-                    </td>
-                    <td>
-                      {canPay && ['customer', 'supplier'].includes(p.direction) && (
-                        <button
-                          className="btn small"
-                          onClick={() => action('allocate', { payment_id: p.id })}
-                        >
-                          Allocate
-                        </button>
-                      )}{' '}
-                      {canPay &&
-                        (p.direction === 'customer' ||
-                          (p.direction === 'supplier' && can('manage_funding'))) && (
-                          <button
-                            className="btn small"
-                            onClick={() =>
-                              action('correct_payment', {
-                                payment_id: p.id,
-                                amount: Number(p.current_amount) / 100,
-                              })
-                            }
-                          >
-                            Correct
-                          </button>
-                        )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <ListPager
-            page={paymentPager.page}
-            totalPages={paymentPager.totalPages}
-            total={paymentPager.total}
-            from={paymentPager.from}
-            to={paymentPager.to}
-            onPage={setTablePage}
-            label="payments"
-          />
-              </>
+              <div className="payments-block">
+                <Card title="Receipts, payments and allocations" count={list.length}>
+                  <div className="table-wrap payments-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Payer / payee</th>
+                          <th>Direction</th>
+                          <th>Date / reference</th>
+                          <th>Method</th>
+                          <th className="money">Amount</th>
+                          <th className="money">Unallocated</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paymentPager.items.map((p: R) => (
+                          <tr key={p.id}>
+                            <td>
+                              <strong>{p.party}</strong>
+                              <small>{p.id.slice(0, 8)}</small>
+                            </td>
+                            <td>
+                              <Badge
+                                tone={
+                                  ['customer', 'commission'].includes(p.direction) ? '' : 'gray'
+                                }
+                              >
+                                {pretty(p.direction)}
+                              </Badge>
+                            </td>
+                            <td>
+                              {dateLabel(p.paid_on)}
+                              <small>{p.reference || 'No reference'}</small>
+                            </td>
+                            <td>
+                              {p.method}
+                              <small>{p.verification}</small>
+                            </td>
+                            <td className="money">{money(p.current_amount)}</td>
+                            <td className="money">
+                              {['customer', 'supplier', 'commission'].includes(p.direction)
+                                ? money(
+                                    Number(p.current_amount) -
+                                      Number(p.allocated) -
+                                      Number(p.commission_allocated),
+                                  )
+                                : '—'}
+                            </td>
+                            <td className="payments-actions">
+                              {canPay && ['customer', 'supplier'].includes(p.direction) && (
+                                <button
+                                  className="btn small"
+                                  onClick={() => action('allocate', { payment_id: p.id })}
+                                >
+                                  Allocate
+                                </button>
+                              )}
+                              {canPay &&
+                                (p.direction === 'customer' ||
+                                  (p.direction === 'supplier' && can('manage_funding'))) && (
+                                  <button
+                                    className="btn small"
+                                    onClick={() =>
+                                      action('correct_payment', {
+                                        payment_id: p.id,
+                                        amount: Number(p.current_amount) / 100,
+                                      })
+                                    }
+                                  >
+                                    Correct
+                                  </button>
+                                )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {!list.length && <Empty />}
+                </Card>
+                <ListPager
+                  page={paymentPager.page}
+                  totalPages={paymentPager.totalPages}
+                  total={paymentPager.total}
+                  from={paymentPager.from}
+                  to={paymentPager.to}
+                  onPage={setTablePage}
+                  label="payments"
+                />
+              </div>
             );
           })()}
-          {!list.length && <Empty />}
-        </Card>
+        </div>
       </>
     );
   } else if (page === 'Travel Assets') {
