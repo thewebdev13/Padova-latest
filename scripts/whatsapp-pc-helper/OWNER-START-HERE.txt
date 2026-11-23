@@ -1,44 +1,36 @@
-Padova WhatsApp helper (Owner PC) — professional Baileys link
-=============================================================
+Padova WhatsApp helper (Owner + Staff PC) — Baileys link
+========================================================
+
+Login once (important)
+- First run: scan QR once (WhatsApp → Linked devices).
+- Later days: just start the helper — it reuses the saved login on this PC.
+- Saved under your user folder (~/.padova/…), so updating/unzipping a new
+  helper zip does NOT force a new QR.
+- New QR only if: you ran logout, cleared Linked devices on the phone,
+  or WhatsApp itself asks to re-link.
 
 What this does
-- Links WhatsApp on THIS computer (like WhatsApp Web / Linked devices).
-- Reads incoming reservations in all common formats:
-  text · PDF · screenshots/images · voice notes (Whisper transcript)
-  → Padova drafts / AI booking path.
-- When a reservation is seen: reacts 👀 (👀 / ✅ / 📝 / ⚠️). No chat text
-  to the customer by default — filing stays silent in the thread.
-- AI-created bookings are tagged AI in Padova so staff books stay distinct.
-- Optional: Owner reminder digests (missing info, unpaid, Needs Review).
-- Optional only: reply_intake_status: true if you want a short filed/failed
-  line in the same chat (off by default so users are not messaged).
+- Links WhatsApp on THIS computer.
+- Reads incoming reservations: text · PDF · screenshots · voice notes
+  → Padova drafts / AI booking path (QA).
+- Reacts 👀 / ✅ / 📝 / ⚠️.
+- Staff assistant (DEFAULT ON): say "hi" / "help" → menu.
+- Same config on Owner PC and Staff PC.
 
-One-time setup (developer does this on your PC)
-1. Install Node.js 24 if needed.
-2. Put the Padova project folder on this PC.
-3. Copy config.example.json → config.json and fill:
-   - url, token, actor_id (same as QA server)
-   - allow_owner_alerts: true
-   - owner_phones: your WhatsApp number(s) with country code digits only
-     example Israel: "9725XXXXXXXX"
-4. In Terminal once: npm ci
+One-time setup
+1. Install Node.js 24 if needed (https://nodejs.org).
+2. Unzip. Terminal in this folder: npm install
+3. config.json is filled for QA (do not change token/url unless told).
 
-Every day (you)
-1. Double-click:
-   - Mac:  Start-Padova-WhatsApp.command
-   - Windows: Start-Padova-WhatsApp.bat
-2. A browser page opens on this PC with a QR code.
-3. Phone: WhatsApp → Linked devices → Link a device → scan that QR.
-4. Leave the helper running and the PC on / awake.
-5. Reservation chats → check Padova Drafts / bookings.
-6. If Owner alerts are on, you get a short digest on WhatsApp (not spam to clients).
+Every day
+1. Double-click Start-Padova-WhatsApp.command (Mac) or .bat (Windows)
+2. First day only: scan QR. Later: wait until page says Connected.
+3. Leave helper running; PC stay awake.
+4. Test: send "hi" → help menu.
+
+Two PCs
+- Same zip / same config. Each PC links its own WhatsApp once.
+- Do not link the same phone on two helpers at once.
 
 Stop
-- Close the Terminal window, or press Ctrl+C in that window.
-
-Important
-- This is NOT Twilio / Meta Cloud API. It is an unofficial PC WhatsApp Web link.
-- Residual account risk vs official API — use a dedicated business phone if worried.
-- PC must stay online for intake + reminders.
-- First time needs a QR scan; later days usually reconnect without a new QR
-  unless you logged out or cleared the session.
+- Close Terminal / Ctrl+C. Login stays saved for next start.

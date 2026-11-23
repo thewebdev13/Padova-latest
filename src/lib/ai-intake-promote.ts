@@ -124,10 +124,15 @@ export async function maybePromoteIntakeToLiveBooking(
     title: string;
     entry: R;
     issues?: string[];
+    /** Staff WA assistant SAVE — bypass auto-live flag; still never invents money. */
+    force?: boolean;
   },
 ): Promise<PromoteResult> {
   const draft_id = input.draft_id;
-  if (!aiIntakeEnabled() || !aiAutoLiveEnabled()) {
+  if (!aiIntakeEnabled()) {
+    return { live: false, reason: 'ai_intake_disabled', draft_id };
+  }
+  if (!input.force && !aiAutoLiveEnabled()) {
     return { live: false, reason: 'auto_live_disabled', draft_id };
   }
 

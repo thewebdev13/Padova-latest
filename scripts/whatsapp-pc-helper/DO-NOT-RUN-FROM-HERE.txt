@@ -1,0 +1,2 @@
+On Windows client PC use the package root START-HELPER.vbs or Start-Padova-WhatsApp.bat
+Do not run starters from this scripts folder.

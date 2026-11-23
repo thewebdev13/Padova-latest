@@ -21,7 +21,7 @@ export async function afterIntakeDraftSaved(
   actor: Actor,
   draftId: string,
   built: BuiltIntakeDraft,
-  opts?: { channel?: string; chat_or_mailbox?: string },
+  opts?: { channel?: string; chat_or_mailbox?: string; skipPromote?: boolean },
 ): Promise<AfterIntakeResult> {
   const entry = { ...(built.entry || {}) };
   const capture = assessIntakeCapture({
@@ -31,12 +31,19 @@ export async function afterIntakeDraftSaved(
   });
   applyIntakeCaptureToEntry(entry, capture);
 
-  const promote = await maybePromoteIntakeToLiveBooking(db, actor, {
-    draft_id: draftId,
-    title: built.title,
-    entry,
-    issues: built.issues,
-  });
+  const promote = opts?.skipPromote
+    ? {
+        live: false as const,
+        reason: 'wa_assistant_awaiting_save',
+        draft_id: draftId,
+        summary: 'Staff assistant: confirm with SAVE before live booking.',
+      }
+    : await maybePromoteIntakeToLiveBooking(db, actor, {
+        draft_id: draftId,
+        title: built.title,
+        entry,
+        issues: built.issues,
+      });
 
   const channel =
     opts?.channel ||

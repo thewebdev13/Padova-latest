@@ -2921,6 +2921,28 @@ td small {
   padding: 14px 16px 16px;
   background: #fff;
 }
+.booking-entry .booking-fill-drop-hint {
+  margin: 0 12px 0;
+  padding: 8px 10px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #5a6b62;
+  text-align: center;
+}
+.booking-entry .booking-fill-helper-status {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #194c3d;
+  background: #eef6f1;
+  border: 1px solid #cfe0d6;
+  border-radius: 10px;
+}
+.booking-entry .intake-paste-box.is-dragging .booking-fill-drop-hint {
+  color: #2f6b4f;
+  font-weight: 600;
+}
 .booking-entry .booking-intake-preview {
   margin: 0;
   min-height: 320px;

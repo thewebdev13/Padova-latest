@@ -40,6 +40,11 @@ type Field = {
   required?: boolean;
   value?: unknown;
   lookup?: 'organizations' | 'bookings' | 'parties' | 'referrals';
+  /** half = share a row in the modal grid; full = whole row */
+  width?: 'half' | 'full';
+  hint?: string;
+  /** Visual section break before this field */
+  section?: string;
 };
 function LookupField({ field }: { field: Field }) {
   const [value, setValue] = useState(String(field.value ?? '')),
@@ -77,7 +82,7 @@ function LookupField({ field }: { field: Field }) {
     };
   }, [query, field.lookup, value]);
   return (
-    <>
+    <div className={styles.lookupField}>
       <input type="hidden" name={field.name} value={value} />
       <SearchableSelect
         id={`partnership-${field.name}`}
@@ -88,12 +93,12 @@ function LookupField({ field }: { field: Field }) {
         onChange={setValue}
         onSearch={setQuery}
       />
-      {value && (
-        <button type="button" onClick={() => setValue('')}>
+      {value ? (
+        <button type="button" className={styles.clearLookup} onClick={() => setValue('')}>
           Clear selection
         </button>
-      )}
-    </>
+      ) : null}
+    </div>
   );
 }
 function exactHundredths(value: string) {
@@ -146,57 +151,98 @@ function EntryForm({
     }
   }
   return (
-    <div className={styles.overlay}>
+    <div className={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
       <section className={styles.modal} role="dialog" aria-modal="true" aria-label={title}>
-        <header>
-          <h2>{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close form" disabled={busy}>
+        <header className={styles.modalHeader}>
+          <div className={styles.modalHeaderCopy}>
+            <span className={styles.modalEyebrow}>Partnerships</span>
+            <h2>{title}</h2>
+            {description ? <p className={styles.modalLead}>{description}</p> : null}
+          </div>
+          <button
+            type="button"
+            className={styles.modalClose}
+            onClick={onClose}
+            aria-label="Close form"
+            disabled={busy}
+          >
             ×
           </button>
         </header>
-        {description && <p>{description}</p>}
-        <form onSubmit={submit}>
-          {fields.map((f) => (
-            <label key={f.name}>
-              {f.label}
-              {f.lookup ? (
-                <LookupField field={f} />
-              ) : f.type === 'textarea' ? (
-                <textarea
-                  name={f.name}
-                  defaultValue={String(f.value ?? '')}
-                  required={f.required}
-                  rows={5}
-                />
-              ) : f.options ? (
-                <select name={f.name} defaultValue={String(f.value ?? '')} required={f.required}>
-                  {f.options.map((o) => (
-                    <option value={o.value} key={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  name={f.name}
-                  type={f.type ?? 'text'}
-                  defaultValue={String(f.value ?? '')}
-                  required={f.required}
-                  step={f.type === 'number' ? 'any' : undefined}
-                />
-              )}
-            </label>
-          ))}
-          {error && (
+        <form className={styles.modalForm} onSubmit={submit}>
+          <div className={styles.modalFields}>
+            {fields.map((field) => (
+              <div
+                key={field.name}
+                className={`${styles.fieldBlock}${field.width === 'half' ? ` ${styles.fieldHalf}` : ''}`.trim()}
+              >
+                {field.section ? (
+                  <p className={styles.fieldSection}>{field.section}</p>
+                ) : null}
+                <div className={styles.fieldLabel}>
+                  {field.lookup ? (
+                    <>
+                      {field.hint ? <small className={styles.fieldHint}>{field.hint}</small> : null}
+                      <LookupField field={field} />
+                    </>
+                  ) : (
+                    <label>
+                      <span className={styles.fieldLabelText}>
+                        {field.label}
+                        {field.required ? <em className={styles.reqMark}>*</em> : null}
+                      </span>
+                      {field.hint ? <small className={styles.fieldHint}>{field.hint}</small> : null}
+                      {field.type === 'textarea' ? (
+                        <textarea
+                          name={field.name}
+                          defaultValue={String(field.value ?? '')}
+                          required={field.required}
+                          rows={4}
+                        />
+                      ) : field.options ? (
+                        <select
+                          name={field.name}
+                          defaultValue={String(field.value ?? '')}
+                          required={field.required}
+                        >
+                          {field.options.map((o) => (
+                            <option value={o.value} key={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          name={field.name}
+                          type={field.type ?? 'text'}
+                          defaultValue={String(field.value ?? '')}
+                          required={field.required}
+                          step={field.type === 'number' ? 'any' : undefined}
+                          placeholder={
+                            field.name === 'name'
+                              ? 'e.g. QA Test Synagogue'
+                              : field.name === 'location'
+                                ? 'City'
+                                : undefined
+                          }
+                        />
+                      )}
+                    </label>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {error ? (
             <p role="alert" className={styles.error}>
               {error}
             </p>
-          )}
-          <footer>
-            <button type="button" onClick={onClose}>
+          ) : null}
+          <footer className={styles.modalFooter}>
+            <button type="button" className={styles.ghostBtn} onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button className={styles.primary} disabled={busy}>
+            <button type="submit" className={styles.primary} disabled={busy}>
               {busy ? 'Saving…' : 'Save'}
             </button>
           </footer>
@@ -315,16 +361,42 @@ export default function Partnerships() {
   const organizationForm = (existing?: R) =>
     setForm({
       title: existing ? 'Edit organization' : 'Add organization',
+      description:
+        'Referring org for affiliate share. Fill what you know — blanks stay empty (not zero).',
       fields: [
-        f('name', 'Organization / branch name', existing?.name, 'text', true),
-        f('location', 'City / location', existing?.location),
-        f('country', 'Country', existing?.country),
-        f('region', 'Region', existing?.region),
-        f('service_areas', 'Service areas', existing?.service_areas),
-        f('summary', 'Factual summary', existing?.summary, 'textarea'),
+        {
+          ...f('name', 'Organization / branch name', existing?.name, 'text', true),
+          width: 'full',
+          hint: 'Exact org or branch name staff will pick on bookings',
+        },
+        {
+          ...f('location', 'City / location', existing?.location),
+          width: 'half',
+        },
+        {
+          ...f('country', 'Country', existing?.country),
+          width: 'half',
+        },
+        {
+          ...f('region', 'Region', existing?.region),
+          width: 'half',
+        },
+        {
+          ...f('service_areas', 'Service areas', existing?.service_areas),
+          width: 'half',
+          hint: 'e.g. Brooklyn, Manhattan',
+        },
+        {
+          ...f('summary', 'Factual summary', existing?.summary, 'textarea'),
+          width: 'full',
+          hint: 'Short facts only — no invented money or agreements',
+        },
         {
           ...f('parent_id', 'Parent organization / branch (optional)', existing?.parent_id),
           lookup: 'organizations',
+          width: 'full',
+          section: 'Optional links',
+          hint: 'Leave empty for a new top-level org',
         },
         ...(can('manage_commissions')
           ? [
@@ -335,6 +407,8 @@ export default function Partnerships() {
                   existing?.accounting_party_id,
                 ),
                 lookup: 'parties' as const,
+                width: 'full' as const,
+                hint: 'Link payee party if already in People — else leave empty',
               },
             ]
           : []),
@@ -656,19 +730,44 @@ export default function Partnerships() {
     setForm({
       title: 'Record versioned agreement',
       description:
-        'Preserve the original offer or agreement. Leave commission terms unconfirmed until the basis, rate, eligibility and timing are agreed.',
+        'For booking Referring org dropdown: status=accepted, Effective start ≤ today, and Explicit percentage or fixed terms. Also link Existing referral account on the org.',
       fields: [
         {
           name: 'status',
           label: 'Agreement status',
           options: options(['unconfirmed', 'proposed', 'accepted', 'ended', 'superseded']),
+          value: 'accepted',
+          hint: 'Use accepted so the org appears on New Booking',
+          width: 'full',
         },
-        f('original_wording', 'Original agreed / proposed wording', '', 'textarea', true),
-        f('confirmed_on', 'Confirmation date', '', 'date'),
-        f('confirmation_method', 'How was it confirmed?'),
-        f('evidence_url', 'Confirmation evidence URL', '', 'url'),
-        f('starts_on', 'Effective start', '', 'date'),
-        f('ends_on', 'Effective end', '', 'date'),
+        {
+          ...f('original_wording', 'Original agreed / proposed wording', '', 'textarea', true),
+          width: 'full',
+          hint: 'Paste or type the deal wording — do not invent money beyond what was agreed',
+        },
+        {
+          ...f('confirmed_on', 'Confirmation date', '', 'date'),
+          width: 'half',
+        },
+        {
+          ...f('confirmation_method', 'How was it confirmed?'),
+          width: 'half',
+        },
+        {
+          ...f('evidence_url', 'Confirmation evidence URL', '', 'url'),
+          width: 'full',
+        },
+        {
+          ...f('starts_on', 'Effective start', '', 'date'),
+          width: 'half',
+          hint: 'Must be today or earlier for booking dropdown',
+          section: 'Effective dates',
+        },
+        {
+          ...f('ends_on', 'Effective end', '', 'date'),
+          width: 'half',
+          hint: 'Leave blank if open-ended',
+        },
         {
           name: 'calculation',
           label: 'Commission terms',
@@ -677,16 +776,33 @@ export default function Partnerships() {
             { value: 'fixed', label: 'Explicit fixed USD amount' },
             { value: 'percentage', label: 'Explicit percentage' },
           ],
+          value: 'percentage',
+          section: 'Commission terms (required for booking affiliate)',
+          hint: 'Pick Explicit percentage for a typical ~20% of profit deal',
+          width: 'full',
         },
-        f('fixed_amount', 'Fixed amount (USD)', '', 'number'),
-        f('rate', 'Percentage (for example 15)', '', 'number'),
-        f(
-          'agreed_basis',
-          'Agreed basis amount (USD, only for agreed-amount percentage)',
-          '',
-          'number',
-        ),
-        f('due_on', 'Agreed payment date (only for On date)', '', 'date'),
+        {
+          ...f('fixed_amount', 'Fixed amount (USD)', '', 'number'),
+          width: 'half',
+        },
+        {
+          ...f('rate', 'Percentage (for example 15)', '', 'number'),
+          width: 'half',
+          hint: 'e.g. 20 for 20%',
+        },
+        {
+          ...f(
+            'agreed_basis',
+            'Agreed basis amount (USD, only for agreed-amount percentage)',
+            '',
+            'number',
+          ),
+          width: 'half',
+        },
+        {
+          ...f('due_on', 'Agreed payment date (only for On date)', '', 'date'),
+          width: 'half',
+        },
         {
           name: 'percentage_basis',
           label: 'Percentage basis',
@@ -694,6 +810,8 @@ export default function Partnerships() {
             { value: '', label: 'Unconfirmed' },
             ...options(['profit', 'sale', 'commission', 'commission_received', 'agreed_amount']),
           ],
+          value: 'profit',
+          width: 'half',
         },
         {
           name: 'payable_when',
@@ -708,8 +826,13 @@ export default function Partnerships() {
               'On date',
             ].map((value) => ({ value, label: value })),
           ],
+          value: 'After travel',
+          width: 'half',
         },
-        f('eligibility', 'Eligibility conditions', '', 'textarea'),
+        {
+          ...f('eligibility', 'Eligibility conditions', '', 'textarea'),
+          width: 'full',
+        },
         {
           name: 'cancellation_rule',
           label: 'Cancellation / refund rule',
@@ -720,6 +843,8 @@ export default function Partnerships() {
               label: value,
             })),
           ],
+          value: 'Realized economics',
+          width: 'full',
         },
       ],
       onSave: async (d) => {
@@ -806,13 +931,18 @@ export default function Partnerships() {
   return (
     <div className={styles.root}>
       <header className={styles.heading}>
-        <div>
-          <p className={styles.eyebrow}>RELATIONSHIPS & REFERRALS</p>
+        <div className={styles.headingCopy}>
+          <p className={styles.eyebrow}>Relationships & referrals</p>
           <h1>Partnerships</h1>
-          <p>Move each conversation toward a clear next step.</p>
+          <p className={styles.headingLead}>
+            Orgs refer guests — mark them on the booking after an accepted deal. Move each
+            conversation to a clear next step.
+          </p>
         </div>
         <div className={styles.actions}>
-          <a href="/partnerships/connect">ChatGPT connection</a>
+          <a className={styles.ghostLink} href="/partnerships/connect">
+            ChatGPT connection
+          </a>
           {can('manage_partnerships') && (
             <button className={styles.primary} onClick={() => organizationForm()}>
               + Add organization

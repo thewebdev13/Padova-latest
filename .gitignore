@@ -25,3 +25,7 @@ scripts/whatsapp-pc-helper/config.json
 .vercel-prod-link/
 .vercel-qa-backup/
 .DS_Store
+
+# Client WhatsApp helper package (token stays local / Desktop zip only)
+Padova-WhatsApp-Helper-QA/config.json
+Padova-WhatsApp-Helper-QA.zip

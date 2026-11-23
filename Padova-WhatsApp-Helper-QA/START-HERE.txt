@@ -1,0 +1,9 @@
+WINDOWS
+
+1) Double-click START.bat ONCE - keep black window open
+2) Browser: http://127.0.0.1:3927/
+3) If QR appears - scan with WhatsApp Linked devices
+4) Wait for Connected
+
+If old login expired (401): keep window open - new QR should appear.
+If stuck: run CLEAR-LOGIN.bat once, then START.bat again.

@@ -207,6 +207,8 @@ export default function BookingEntry(props: Props) {
   const [quickPasteOpen, setQuickPasteOpen] = useState(() => Boolean(initialPaste.trim()));
   const [pasteDrag, setPasteDrag] = useState(false);
   const [pasteFileName, setPasteFileName] = useState('');
+  /** Transient helper status: Reading PDF… / Filled N fields — never invents money. */
+  const [pasteHelperStatus, setPasteHelperStatus] = useState('');
   const intakeAutoApplied = useRef(false);
   const pasteApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickPasteRef = useRef<HTMLDetailsElement>(null);
@@ -1335,23 +1337,20 @@ export default function BookingEntry(props: Props) {
   async function loadBookingPasteFile(file: File) {
     setError('');
     setPasteIssues([]);
+    setPasteHelperStatus('');
     try {
       if (file.size > 10 * 1024 * 1024) throw new Error('File must be 10 MB or smaller');
       const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-      if (
-        !isPdf &&
-        (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(file.name))
-      ) {
-        setError(
-          `“${file.name}” is an image — paste Field: Value text, or use Transactions → Intake draft for scans.`,
-        );
-        return;
-      }
+      const isImage =
+        file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
       setPasteFileName(file.name);
       userClosedQuickPaste.current = false;
       setQuickPasteOpenSafe(true);
       setBusy(true);
-      if (isPdf) {
+      if (isPdf || isImage) {
+        setPasteHelperStatus(
+          isPdf ? `Reading PDF “${file.name}”…` : `Reading screenshot “${file.name}”…`,
+        );
         const data = new FormData();
         data.set('source', 'staff_upload');
         data.set('preview_only', '1');
@@ -1361,8 +1360,10 @@ export default function BookingEntry(props: Props) {
           body: data,
         });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'Unable to read that PDF');
+        if (!response.ok)
+          throw new Error(result.error || `Unable to read that ${isPdf ? 'PDF' : 'image'}`);
         if (result.unread || !String(result.text || '').trim()) {
+          setPasteHelperStatus('');
           setError(
             result.unread_message ||
               `“${file.name}” has no readable text — paste the reservation text instead.`,
@@ -1372,16 +1373,39 @@ export default function BookingEntry(props: Props) {
         const text = String(result.text).slice(0, 20000);
         setPaste(text);
         await applyPaste(text);
+        const found = Number(result.mapping?.found ?? 0);
+        const via =
+          result.extract_method === 'ocr'
+            ? 'screenshot OCR'
+            : result.extract_method === 'pdf-ocr'
+              ? 'PDF OCR'
+              : isPdf
+                ? 'PDF text'
+                : 'file text';
+        setPasteHelperStatus(
+          found > 0
+            ? `Filled ${found} field${found === 1 ? '' : 's'} from ${via} — review, then Save Booking. Missing stays Unknown.`
+            : `Loaded text from ${via} — map fields on the right, then Re-apply if needed. Nothing posts money yet.`,
+        );
         return;
       }
+      setPasteHelperStatus(`Loading “${file.name}”…`);
       const text = await file.text();
       if (text.includes('\u0000'))
-        throw new Error('File looks binary — use plain text, .eml, or PDF');
+        throw new Error('File looks binary — use plain text, .eml, PDF, or a screenshot image');
       const loaded = pasteTextFromUpload(text, file.name);
       const nextText = loaded.text.slice(0, 20000);
       setPaste(nextText);
       await applyPaste(nextText);
+      const preview = buildIntakeMappingPreview(nextText);
+      const found = preview.found || 0;
+      setPasteHelperStatus(
+        found > 0
+          ? `Filled ${found} field${found === 1 ? '' : 's'} from file — review, then Save Booking.`
+          : `Loaded “${file.name}” — paste Field: Value lines if mapping is empty.`,
+      );
     } catch (err) {
+      setPasteHelperStatus('');
       setError(err instanceof Error ? err.message : 'Unable to read that file');
     } finally {
       setBusy(false);
@@ -1868,8 +1892,8 @@ export default function BookingEntry(props: Props) {
               <span className="booking-quick-paste-summary-copy">
                 <strong>Quick start</strong>
                 <small>
-                  Paste or drop a reservation — we fill matching fields; you review before Save
-                  Booking.
+                  Paste text, or drop a PDF / screenshot / .eml — we fill matching fields. You
+                  review before Save Booking. Missing stays Unknown.
                 </small>
               </span>
               <span
@@ -1927,29 +1951,35 @@ export default function BookingEntry(props: Props) {
                       <div className="intake-panel-head-row">
                         <h3>What you pasted</h3>
                       </div>
+                      {!paste.trim() && !busy ? (
+                        <p className="booking-fill-drop-hint" aria-hidden>
+                          Drop PDF, screenshot, .eml, or paste Field: Value text
+                        </p>
+                      ) : null}
                       <textarea
                         className="intake-preview-raw intake-preview-editable"
                         rows={10}
                         value={paste}
                         disabled={busy}
                         aria-label="What you pasted"
-                        placeholder="Paste Field: Value lines here…"
+                        placeholder="Paste Field: Value lines — or drop a PDF / screenshot above…"
                         onChange={(e) => {
                           const text = e.target.value;
                           setPaste(text);
+                          setPasteHelperStatus('');
                           queueApplyPaste(text);
                         }}
                       />
                       <div className="intake-paste-actions">
                         <label className="intake-file-link" htmlFor="booking-quick-paste-file">
                           <Upload size={14} aria-hidden />
-                          Drop a file or browse
+                          PDF · screenshot · .eml · browse
                           <input
                             id="booking-quick-paste-file"
                             type="file"
                             className="intake-file-input"
                             disabled={busy}
-                            accept=".txt,.csv,.md,.eml,.json,.pdf,text/plain,text/csv,message/rfc822,application/pdf"
+                            accept=".txt,.csv,.md,.eml,.json,.pdf,.png,.jpg,.jpeg,.webp,.gif,text/plain,text/csv,message/rfc822,application/pdf,image/png,image/jpeg,image/webp,image/gif"
                             onChange={(e) => {
                               const file = e.target.files?.[0] ?? null;
                               e.target.value = '';
@@ -2056,12 +2086,27 @@ export default function BookingEntry(props: Props) {
                   </div>
                 </div>
               </section>
+              {pasteHelperStatus ? (
+                <p className="booking-fill-helper-status" role="status" aria-live="polite">
+                  {pasteHelperStatus}
+                </p>
+              ) : null}
               <div className="btn-row quick-paste-actions">
                 <button
                   type="button"
                   className="btn primary"
                   disabled={busy || !paste.trim()}
-                  onClick={() => void applyPaste()}
+                  onClick={() => {
+                    setPasteHelperStatus('Re-applying mapped fields to the form…');
+                    void applyPaste().then(() => {
+                      const found = livePastePreview.found || 0;
+                      setPasteHelperStatus(
+                        found > 0
+                          ? `Re-applied ${found} field${found === 1 ? '' : 's'} — review before Save.`
+                          : 'Re-applied — check mapping; missing stays Unknown.',
+                      );
+                    });
+                  }}
                 >
                   Re-apply to form
                 </button>
@@ -2186,7 +2231,7 @@ export default function BookingEntry(props: Props) {
                       {!state.partnershipsEnabled
                         ? ' Partnerships CRM is not installed in this database.'
                         : !(state.referralOrganizations ?? []).length
-                          ? ' No orgs with accepted agreement + accounting payee yet — set up in Partnerships first.'
+                          ? ' No org ready yet. In Partnerships: (1) Edit org → Existing referral account, (2) Record agreement status=accepted with % or fixed terms + Effective start ≤ today. Then reopen New Booking.'
                           : ''}
                     </small>
                   </Field>

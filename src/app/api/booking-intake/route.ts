@@ -146,27 +146,40 @@ export async function POST(request: Request) {
     if (!entries?.length && !text.trim() && !bytes?.length)
       throw new Error('Provide intake text and/or a file; drafts never post money');
 
-    // Preview only: extract PDF text-layer / image OCR, return mapping — never writes.
+    // Preview only: extract PDF / image / text, return mapping — never writes.
     if (previewOnly) {
       let previewText = text;
       let unread = false;
       let unreadMessage: string | undefined;
+      let extractMethod: string | undefined;
       if (bytes?.length) {
         const mime = mimeType || 'application/octet-stream';
         const name = filename || 'upload';
         let extracted = await extractIntakeText(mime, bytes, name);
         // Dev/Turbopack: first PDF compile can fail; one retry usually succeeds (same as refresh).
-        if (!extracted.extractable && /\.pdf$/i.test(name)) {
+        if (
+          !extracted.extractable &&
+          (/\.pdf$/i.test(name) || mime === 'application/pdf')
+        ) {
           await new Promise((r) => setTimeout(r, 400));
           extracted = await extractIntakeText(mime, bytes, name);
         }
+        // Hosted image: one retry if vision/OCR cold-started.
+        if (
+          !extracted.extractable &&
+          (mime.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(name))
+        ) {
+          await new Promise((r) => setTimeout(r, 500));
+          extracted = await extractIntakeText(mime, bytes, name);
+        }
+        extractMethod = extracted.method;
         if (extracted.extractable) {
           previewText = previewText.trim()
             ? `${previewText.trim()}\n\n${extracted.text}`
             : extracted.text;
         } else if (!previewText.trim()) {
           unread = true;
-          unreadMessage = UNREAD_FILE_MESSAGE;
+          unreadMessage = extracted.note || UNREAD_FILE_MESSAGE;
           if (extracted.note) console.warn('[intake preview]', extracted.note);
         }
       }
@@ -184,6 +197,7 @@ export async function POST(request: Request) {
         text: unread ? '' : previewText,
         unread,
         unread_message: unreadMessage,
+        extract_method: extractMethod || null,
         mapping,
       });
     }
