@@ -899,27 +899,35 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     canCommissions = can('view_commissions') || can('manage_commissions'),
     canRefunds = can('view_refunds') || can('issue_refunds');
   const canAction = (kind: string) => can(commandPermission(kind));
-  const bks: R[] = s.bookings,
-    parties: R[] = s.parties;
-  const today = s.today,
-    person = (id: string) => parties.find((p) => p.id === id)?.name ?? '—';
+  // Defensive: incomplete AI/intake rows must never crash Transactions / sidebar.
+  const bks: R[] = Array.isArray(s.bookings) ? s.bookings : [];
+  const parties: R[] = Array.isArray(s.parties) ? s.parties : [];
+  const journalRows: R[] = Array.isArray(s.journal) ? s.journal : [];
+  const refundRowsAll: R[] = Array.isArray(s.refunds) ? s.refunds : [];
+  const movementRows: R[] = Array.isArray(s.movements) ? s.movements : [];
+  const assetRows: R[] = Array.isArray(s.assets) ? s.assets : [];
+  const paymentRows: R[] = Array.isArray(s.payments) ? s.payments : [];
+  const commissionRows: R[] = Array.isArray(s.commissions) ? s.commissions : [];
+  const taskRows: R[] = Array.isArray(s.tasks) ? s.tasks : [];
+  const today = String(s.today || new Date().toISOString().slice(0, 10));
+  const person = (id: string) => parties.find((p) => p.id === id)?.name ?? '—';
   const currentMonth = today.slice(0, 7);
   const owed = bks.reduce((a, b) => a + Math.max(0, Number(b.customer_balance)), 0);
   const owing =
-    s.journal
+    journalRows
       .filter((r: R) =>
         ['supplier_payable', 'asset_acquisition_payable', 'referral_payable'].includes(r.account),
       )
       .reduce((a: number, r: R) => a + Number(r.credit) - Number(r.debit), 0) +
-    s.refunds.reduce(
+    refundRowsAll.reduce(
       (a: number, r: R) => a + Math.max(0, Number(r.customer_due) - Number(r.paid)),
       0,
     );
-  const monthProfit = s.movements
-    .filter((m: R) => m.effective_on.slice(0, 7) === currentMonth)
+  const monthProfit = movementRows
+    .filter((m: R) => String(m.effective_on || '').slice(0, 7) === currentMonth)
     .reduce((a: number, m: R) => a + Number(m.amount), 0);
   const monthSale = bks
-    .filter((b) => b.booked_on.slice(0, 7) === currentMonth)
+    .filter((b) => String(b.booked_on || '').slice(0, 7) === currentMonth)
     .reduce((a, b) => a + Number(b.sale), 0);
   const travelMatches = (b: R, start: string, end = start, product = 'All') =>
     travelsBetween(
@@ -1059,17 +1067,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           label: p.name,
           sub: `${pretty(p.kind)} · ${p.email ?? p.phone ?? ''}`,
         })),
-        ...s.assets.filter(matches).map((a: R) => ({
+        ...assetRows.filter(matches).map((a: R) => ({
           page: 'Travel Assets',
           label: a.name,
           sub: `${a.kind} · ${a.reference}`,
         })),
-        ...s.payments.filter(matches).map((p: R) => ({
+        ...paymentRows.filter(matches).map((p: R) => ({
           page: 'Payments',
           label: `${p.party} · ${money(p.current_amount)}`,
           sub: p.reference,
         })),
-        ...s.commissions.filter(matches).map((c: R) => ({
+        ...commissionRows.filter(matches).map((c: R) => ({
           type: 'booking',
           id: c.booking_id,
           label: `Commission · ${c.code}`,
@@ -1537,6 +1545,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         </>
       );
     } else if (selected.type === 'booking') {
+      if (!detail?.booking) {
+        view = (
+          <>
+            <button className="back" onClick={() => setSelected(null)}>
+              <ChevronLeft size={14} />
+              Back
+            </button>
+            <Empty>Booking details unavailable. Reload, or go back to Transactions.</Empty>
+          </>
+        );
+      } else {
       const primaryTravel = detail.travelComponents?.[0];
       const b = detail.booking,
         c = bks.find((x) => x.id === b.id) ?? b;
@@ -1658,7 +1677,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         ['Itinerary / documents', b.document_status],
         [
           'Traveler(s)',
-          detail.travelers
+          (Array.isArray(detail.travelers) ? detail.travelers : [])
             .map((p: R) => `${p.name}${p.status === 'Cancelled' ? ' (cancelled)' : ''}`)
             .join(', ') || 'Not linked',
         ],
@@ -1865,7 +1884,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             >
               <div className="section-body">
                 <ul className="plain-list">
-                  {detail.charges.map((r: R) => (
+                  {(Array.isArray(detail.charges) ? detail.charges : []).map((r: R) => (
                     <li key={r.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>
                         {pretty(r.kind)} <small>· {dateLabel(r.effective_on)}</small>
@@ -1874,7 +1893,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </li>
                   ))}
                 </ul>
-                {detail.allocations
+                {(Array.isArray(detail.allocations) ? detail.allocations : [])
                   .filter((r: R) => r.direction === 'customer')
                   .map((r: R) => (
                     <div className="note" key={r.id}>
@@ -2078,7 +2097,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     );
                   })()}
                   <ul className="plain-list">
-                    {detail.funding.map((f: R) => (
+                    {(Array.isArray(detail.funding) ? detail.funding : []).map((f: R) => (
                       <li key={f.id}>
                         {f.kind} {f.asset && `· ${f.asset}`}
                         {f.seller_id && (
@@ -2249,7 +2268,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 ).join('\n'),
                                 traveler_ids:
                                   t.details?.traveler_ids ??
-                                  detail.travelers
+                                  (Array.isArray(detail.travelers) ? detail.travelers : [])
                                     .filter((p: R) => p.status !== 'Cancelled')
                                     .map((p: R) => p.id),
                               })
@@ -2491,13 +2510,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                             confirm_cost: f.terms?.cost_complete ?? true,
                                             settled: false,
                                             cash_method:
-                                              detail.funding.find(
+                                              (Array.isArray(detail.funding) ? detail.funding : []).find(
                                                 (x: R) => x.id === f.funding_component_id,
                                               )?.kind === 'Bank'
                                                 ? 'Bank'
-                                                : detail.funding.find(
-                                                      (x: R) => x.id === f.funding_component_id,
-                                                    )?.kind === 'Cash'
+                                                : (Array.isArray(detail.funding)
+                                                      ? detail.funding
+                                                      : []
+                                                  ).find((x: R) => x.id === f.funding_component_id)
+                                                      ?.kind === 'Cash'
                                                   ? 'Cash'
                                                   : 'Card',
                                           })
@@ -2625,22 +2646,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   <p>
                     Acquisition payments remain separate from the cost basis used by this booking.
                   </p>
-                  {detail.assetAcquisitions.map((a: R) => (
-                    <div className="note" key={a.id}>
-                      <button className="btn small" onClick={() => openRecord('asset', a.id)}>
-                        {a.name}
-                      </button>
-                      <p>
-                        {a.seller} · Original acquisition {money(a.cost)} · Payments recorded{' '}
-                        {money(a.paid)} · Balance owed {money(a.due)}
-                      </p>
-                    </div>
-                  ))}
+                  {(Array.isArray(detail.assetAcquisitions) ? detail.assetAcquisitions : []).map(
+                    (a: R) => (
+                      <div className="note" key={a.id}>
+                        <button className="btn small" onClick={() => openRecord('asset', a.id)}>
+                          {a.name}
+                        </button>
+                        <p>
+                          {a.seller} · Original acquisition {money(a.cost)} · Payments recorded{' '}
+                          {money(a.paid)} · Balance owed {money(a.due)}
+                        </p>
+                      </div>
+                    ),
+                  )}
                 </div>
               </Card>
             </div>
           )}
-          {canCosts && detail.sourceBalances?.length > 0 && (
+          {canCosts && (detail.sourceBalances?.length ?? 0) > 0 && (
             <div className="detail-section">
               <Card title="Source payments & balances">
                 <div className="section-body">
@@ -2658,22 +2681,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         </tr>
                       </thead>
                       <tbody>
-                        {detail.sourceBalances.map((source: R) => (
-                          <tr key={source.party_id}>
-                            <td>{source.name}</td>
-                            <td>{money(source.paid)}</td>
-                            <td>{money(source.due)}</td>
-                            <td>
-                              {source.due < 0
-                                ? 'Credit / reconciliation'
-                                : source.due === 0
-                                  ? 'Settled'
-                                  : source.paid > 0
-                                    ? 'Partially paid'
-                                    : 'No payment recorded'}
-                            </td>
-                          </tr>
-                        ))}
+                        {(Array.isArray(detail.sourceBalances) ? detail.sourceBalances : []).map(
+                          (source: R) => (
+                            <tr key={source.party_id}>
+                              <td>{source.name}</td>
+                              <td>{money(source.paid)}</td>
+                              <td>{money(source.due)}</td>
+                              <td>
+                                {source.due < 0
+                                  ? 'Credit / reconciliation'
+                                  : source.due === 0
+                                    ? 'Settled'
+                                    : source.paid > 0
+                                      ? 'Partially paid'
+                                      : 'No payment recorded'}
+                              </td>
+                            </tr>
+                          ),
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -2889,7 +2914,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             )}
             <Card title="Itinerary versions">
               <div className="section-body">
-                {detail.revisions.map((r: R) => (
+                {(Array.isArray(detail.revisions) ? detail.revisions : []).map((r: R) => (
                   <details
                     className="optional-section"
                     key={r.id}
@@ -2913,8 +2938,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </Card>
             <Card title="Notes & Activity">
               {[
-                ...detail.activity.filter((a: R) => a.kind !== 'note'),
-                ...detail.notes.map((n: R) => ({
+                ...(Array.isArray(detail.activity) ? detail.activity : []).filter(
+                  (a: R) => a.kind !== 'note',
+                ),
+                ...(Array.isArray(detail.notes) ? detail.notes : []).map((n: R) => ({
                   ...n,
                   id: `note:${n.id}`,
                   kind: 'Shared note',
@@ -2955,6 +2982,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           </div>
         </>
       );
+      }
     } else if (selected.type === 'asset') {
       const a = detail.asset;
       view = (
@@ -5473,9 +5501,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             >
               <I />
               {name}
-              {name === 'Tasks' && s.tasks.filter((t: R) => t.status === 'Open').length > 0 && (
+              {name === 'Tasks' && taskRows.filter((t: R) => t.status === 'Open').length > 0 && (
                 <span className="nav-count">
-                  {s.tasks.filter((t: R) => t.status === 'Open').length}
+                  {taskRows.filter((t: R) => t.status === 'Open').length}
                 </span>
               )}
             </button>

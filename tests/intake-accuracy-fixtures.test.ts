@@ -68,6 +68,22 @@ test('whatsapp hotel confirmation looks booking-related; chatter does not', () =
   assert.equal(looksLikeBookingRelatedWhatsApp('ok thanks see you tomorrow'), false);
 });
 
+test('Padova reminder digests never look like bookings', () => {
+  const digest = `Padova reminders — 2026-11-20
+55 open items (DB facts only):
+• [MISSING INFO] Flight EWR-MIA — needs traveler
+• [MISSING INFO] Hotel HKG-SFO — needs location
+Open Padova to fix. This alert is automated from your PC helper.`;
+  assert.equal(looksLikeBookingRelatedWhatsApp(digest), false);
+  assert.equal(
+    looksLikeBookingRelatedEmail({
+      subject: 'Padova intake alert',
+      text: digest,
+    }),
+    false,
+  );
+});
+
 test('missing travel dates → low confidence + owner alert flag', () => {
   const capture = assessIntakeCapture({
     entry: {

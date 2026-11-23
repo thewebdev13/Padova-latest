@@ -1,6 +1,9 @@
 import { buildIntakeDraft, type BuiltIntakeDraft } from './booking-intake';
 export { looksLikeBookingRelatedWhatsApp } from './booking-message-detect';
-import { looksLikeBookingRelatedWhatsApp } from './booking-message-detect';
+import {
+  isPadovaInternalNoise,
+  looksLikeBookingRelatedWhatsApp,
+} from './booking-message-detect';
 import { applyIntakeCaptureToEntry, assessIntakeCapture } from './intake-confidence';
 
 export type InboundWhatsAppMessage = {
@@ -105,6 +108,13 @@ export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage
       'WhatsApp intake requires message text, PDF, screenshot, or voice note',
     );
 
+  // Desk digests / intake alerts must never become drafts (even with files attached).
+  if (isPadovaInternalNoise(message.text || '')) {
+    throw new Error(
+      'Padova desk reminder/alert skipped — not a customer reservation (no draft created)',
+    );
+  }
+
   // Pre-check on caption/text only; PDF/image extract is checked after build via recognized content.
   if (hasText && !hasBytes && !looksLikeBookingRelatedWhatsApp(message.text)) {
     throw new Error(
@@ -140,6 +150,12 @@ export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage
       built.title || '',
     ].join('\n');
 
+    if (isPadovaInternalNoise(probe)) {
+      throw new Error(
+        'Padova desk reminder/alert skipped — not a customer reservation (no draft created)',
+      );
+    }
+
     // PDF / weak extract: still keep draft when inbound looked booking-related or PDF present.
     if (
       !looksLikeBookingRelatedWhatsApp(probe) &&
@@ -172,6 +188,12 @@ export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage
     return built;
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'WhatsApp intake failed';
+    // Never fall back to a minimal draft for desk digests / alerts.
+    if (
+      isPadovaInternalNoise(message.text || '') ||
+      /desk reminder\/alert skipped/i.test(msg)
+    )
+      throw e;
     const bookingClass =
       hasBytes || looksLikeBookingRelatedWhatsApp(message.text || '');
     // Pure chatter: keep skip. Reservation-class / PDF: always capture a draft.

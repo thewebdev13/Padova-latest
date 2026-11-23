@@ -3,7 +3,12 @@ import { test } from 'node:test';
 import { maybePromoteIntakeToLiveBooking } from '../src/lib/ai-intake-promote';
 import type { Actor } from '../src/lib/permissions';
 
-const actor = { id: '00000000-0000-4000-8000-000000000099', role: 'Owner' } as Actor;
+const actor = {
+  id: '00000000-0000-4000-8000-000000000099',
+  name: 'Owner',
+  role: 'OWNER',
+  permissions: [],
+} as unknown as Actor;
 const fakeDb = {} as never;
 
 test('promote stays draft when AI intake disabled', async () => {
@@ -73,6 +78,42 @@ test('promote stays draft when product or travel dates missing', async () => {
     });
     assert.equal(noDates.live, false);
     assert.equal(noDates.reason, 'travel_dates_unknown');
+  } finally {
+    process.env.PADOVA_AI_INTAKE = prevI;
+    process.env.PADOVA_AI_AUTO_LIVE = prevA;
+  }
+});
+
+test('promote skips Padova reminder digests and skeleton Hotel+sale', async () => {
+  const prevI = process.env.PADOVA_AI_INTAKE;
+  const prevA = process.env.PADOVA_AI_AUTO_LIVE;
+  process.env.PADOVA_AI_INTAKE = '1';
+  process.env.PADOVA_AI_AUTO_LIVE = '1';
+  try {
+    const digest = await maybePromoteIntakeToLiveBooking(fakeDb, actor, {
+      draft_id: 'd6',
+      title: 'Padova reminders — 2026-11-20',
+      entry: {
+        product: 'Hotel',
+        travel_start: '2027-05-01',
+        intake_raw_text:
+          'Padova reminders — 2026-11-20\n55 open items (DB facts only):\n• [MISSING INFO] Flight',
+      },
+    });
+    assert.equal(digest.live, false);
+    assert.equal(digest.reason, 'internal_digest_skipped');
+
+    const skeleton = await maybePromoteIntakeToLiveBooking(fakeDb, actor, {
+      draft_id: 'd7',
+      title: 'Hotel',
+      entry: {
+        product: 'Hotel',
+        travel_start: '2027-05-01',
+        sale: 1050,
+      },
+    });
+    assert.equal(skeleton.live, false);
+    assert.equal(skeleton.reason, 'identity_or_confirmation_unknown');
   } finally {
     process.env.PADOVA_AI_INTAKE = prevI;
     process.env.PADOVA_AI_AUTO_LIVE = prevA;

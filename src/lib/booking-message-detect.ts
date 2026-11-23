@@ -36,9 +36,34 @@ const OPERATIONAL_NOISE =
 /** Hebrew “check-in opened / preparations for your flight” style subjects. */
 const OPERATIONAL_NOISE_HE = /צ['׳']?ק[- ]?אין|טיסתך\s+נפתחה|הכנות\s+לקראת\s+טיסת/;
 
+/**
+ * Padova's own desk digests / intake alerts — must NEVER become bookings.
+ * These mention Flight/Hotel/confirmation while listing open DB items.
+ */
+const PADOVA_INTERNAL_NOISE =
+  /\b(padova\s+reminders?|padova\s+intake\s+alert|owner\s+only\s*[—\-–]\s*not\s+a\s+customer\s+reply|open\s+items\s*\(\s*db\s+facts\s+only\s*\)|db\s+facts\s+only)\b/i;
+
+export function isPadovaInternalNoise(text: string): boolean {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  if (PADOVA_INTERNAL_NOISE.test(t)) return true;
+  // Digest body: many "[MISSING INFO]" lines without a real reservation paste.
+  const missingHits = t.match(/\[MISSING INFO\]/gi) || [];
+  if (missingHits.length >= 2) return true;
+  if (
+    missingHits.length >= 1 &&
+    /\b(open\s+items|padova\s+reminders?|needs\s+review)\b/i.test(t) &&
+    !/\b(dear|passenger|guest name|e-?ticket|itinerary confirmation)\b/i.test(t)
+  )
+    return true;
+  return false;
+}
+
 export function isOperationalTravelNoise(text: string): boolean {
   const t = String(text || '');
-  return OPERATIONAL_NOISE.test(t) || OPERATIONAL_NOISE_HE.test(t);
+  return (
+    isPadovaInternalNoise(t) || OPERATIONAL_NOISE.test(t) || OPERATIONAL_NOISE_HE.test(t)
+  );
 }
 
 export function looksLikePurchaseOrEnquiry(text: string): boolean {
@@ -55,6 +80,8 @@ export function looksLikePurchaseOrEnquiry(text: string): boolean {
 export function looksLikeBookingReservationText(text: string): boolean {
   const t = String(text || '').trim();
   if (t.length < 20) return false;
+  // Desk digests / intake alerts first — before Flight/Hotel/confirmation signals.
+  if (isPadovaInternalNoise(t)) return false;
   if (isOperationalTravelNoise(t)) return false;
   if (looksLikePurchaseOrEnquiry(t)) return true;
 

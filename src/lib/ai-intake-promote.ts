@@ -8,6 +8,7 @@ import {
   aiIntakeEnabled,
   aiProvider,
 } from './claude-intake';
+import { isPadovaInternalNoise } from './booking-message-detect';
 import { businessDate } from './business-date';
 
 type R = Record<string, unknown>;
@@ -137,6 +138,24 @@ export async function maybePromoteIntakeToLiveBooking(
   }
 
   const entry = input.entry || {};
+  const rawProbe = [
+    entry.intake_raw_text,
+    entry.itinerary && typeof entry.itinerary === 'object'
+      ? (entry.itinerary as R).notes
+      : '',
+    input.title,
+  ]
+    .map((v) => String(v || ''))
+    .join('\n');
+  if (isPadovaInternalNoise(rawProbe)) {
+    return {
+      live: false,
+      reason: 'internal_digest_skipped',
+      draft_id,
+      summary:
+        'This looks like a Padova desk reminder/alert — not a reservation. Draft kept; will not create a live booking.',
+    };
+  }
   const product = String(entry.product || '').trim();
   if (!['Flight', 'Hotel', 'Car', 'Other'].includes(product)) {
     return {
@@ -157,6 +176,7 @@ export async function maybePromoteIntakeToLiveBooking(
         'Draft saved with AI fields. Travel dates still Unknown — open draft to set dates then Save Booking.',
     };
   }
+
   let travel_end = isoDateOrEmpty(entry.travel_end) || travel_start;
   const trip_type =
     product === 'Flight'
@@ -178,6 +198,18 @@ export async function maybePromoteIntakeToLiveBooking(
       : !isUnknownLabel(entry.pending_traveler)
         ? String(entry.pending_traveler)
         : '';
+  const primaryRefGate = String(entry.primary_reference || '').trim();
+
+  // Auto-live only when we have a real identity or confirmation — never skeleton Hotel+$amount.
+  if (!input.force && !customerLabel && !travelerLabel && !primaryRefGate) {
+    return {
+      live: false,
+      reason: 'identity_or_confirmation_unknown',
+      draft_id,
+      summary:
+        'Draft saved. Need traveler/customer name or confirmation/PNR before a live booking — open draft to finish.',
+    };
+  }
 
   // Explicit Unknown customer identity when name missing (never invent a real person).
   const customerName = customerLabel || 'Unknown';
