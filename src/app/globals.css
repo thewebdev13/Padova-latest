@@ -1019,34 +1019,63 @@ td small {
   margin-top: 6px;
 }
 .modal-body {
-  padding: var(--space-5);
+  padding: 22px 24px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
+  gap: 16px 18px;
+  align-items: start;
+}
+.form-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .form-field label {
   display: block;
-  font-size: 11px;
-  font-weight: 550;
-  margin-bottom: 7px;
+  font-size: 12px;
+  font-weight: 650;
+  margin-bottom: 0;
+  color: #243830;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
 }
 .form-field input,
 .form-field select,
 .form-field textarea {
   width: 100%;
-  border: 1px solid #dde4df;
-  border-radius: 5px;
-  padding: 10px;
+  border: 1px solid #d5ded8;
+  border-radius: 9px;
+  padding: 11px 12px;
   background: #fff;
-  color: #394c42;
+  color: #243830;
+  min-height: 42px;
+  line-height: 1.35;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  outline: none;
+  border-color: #7fa892;
+  box-shadow: 0 0 0 3px rgba(24, 77, 67, 0.1);
+}
+.form-field textarea {
+  min-height: 88px;
+  resize: vertical;
 }
 .form-field small {
   display: block;
-  font-size: 10px;
-  margin-top: 5px;
+  font-size: 11px;
+  margin-top: 0;
+  line-height: 1.4;
+  color: #6b7870;
 }
 .form-field.full {
   grid-column: 1/-1;
@@ -1056,8 +1085,9 @@ td small {
   grid-column: 1 / -1;
   min-width: 0;
 }
-.form-field {
-  min-width: 0;
+.form-grid > .optional-section.full,
+.form-grid > details.optional-section {
+  margin-top: 2px;
 }
 .section-body p {
   overflow-wrap: anywhere;
@@ -2930,6 +2960,7 @@ td small {
   }
   .form-grid {
     grid-template-columns: 1fr;
+    gap: 14px;
   }
   .form-field.full {
     grid-column: auto;
@@ -2939,13 +2970,35 @@ td small {
   }
   .modal-backdrop {
     padding: 10px;
+    align-items: flex-end;
   }
   .modal-head,
   .modal-body {
-    padding: 20px;
+    padding: 18px 16px;
+  }
+  .modal-footer {
+    padding: 14px 16px;
+    gap: 10px;
   }
   .modal {
     max-height: 95vh;
+    width: 100%;
+    border-radius: 14px 14px 0 0;
+  }
+  .role-choices {
+    gap: 8px;
+  }
+  .role-choices .btn.small,
+  .role-choice {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+  .optional-section > summary {
+    min-height: 44px;
+    padding: 12px 14px;
+  }
+  .form-field label {
+    font-size: 12.5px;
   }
   .quick-actions {
     padding: 16px;
@@ -3936,12 +3989,32 @@ td small {
 .role-choices {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
-.role-choices .selected {
-  background: #e1eee5;
-  border-color: #61816a;
-  color: #244d35;
+.roles-input {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.role-choices .btn.small,
+.role-choice {
+  border-radius: 999px;
+  padding: 7px 12px;
+  min-height: 34px;
+  font-size: 12px;
+  font-weight: 600;
+  border-color: #d5ded8;
+  background: #fff;
+  color: #3d5349;
+  white-space: nowrap;
+}
+.role-choices .selected,
+.role-choice.selected {
+  background: #e8f2ec;
+  border-color: #2f6b4f;
+  color: #194c3d;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
 }
 .text-action {
   color: #315b42;
@@ -4200,15 +4273,53 @@ td small {
     grid-template-columns: 1fr;
   }
 }
+.optional-section {
+  min-width: 0;
+  border: 1px solid #e0e8e3;
+  border-radius: 10px;
+  background: #f6f8f7;
+  overflow: hidden;
+}
 .optional-section > summary {
   cursor: pointer;
-  background: #f0f3f0;
-  padding: 10px 12px;
-  border-radius: 6px;
-  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f3f6f4;
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: #2a4338;
+  line-height: 1.35;
+}
+.optional-section > summary::-webkit-details-marker {
+  display: none;
+}
+.optional-section > summary::before {
+  content: '▸';
+  font-size: 11px;
+  color: #5d7167;
+  flex-shrink: 0;
 }
 .optional-section[open] > summary {
-  margin-bottom: 12px;
+  margin-bottom: 0;
+  border-bottom: 1px solid #e0e8e3;
+  border-radius: 10px 10px 0 0;
+}
+.optional-section[open] > summary::before {
+  content: '▾';
+}
+.optional-section > :not(summary) {
+  padding: 12px 14px 14px;
+  background: #fff;
+}
+.optional-section .form-grid {
+  gap: 14px 16px;
+}
+.optional-section .inline-entry {
+  margin-top: 0;
 }
 .toolbar label {
   display: flex;
