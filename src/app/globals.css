@@ -9,6 +9,19 @@
   --softgreen: #e9f3ef;
   --gold: #bc935b;
   --nav: #122f2b;
+  /* Desktop rhythm — keep screens neat without a redesign */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --content-pad-x: 32px;
+  --content-pad-y: 28px;
+  --sidebar-w: 234px;
 }
 * {
   box-sizing: border-box;
@@ -85,20 +98,20 @@ button {
   min-height: 100vh;
 }
 .sidebar {
-  width: 234px;
+  width: var(--sidebar-w);
   position: fixed;
   inset: 0 auto 0 0;
   background: var(--nav);
   color: #c3d0cc;
-  padding: 34px 18px 20px;
+  padding: 28px 16px 20px;
   display: flex;
   flex-direction: column;
   z-index: 30;
 }
 .brand {
-  padding: 0 16px 35px;
+  padding: 0 12px 28px;
   display: flex;
-  gap: 11px;
+  gap: 12px;
   align-items: center;
   color: #fff;
 }
@@ -199,18 +212,18 @@ button {
   color: #9ab1a6;
 }
 .main {
-  margin-left: 234px;
+  margin-left: var(--sidebar-w);
   flex: 1;
   min-width: 0;
 }
 .topbar {
-  height: 76px;
+  height: 72px;
   background: white;
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 38px;
+  padding: 0 var(--content-pad-x);
   gap: 20px;
 }
 .breadcrumb {
@@ -265,7 +278,7 @@ button {
   color: #738078;
 }
 .content {
-  padding: 31px 38px 48px;
+  padding: var(--content-pad-y) var(--content-pad-x) 48px;
   max-width: 1600px;
   margin: auto;
 }
@@ -273,8 +286,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 25px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 .eyebrow {
   font-size: 10px;
@@ -296,8 +309,8 @@ button {
 }
 .btn {
   border: 1px solid #dee4e2;
-  padding: 10px 15px;
-  border-radius: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
   background: white;
   font-weight: 550;
   font-size: 12px;
@@ -329,27 +342,34 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 9px;
-  background: #fff0bf;
-  border: 3px solid #b85500;
-  color: #652900;
-  border-radius: 6px;
-  padding: 16px;
-  font-size: 14px;
-  margin-bottom: 22px;
+  gap: 10px;
+  background: #fff8e8;
+  border: 1px solid #e8c98a;
+  color: #6a4a12;
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: var(--space-5);
   position: sticky;
-  top: 6px;
+  top: 8px;
   z-index: 15;
+  box-shadow: 0 1px 2px rgba(32, 43, 53, 0.04);
 }
 .demo-banner span:last-child {
   flex-basis: 100%;
   font-size: 12px;
   line-height: 1.5;
+  color: #7a5c28;
 }
 .demo-banner.qa-host-banner {
-  background: #eef4fb;
-  border-color: #3d6f9c;
-  color: #1e3a52;
+  background: #f3f7fb;
+  border-color: #b7c9db;
+  color: #24384c;
+  box-shadow: none;
+}
+.demo-banner.qa-host-banner span:last-child {
+  color: #4a6074;
 }
 .test-dialog-label {
   display: block;
@@ -363,14 +383,14 @@ button {
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 17px;
-  margin-bottom: 23px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 .metric {
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 20px;
+  border-radius: var(--radius-md);
+  padding: var(--space-4) 18px;
 }
 .metric-label {
   display: flex;
@@ -412,13 +432,13 @@ button {
 .grid-2 {
   display: grid;
   grid-template-columns: 1.55fr 1fr;
-  gap: 22px;
-  margin-bottom: 22px;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 .card {
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   min-width: 0;
 }
@@ -427,7 +447,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 20px 22px;
+  padding: 18px 20px;
   border-bottom: 1px solid #f0f2f4;
 }
 .card-header .title {
@@ -554,6 +574,7 @@ button {
 }
 .table-wrap {
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 table {
   width: 100%;
@@ -562,17 +583,17 @@ table {
   white-space: nowrap;
 }
 th {
-  font-size: 9px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   font-weight: 600;
-  letter-spacing: 0.6px;
   text-align: left;
   color: #939aa3;
   background: #fafbfc;
-  padding: 13px 20px;
+  padding: 12px 16px;
 }
 td {
-  padding: 16px 20px;
+  padding: 14px 16px;
   border-top: 1px solid #f0f2f4;
   color: #58636d;
 }
@@ -631,23 +652,24 @@ td small {
   margin-top: 5px;
 }
 .empty {
-  padding: 35px 22px;
+  padding: 32px 20px;
   text-align: center;
   color: #8c969e;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 .toolbar {
   display: flex;
-  gap: 10px;
+  gap: var(--space-2);
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-4);
   flex-wrap: wrap;
 }
 .toolbar input,
 .toolbar select {
   background: white;
   border: 1px solid #e1e6e4;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 9px 12px;
   font-size: 12px;
   color: #596b61;
@@ -658,10 +680,10 @@ td small {
   gap: 18px;
 }
 .person-card {
-  padding: 23px;
+  padding: 20px;
   border: 1px solid var(--line);
   background: white;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .person-heading {
   display: flex;
@@ -794,7 +816,7 @@ td small {
   gap: 20px;
 }
 .section-body {
-  padding: 22px;
+  padding: 20px;
 }
 .details-grid {
   display: grid;
@@ -2103,15 +2125,29 @@ td small {
   color: var(--muted);
 }
 .intake-drafts.card {
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border-color: #d5ddd8;
   box-shadow: 0 1px 3px rgba(25, 76, 61, 0.05);
+  margin-bottom: var(--space-5);
+  padding: 0;
+}
+.intake-drafts.card.section-body {
+  padding: 0;
+}
+.intake-drafts.card > summary {
+  padding: 16px 20px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style-position: outside;
+}
+.intake-drafts.card[open] > summary {
+  border-bottom: 1px solid #eef2f0;
 }
 .intake-draft-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 14px;
+  margin: 14px 20px 0;
   padding-bottom: 2px;
 }
 .intake-draft-filters .btn.small {
@@ -2130,9 +2166,9 @@ td small {
 }
 .intake-drafts .intake-draft-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 10px;
-  margin-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 14px 20px 20px;
   align-items: stretch;
 }
 .intake-draft-empty {
@@ -2557,26 +2593,23 @@ td small {
 .mobile-close {
   display: none;
 }
-@media (min-width: 1600px) {
-  .content {
-    padding-top: 40px;
+@media (min-width: 1440px) {
+  :root {
+    --content-pad-x: 40px;
+    --content-pad-y: 32px;
   }
-  .topbar {
-    padding: 0 50px;
+}
+@media (min-width: 1600px) {
+  :root {
+    --content-pad-x: 48px;
+    --content-pad-y: 36px;
   }
 }
 @media (max-width: 1200px) {
-  .sidebar {
-    width: 205px;
-  }
-  .main {
-    margin-left: 205px;
-  }
-  .content {
-    padding: 25px;
-  }
-  .topbar {
-    padding: 0 25px;
+  :root {
+    --sidebar-w: 205px;
+    --content-pad-x: 24px;
+    --content-pad-y: 22px;
   }
   .search {
     width: 270px;
@@ -2593,6 +2626,9 @@ td small {
   .people-grid,
   .asset-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 900px) {
@@ -3642,7 +3678,7 @@ td small {
     font-size: 12px;
   }
   .booking-entry .btn.small {
-    min-height: 30px;
+    min-height: 40px;
     font-size: 12px;
   }
 }
@@ -5489,4 +5525,136 @@ td small {
 .checkbox-row input[type='checkbox'] {
   margin-top: 2px;
   flex-shrink: 0;
+}
+
+/* Mobile / tablet premium responsive polish (targeted — not a redesign) */
+html {
+  overflow-x: clip;
+}
+body {
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}
+@media (max-width: 900px) {
+  .toolbar {
+    align-items: stretch;
+  }
+  .toolbar input,
+  .toolbar select {
+    flex: 1 1 140px;
+    min-width: 0;
+    min-height: 40px;
+  }
+  .heading-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .table-wrap {
+    -webkit-overflow-scrolling: touch;
+    margin-inline: -2px;
+  }
+  .confirm-dialog-backdrop {
+    padding: 16px;
+    align-items: flex-end;
+  }
+  .confirm-dialog {
+    width: min(420px, 100%);
+    border-radius: 14px 14px 10px 10px;
+  }
+  .confirm-dialog-footer {
+    flex-wrap: wrap;
+  }
+  .confirm-dialog-btn {
+    min-height: 44px;
+    flex: 1 1 auto;
+    padding: 12px 14px;
+  }
+}
+@media (max-width: 650px) {
+  .login-card {
+    padding: 28px 22px;
+  }
+  .login-card form input {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  .login-card .btn,
+  .login-card button[type='submit'] {
+    min-height: 48px;
+    width: 100%;
+  }
+  .page-heading .subtitle {
+    max-width: none;
+  }
+  .heading-actions {
+    width: 100%;
+  }
+  .heading-actions .btn {
+    flex: 1 1 auto;
+    min-height: 42px;
+    justify-content: center;
+  }
+  .btn.small {
+    min-height: 40px;
+    padding: 9px 12px;
+  }
+  .intake-draft-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 8px;
+    padding-bottom: 6px;
+    margin-inline: -2px;
+    scrollbar-width: thin;
+  }
+  .intake-draft-filters .btn.small {
+    flex: 0 0 auto;
+    min-height: 36px;
+  }
+  .intake-drafts .intake-draft-grid {
+    grid-template-columns: 1fr;
+  }
+  .booking-entry .modal-footer-actions {
+    width: 100%;
+  }
+  .booking-entry .modal-footer-actions .btn {
+    flex: 1 1 calc(50% - 6px);
+    min-height: 44px;
+  }
+  .booking-entry .btn.small {
+    min-height: 40px;
+    font-size: 12px;
+  }
+  .content {
+    padding: 18px 14px;
+  }
+  .tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+  }
+  .tabs button {
+    flex: 0 0 auto;
+    min-height: 40px;
+  }
+}
+@media (max-width: 550px) {
+  .confirm-dialog-body {
+    padding: 20px 18px 6px;
+    gap: 12px;
+  }
+  .confirm-dialog-footer {
+    padding: 14px 18px 18px;
+    flex-direction: column-reverse;
+  }
+  .confirm-dialog-btn {
+    width: 100%;
+  }
+  .booking-entry .modal-footer-actions .btn {
+    flex: 1 1 100%;
+  }
+  th,
+  td {
+    padding-inline: 12px;
+  }
 }
