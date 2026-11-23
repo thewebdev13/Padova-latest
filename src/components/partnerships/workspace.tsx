@@ -943,8 +943,14 @@ export default function Partnerships() {
           </p>
         </div>
         <div className={styles.actions}>
-          <a className={styles.ghostLink} href="/partnerships/connect">
-            ChatGPT connection
+          <a
+            className={styles.ghostLink}
+            href="/partnerships/connect"
+            title="Optional: link ChatGPT so it can read partnership notes only. Separate from booking AI / OpenAI intake."
+          >
+            {state?.chatgpt_notes_linked
+              ? 'ChatGPT notes · linked'
+              : 'ChatGPT notes (optional)'}
           </a>
           {can('manage_partnerships') && (
             <button className={styles.primary} onClick={() => organizationForm()}>
