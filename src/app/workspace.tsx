@@ -63,6 +63,7 @@ import {
 } from '@/lib/commission-line-label';
 import { readWorkspaceLocation, workspaceUrl } from '@/lib/workspace-routes';
 import ListPager, { pageSlice } from '@/components/list-pager';
+import { useConfirmDialog } from '@/components/confirm-dialog';
 import UserAdministration, {
   PasswordChange,
   PersonalRecoveryCodes,
@@ -249,6 +250,7 @@ const nav = [
 ] as const;
 
 export default function Workspace({ synthetic = false }: { synthetic?: boolean }) {
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirmDialog();
   const [authReset, setAuthReset] = useState(() =>
     typeof window === 'undefined' ? false : readWorkspaceLocation().reset,
   );
@@ -3955,12 +3957,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 e.preventDefault();
                                 e.stopPropagation();
                                 const label = title || 'this draft';
-                                if (
-                                  !window.confirm(
-                                    `Delete “${String(label).slice(0, 80)}”? This removes the unposted draft only — not live bookings or money.`,
-                                  )
-                                )
-                                  return;
+                                const ok = await askConfirm({
+                                  title: 'Delete draft?',
+                                  message: `Remove “${String(label).slice(0, 80)}” from drafts?`,
+                                  note: 'Unposted draft only — live bookings and money stay untouched.',
+                                  confirmLabel: 'Delete draft',
+                                  cancelLabel: 'Keep draft',
+                                  tone: 'danger',
+                                });
+                                if (!ok) return;
                                 setBusy(true);
                                 try {
                                   await command('booking_draft_delete', {
@@ -6359,6 +6364,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           {toast}
         </div>
       )}
+      {confirmDialog}
     </div>
   );
 }

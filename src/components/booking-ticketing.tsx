@@ -6,6 +6,7 @@ import {
   ticketingValues,
   type Ticketing,
 } from '@/lib/traveler-ticketing';
+import { useConfirmDialog } from '@/components/confirm-dialog';
 type R = Record<string, any>;
 function TravelerRow({
   person,
@@ -22,6 +23,7 @@ function TravelerRow({
   onFull: () => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirmDialog();
   const [saved, setSaved] = useState<Ticketing | null>(null),
     [value, setValue] = useState<Ticketing>({ dob: '', sex: '', nationality: '' });
   const [error, setError] = useState(''),
@@ -158,20 +160,26 @@ function TravelerRow({
           <button
             type="button"
             className="text-action"
-            onClick={() => {
-              if (
-                !dirty ||
-                confirm('Reload saved traveler details and discard these unsaved profile changes?')
-              ) {
-                cache.delete(person.id);
-                setAttempt(attempt + 1);
+            onClick={async () => {
+              if (dirty) {
+                const ok = await askConfirm({
+                  title: 'Reload traveler profile?',
+                  message: 'Discard unsaved profile edits and reload the saved traveler details?',
+                  confirmLabel: 'Reload profile',
+                  cancelLabel: 'Keep edits',
+                  tone: 'default',
+                });
+                if (!ok) return;
               }
+              cache.delete(person.id);
+              setAttempt(attempt + 1);
             }}
           >
             Reload profile
           </button>
         </div>
       )}
+      {confirmDialog}
     </article>
   );
 }

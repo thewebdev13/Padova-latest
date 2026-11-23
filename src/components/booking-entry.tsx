@@ -75,6 +75,7 @@ import {
   sellerPaymentState,
   customerReceivedAmount,
 } from '@/lib/booking-entry-state';
+import { useConfirmDialog } from '@/components/confirm-dialog';
 type R = Record<string, any>;
 type Props = {
   config: R;
@@ -173,6 +174,7 @@ function OptionalSummary({
 
 export default function BookingEntry(props: Props) {
   const { state, onClose, onSubmit, onInlineCommand } = props;
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirmDialog();
   const [v, setV] = useState<R>({
     product: 'Flight',
     trip_type: 'One Way',
@@ -275,15 +277,19 @@ export default function BookingEntry(props: Props) {
     [...new Set([...ticketingDirty.current, ...ticketingCache.current.keys()])].some((id) =>
       v.traveler_ids.includes(id),
     );
-  const closeBooking = () => {
+  const closeBooking = async () => {
     if (busy) return;
-    if (
-      hasUnsavedTicketing() &&
-      !confirm(
-        'Traveler profile edits are not saved. Return to save them, or leave and discard only those profile edits?',
-      )
-    )
-      return;
+    if (hasUnsavedTicketing()) {
+      const ok = await askConfirm({
+        title: 'Leave without saving traveler edits?',
+        message:
+          'Traveler profile edits are not saved yet. Leave and discard only those profile edits, or stay to save them?',
+        confirmLabel: 'Leave and discard edits',
+        cancelLabel: 'Stay on form',
+        tone: 'default',
+      });
+      if (!ok) return;
+    }
     // Server drafts are reopened from Drafts — do not keep forcing them after Cancel.
     if (props.config.defaults.draft_id) {
       recoveryFinished.current = true;
@@ -4233,8 +4239,16 @@ export default function BookingEntry(props: Props) {
               type="button"
               className="btn discard-draft"
               disabled={busy}
-              onClick={() => {
-                if (!window.confirm('Discard this unfinished draft?')) return;
+              onClick={async () => {
+                const ok = await askConfirm({
+                  title: 'Discard unfinished draft?',
+                  message: 'This clears the browser recovery draft for this booking form.',
+                  note: 'Does not delete posted bookings or money.',
+                  confirmLabel: 'Discard draft',
+                  cancelLabel: 'Keep editing',
+                  tone: 'danger',
+                });
+                if (!ok) return;
                 recoveryFinished.current = true;
                 clearBookingRecovery(state.actor.id);
                 onClose();
@@ -4283,6 +4297,7 @@ export default function BookingEntry(props: Props) {
           </div>
         </div>
       </form>
+      {confirmDialog}
     </div>
   );
 }
