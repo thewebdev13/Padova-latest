@@ -3536,7 +3536,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     view = <Partnerships />;
   } else if (page === 'Dashboard') {
     view = (
-      <>
+      <div className="dashboard-page">
         {heading(
           'Your business, at a glance.',
           `A clear view of your travel operations. ${dateLabel(today, { weekday: 'long', month: 'long', day: 'numeric' })}.`,
@@ -3548,7 +3548,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {newButton('New booking', 'booking')}
           </>,
         )}
-        <div className="metrics">
+        <div className={`metrics${canAssetBasis ? ' metrics-5' : ' metrics-4'}`}>
           <Metric
             label="Active bookings"
             value={String(bks.filter((b) => b.reservation_status === 'Booked').length)}
@@ -3598,7 +3598,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         </div>
         <div className="list-block">
           <Card title="Recent transactions">
-            {transactionTable(transactions.slice(0, 8))}
+            {transactionTable(transactions.slice(0, 10))}
           </Card>
           <button className="btn ghost list-block-link" onClick={() => go('Bookings')}>
             View all transactions
@@ -3790,7 +3790,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </Card>
           </div>
         </div>
-      </>
+      </div>
     );
   } else if (page === 'Bookings') {
     const items = transactions.filter(

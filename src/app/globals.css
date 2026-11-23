@@ -4822,6 +4822,126 @@ td small {
   padding: 3px 5px;
   font-size: 10px;
 }
+/* Dashboard density — fill width, cut empty vertical air */
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dashboard-page > .page-heading {
+  margin-bottom: 0;
+  align-items: flex-end;
+}
+.dashboard-page > .page-heading h1 {
+  font-size: clamp(22px, 1.7vw, 28px);
+  letter-spacing: -0.03em;
+}
+.dashboard-page > .page-heading .subtitle {
+  margin-top: 4px;
+  max-width: 52ch;
+}
+.dashboard-page > .metrics {
+  margin-bottom: 0;
+  gap: 12px;
+}
+.dashboard-page .metrics-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.dashboard-page .metrics-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.dashboard-page .metric {
+  padding: 14px 15px;
+  border-radius: 12px;
+  border-color: #d8e2dc;
+  box-shadow: 0 1px 2px rgba(18, 47, 43, 0.04);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfb 100%);
+  min-width: 0;
+}
+.dashboard-page .metric-value {
+  font-size: 22px;
+  margin: 8px 0 6px;
+  letter-spacing: -0.04em;
+}
+.dashboard-page .metric-label {
+  font-size: 10.5px;
+  gap: 8px;
+}
+.dashboard-page .metric-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #eef5f1;
+  color: #184d43;
+}
+.dashboard-page .metric-foot {
+  font-size: 10px;
+}
+.dashboard-page > .list-block {
+  gap: 6px;
+}
+.dashboard-page .list-block > .card {
+  border-radius: 14px;
+}
+.dashboard-page .transaction-table th {
+  padding: 10px 12px;
+}
+.dashboard-page .transaction-table td {
+  padding: 10px 12px;
+}
+.dashboard-page .dashboard-layout {
+  gap: 14px;
+}
+.dashboard-page .dashboard-side {
+  gap: 12px;
+}
+.dashboard-page .travel-item {
+  padding: 11px 14px;
+}
+.dashboard-page .quick-actions {
+  gap: 8px;
+  padding: 12px 14px;
+}
+.dashboard-page .quick-action {
+  padding: 11px 10px;
+  border-radius: 9px;
+  border-color: #d7e0da;
+  background: #fff;
+  font-weight: 600;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+.dashboard-page .quick-action:hover {
+  border-color: #9fbfb0;
+  background: #f7faf8;
+}
+.dashboard-page .activity {
+  padding: 11px 14px;
+}
+.dashboard-page .followup-tabs {
+  gap: 6px;
+  padding: 10px 14px;
+}
+.dashboard-page .followup-tabs .btn {
+  padding: 6px 9px;
+}
+.dashboard-page .operational-followup td,
+.dashboard-page .operational-followup th {
+  padding: 8px;
+}
+.dashboard-page .dashboard-trips {
+  padding: 2px 12px 10px;
+}
+.dashboard-page .dashboard-trip {
+  padding: 10px 4px;
+}
+@media (max-width: 1280px) {
+  .dashboard-page .metrics-5,
+  .dashboard-page .metrics-4 {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+}
 .dashboard-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
