@@ -5007,13 +5007,16 @@ td small {
 }
 .transaction-table {
   overflow-x: auto;
+  border-radius: 0 0 14px 14px;
 }
 .transaction-table table {
   display: table;
   width: 100%;
-  min-width: 960px;
+  min-width: 980px;
   table-layout: fixed;
-  white-space: nowrap;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
 }
 .transaction-table thead {
   display: table-header-group;
@@ -5024,20 +5027,45 @@ td small {
 .transaction-table tr {
   display: table-row;
 }
-.transaction-table td,
 .transaction-table th {
   display: table-cell;
-  padding: 10px 12px;
+  padding: 12px 14px;
+  background: #f5f8f6;
+  color: #6a7870;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  border-bottom: 1px solid #e4ece7;
+  white-space: nowrap;
   vertical-align: middle;
 }
-.transaction-table th:nth-child(1) {
+.transaction-table td {
+  display: table-cell;
+  padding: 14px;
+  vertical-align: middle;
+  border-top: 1px solid #eef2ef;
+  color: #4d5a53;
+}
+.transaction-table tbody tr {
+  transition: background 0.12s ease;
+}
+.transaction-table tbody tr:hover {
+  background: #f7faf8;
+}
+.transaction-table tbody tr:hover td {
+  border-top-color: #e7eee9;
+}
+.transaction-table th:nth-child(1),
+.transaction-table td:nth-child(1) {
   width: 9%;
+  padding-left: 18px;
 }
 .transaction-table th:nth-child(2) {
   width: 22%;
 }
 .transaction-table th:nth-child(3) {
-  width: 16%;
+  width: 15%;
 }
 .transaction-table th:nth-child(4) {
   width: 8%;
@@ -5046,50 +5074,122 @@ td small {
   width: 8%;
 }
 .transaction-table th:nth-child(6) {
-  width: 24%;
+  width: 23%;
 }
 .transaction-table th:nth-child(7) {
   width: 9%;
 }
 .transaction-table th:nth-child(8),
 .transaction-table td:nth-child(8) {
-  width: 4%;
-  padding-right: 14px;
+  width: 6%;
+  padding-right: 16px;
+  text-align: right;
+}
+.transaction-date-cell {
+  color: #6b7870;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .transaction-table .money,
 .transaction-table td.money {
   white-space: nowrap;
   text-align: right;
-  padding-right: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  padding-right: 12px;
 }
 .transaction-followup-cell {
   white-space: normal !important;
 }
 .transaction-description,
 .transaction-person {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   max-width: 100%;
+  min-width: 0;
+}
+.transaction-description strong,
+.transaction-person strong {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.35;
 }
 .transaction-meta {
-  color: var(--muted);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #88948c;
   font-size: 11px;
+  font-weight: 450;
+  line-height: 1.35;
 }
 .transaction-indicators {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
   align-items: center;
   max-width: 100%;
 }
-.transaction-open-cell .btn {
+.transaction-table .badge {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+.transaction-table .badge.gray {
+  background: #f1f3f2;
+  color: #66736c;
+  border-color: #e4e8e5;
+}
+.transaction-table .badge.blue {
+  background: #eef4fb;
+  color: #4d6f96;
+  border-color: #d9e5f3;
+}
+.transaction-table .badge.amber {
+  background: #fbf3e6;
+  color: #9a6f3a;
+  border-color: #f0e0c6;
+}
+.transaction-table .badge.red {
+  background: #faf0f0;
+  color: #a55858;
+  border-color: #efd9d9;
+}
+.transaction-open-cell {
+  text-align: right;
+}
+.transaction-open-link {
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 4px 2px;
+  cursor: pointer;
   white-space: nowrap;
+}
+.transaction-open-link:hover {
+  color: #1f4a3a;
+  text-decoration: underline;
 }
 .badge.green {
   background: #e6f3e9;
   color: #24623c;
+}
+.transaction-table .badge:not(.amber):not(.red):not(.gray):not(.blue) {
+  background: #e8f4ec;
+  color: #2f6b48;
+  border-color: #cfe5d6;
 }
 .historical-facts {
   display: grid;

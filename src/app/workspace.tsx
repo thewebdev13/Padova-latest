@@ -1127,20 +1127,20 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   )
                 }
               >
-                <td>{date ? dateLabel(date) : 'Unknown date'}</td>
+                <td className="transaction-date-cell">
+                  {date ? dateLabel(date) : 'Unknown date'}
+                </td>
                 <td>
                   <span
                     className="transaction-description"
                     title={kind === 'booking' ? tripTitle(tripView(r)) : r.asset}
                   >
                     <strong>{kind === 'booking' ? tripTitle(tripView(r)) : r.asset}</strong>
-                    <span className="transaction-meta">
-                      {' '}
-                      ·
+                    <small className="transaction-meta">
                       {kind === 'booking'
                         ? [r.product, r.code, r.confirmations].filter(Boolean).join(' · ')
                         : 'Voucher / asset sale'}
-                    </span>
+                    </small>
                   </span>
                 </td>
                 <td>
@@ -1151,9 +1151,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       .join(' · ')}
                   >
                     <strong>{kind === 'booking' ? r.customer : r.buyer}</strong>
-                    {kind === 'booking' && r.travelers && (
-                      <span className="transaction-meta"> · {r.travelers}</span>
-                    )}
+                    {kind === 'booking' && r.travelers ? (
+                      <small className="transaction-meta">{r.travelers}</small>
+                    ) : null}
                   </span>
                 </td>
                 <td>
@@ -1230,7 +1230,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 )}
                 <td className="transaction-open-cell">
                   <button
-                    className="btn ghost"
+                    type="button"
+                    className="transaction-open-link"
                     aria-label={'Open ' + (kind === 'booking' ? r.code : r.asset)}
                     onClick={(e) => {
                       e.stopPropagation();
