@@ -11,8 +11,6 @@ export type ConfirmOptions = {
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: ConfirmTone;
-  /** Optional short note under the message (e.g. money-safety line). */
-  note?: string;
 };
 
 type Pending = ConfirmOptions & {
@@ -79,7 +77,6 @@ export function ConfirmDialog({
           <div className="confirm-dialog-copy">
             <h2 id={titleId}>{pending.title}</h2>
             <p id={messageId}>{pending.message}</p>
-            {pending.note ? <p className="confirm-dialog-note">{pending.note}</p> : null}
           </div>
         </div>
         <div className="confirm-dialog-footer">

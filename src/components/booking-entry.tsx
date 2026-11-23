@@ -281,11 +281,10 @@ export default function BookingEntry(props: Props) {
     if (busy) return;
     if (hasUnsavedTicketing()) {
       const ok = await askConfirm({
-        title: 'Leave without saving traveler edits?',
-        message:
-          'Traveler profile edits are not saved yet. Leave and discard only those profile edits, or stay to save them?',
-        confirmLabel: 'Leave and discard edits',
-        cancelLabel: 'Stay on form',
+        title: 'Leave without saving?',
+        message: 'Traveler profile edits are not saved. Leave anyway?',
+        confirmLabel: 'Leave',
+        cancelLabel: 'Cancel',
         tone: 'default',
       });
       if (!ok) return;
@@ -4241,11 +4240,10 @@ export default function BookingEntry(props: Props) {
               disabled={busy}
               onClick={async () => {
                 const ok = await askConfirm({
-                  title: 'Discard unfinished draft?',
-                  message: 'This clears the browser recovery draft for this booking form.',
-                  note: 'Does not delete posted bookings or money.',
-                  confirmLabel: 'Discard draft',
-                  cancelLabel: 'Keep editing',
+                  title: 'Discard draft?',
+                  message: 'Clear this unfinished booking draft?',
+                  confirmLabel: 'Discard',
+                  cancelLabel: 'Cancel',
                   tone: 'danger',
                 });
                 if (!ok) return;

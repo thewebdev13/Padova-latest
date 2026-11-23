@@ -163,10 +163,10 @@ function TravelerRow({
             onClick={async () => {
               if (dirty) {
                 const ok = await askConfirm({
-                  title: 'Reload traveler profile?',
-                  message: 'Discard unsaved profile edits and reload the saved traveler details?',
-                  confirmLabel: 'Reload profile',
-                  cancelLabel: 'Keep edits',
+                  title: 'Reload profile?',
+                  message: 'Discard unsaved traveler edits?',
+                  confirmLabel: 'Reload',
+                  cancelLabel: 'Cancel',
                   tone: 'default',
                 });
                 if (!ok) return;

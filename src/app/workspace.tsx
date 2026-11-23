@@ -3959,10 +3959,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 const label = title || 'this draft';
                                 const ok = await askConfirm({
                                   title: 'Delete draft?',
-                                  message: `Remove “${String(label).slice(0, 80)}” from drafts?`,
-                                  note: 'Unposted draft only — live bookings and money stay untouched.',
-                                  confirmLabel: 'Delete draft',
-                                  cancelLabel: 'Keep draft',
+                                  message: `Delete “${String(label).slice(0, 80)}”?`,
+                                  confirmLabel: 'Delete',
+                                  cancelLabel: 'Cancel',
                                   tone: 'danger',
                                 });
                                 if (!ok) return;

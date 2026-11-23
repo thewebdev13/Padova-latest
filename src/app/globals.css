@@ -1145,16 +1145,6 @@ td small {
   color: #3d5249;
   word-break: break-word;
 }
-.confirm-dialog-note {
-  margin: 10px 0 0 !important;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #f4f8f6;
-  border: 1px solid #e2ebe6;
-  font-size: 12px !important;
-  line-height: 1.4 !important;
-  color: #5a6f66 !important;
-}
 .confirm-dialog-footer {
   display: flex;
   justify-content: flex-end;
