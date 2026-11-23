@@ -451,19 +451,29 @@ button {
   flex-direction: column;
   gap: 28px;
 }
+.list-block,
 .payments-block {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
+.list-block > .card,
+.list-block > details.card,
+.list-block > section.card,
 .payments-block > .card {
   border-color: #d8e2dc;
   border-radius: 14px;
   box-shadow: 0 1px 3px rgba(25, 76, 61, 0.05);
 }
+.list-block > .list-pager,
+.list-block > .intake-draft-pager,
 .payments-block > .list-pager {
   margin-top: 0;
   margin-left: 2px;
+}
+.intake-drafts-block {
+  gap: 10px;
 }
 .payments-card-intro {
   margin: 0;
@@ -636,7 +646,12 @@ button {
   font-weight: 600;
 }
 .table-wrap {
-  overflow: auto;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
 }
 table {
@@ -2260,9 +2275,7 @@ td small {
   padding: 6px 0 4px;
 }
 .intake-draft-pager {
-  margin: 0 16px 14px;
-  padding-top: 6px;
-  border-top: 1px solid #eef2f0;
+  margin: 0;
 }
 .list-pager {
   display: flex;
@@ -4999,10 +5012,23 @@ td small {
 .transaction-description,
 .transaction-person {
   display: block;
-  max-width: 180px;
+  max-width: min(280px, 26vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+@media (min-width: 1280px) {
+  .transaction-description,
+  .transaction-person {
+    max-width: 340px;
+  }
+}
+.transaction-table th:last-child,
+.transaction-table td:last-child {
+  padding-right: 16px;
+}
+.transaction-table .money {
+  padding-right: 18px;
 }
 .transaction-meta {
   color: var(--muted);
@@ -5174,7 +5200,8 @@ td small {
 }
 .commissions-sample.card .table-wrap.commissions-sample-table,
 .commissions-sample-table {
-  overflow: hidden !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
   width: 100%;
   max-width: 100%;
 }

@@ -67,7 +67,9 @@ export default function CommissionsPage({
   const [sort, setSort] = useState<'newest' | 'due' | 'outstanding'>('newest');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [payablePage, setPayablePage] = useState(1);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const payablePager = pageSlice(referrals, payablePage, PAGE_SIZE);
 
   const receivableCount = commissions.length;
   const payableCount = referrals.length;
@@ -125,6 +127,7 @@ export default function CommissionsPage({
         <div className="heading-actions">{newCommissionButton}</div>
       </div>
 
+      <div className="list-block">
       <section className="card commissions-sample">
         <div className="commissions-sample-tabs" role="tablist" aria-label="Commission type">
           <button
@@ -148,6 +151,7 @@ export default function CommissionsPage({
             className={`commissions-sample-tab${lane === 'payable' ? ' is-active' : ''}`}
             onClick={() => {
               setLane('payable');
+              setPayablePage(1);
               setMenuFor(null);
             }}
           >
@@ -327,19 +331,6 @@ export default function CommissionsPage({
               </div>
             )}
 
-            {filtered.length > 0 ? (
-              <div className="commissions-sample-foot">
-                <ListPager
-                  page={pager.page}
-                  totalPages={pager.totalPages}
-                  total={pager.total}
-                  from={pager.from}
-                  to={pager.to}
-                  onPage={setPage}
-                  label={`receivables · ${sortLabel}`}
-                />
-              </div>
-            ) : null}
           </>
         ) : (
           <CommissionPayables
@@ -351,9 +342,35 @@ export default function CommissionsPage({
             enabled={payableTermsEnabled}
             action={action}
             embedded
+            hidePager
+            page={payablePage}
+            onPage={setPayablePage}
           />
         )}
       </section>
+      {lane === 'receivable' && filtered.length > 0 ? (
+        <ListPager
+          page={pager.page}
+          totalPages={pager.totalPages}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          onPage={setPage}
+          label={`receivables · ${sortLabel}`}
+        />
+      ) : null}
+      {lane === 'payable' && referrals.length > 0 ? (
+        <ListPager
+          page={payablePager.page}
+          totalPages={payablePager.totalPages}
+          total={payablePager.total}
+          from={payablePager.from}
+          to={payablePager.to}
+          onPage={setPayablePage}
+          label="payables"
+        />
+      ) : null}
+      </div>
     </>
   );
 }

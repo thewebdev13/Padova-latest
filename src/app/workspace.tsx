@@ -3864,6 +3864,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           )}
         </div>
         {!!s.bookingDrafts?.length && (
+          <div className="list-block intake-drafts-block">
           <details className="card section-body intake-drafts" open>
             <summary>
               Drafts & unposted historical records (
@@ -4108,49 +4109,48 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 );
               })()}
             </div>
-            {filteredDrafts.length > 0 &&
-              (() => {
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
-                return (
-                  <div className="intake-draft-pager">
-                    <ListPager
-                      page={draftPager.page}
-                      totalPages={draftPager.totalPages}
-                      total={draftPager.total}
-                      from={draftPager.from}
-                      to={draftPager.to}
-                      onPage={(p) => {
-                        setDraftPage(p);
-                        document
-                          .querySelector('.intake-drafts')
-                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }}
-                      label="drafts"
-                    />
-                  </div>
-                );
-              })()}
           </details>
-        )}
-        <Card title="Transactions" count={items.length}>
-          {(() => {
-            const bookingPager = pageSlice(items, bookingPage, 20);
-            return (
-              <>
-                {transactionTable(bookingPager.items)}
+          {filteredDrafts.length > 0 &&
+            (() => {
+              const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
+              return (
                 <ListPager
-                  page={bookingPager.page}
-                  totalPages={bookingPager.totalPages}
-                  total={bookingPager.total}
-                  from={bookingPager.from}
-                  to={bookingPager.to}
-                  onPage={setBookingPage}
-                  label="transactions"
+                  page={draftPager.page}
+                  totalPages={draftPager.totalPages}
+                  total={draftPager.total}
+                  from={draftPager.from}
+                  to={draftPager.to}
+                  onPage={(p) => {
+                    setDraftPage(p);
+                    document
+                      .querySelector('.intake-drafts-block')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                  label="drafts"
                 />
-              </>
-            );
-          })()}
-        </Card>
+              );
+            })()}
+          </div>
+        )}
+        {(() => {
+          const bookingPager = pageSlice(items, bookingPage, 20);
+          return (
+            <div className="list-block">
+              <Card title="Transactions" count={items.length}>
+                {transactionTable(bookingPager.items)}
+              </Card>
+              <ListPager
+                page={bookingPager.page}
+                totalPages={bookingPager.totalPages}
+                total={bookingPager.total}
+                from={bookingPager.from}
+                to={bookingPager.to}
+                onPage={setBookingPage}
+                label="transactions"
+              />
+            </div>
+          );
+        })()}
       </>
     );
   } else if (['People & Families', 'Companies', 'Suppliers', 'Sources & Brokers'].includes(page)) {
@@ -4323,7 +4323,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           // 12/page so Companies/Suppliers with 20+ rows get clear Previous/Next (Owner QA).
           const directoryPager = pageSlice(list, directoryPage, 12);
           return (
-            <>
+            <div className="list-block">
         <div
           className="directory-list"
           role="list"
@@ -4422,7 +4422,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           onPage={setDirectoryPage}
           label="records"
         />
-            </>
+            </div>
           );
         })()}
       </>
@@ -4644,6 +4644,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           ))}
         </div>
+        <div className="list-block">
         <div className="asset-grid">
           {assetPager.items.map((a: R) => (
             <div className="card asset-card" key={a.id}>
@@ -4705,9 +4706,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           onPage={setTablePage}
           label="assets"
         />
+        </div>
         {!canAssets && <Empty>Travel Assets access requires permission.</Empty>}
         {s.fulfillmentEnabled && can('manage_assets') && (
-          <div className="detail-section">
+          <div className="detail-section list-block">
             <Card
               title="Pending transfers & rewards"
               action={newButton('Track expected event', 'expected_event')}
@@ -4741,17 +4743,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     )}
                   </div>
                 ))}
-                <ListPager
-                  page={expectedPager.page}
-                  totalPages={expectedPager.totalPages}
-                  total={expectedPager.total}
-                  from={expectedPager.from}
-                  to={expectedPager.to}
-                  onPage={setExpectedPage}
-                  label="expected events"
-                />
               </div>
             </Card>
+            <ListPager
+              page={expectedPager.page}
+              totalPages={expectedPager.totalPages}
+              total={expectedPager.total}
+              from={expectedPager.from}
+              to={expectedPager.to}
+              onPage={setExpectedPage}
+              label="expected events"
+            />
           </div>
         )}
       </>
@@ -4797,112 +4799,102 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           ))}
         </div>
-        <Card
-          title="Refund follow-ups"
-          count={
-            s.refunds.filter(
-              (r: R) =>
-                filter === 'All' ||
-                Number(r.received) < Number(r.supplier_expected) ||
-                Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-            ).length
-          }
-        >
-          {(() => {
-            const refundRows = s.refunds.filter(
-              (r: R) =>
-                filter === 'All' ||
-                Number(r.received) < Number(r.supplier_expected) ||
-                Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-            );
-            const refundPager = pageSlice<R>(refundRows, tablePage, 12);
-            return (
-              <>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Booking / reason</th>
-                  <th>Customer</th>
-                  {canRefunds && (
-                    <>
-                      <th className="money">Supplier expected</th>
-                      <th className="money">Supplier received</th>
-                    </>
-                  )}
-                  <th className="money">Customer due</th>
-                  <th className="money">Customer paid</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {refundPager.items.map((r: R) => (
-                    <tr key={r.id}>
-                      <td>
-                        <button
-                          className="booking-code"
-                          onClick={() => openRecord('booking', r.booking_id)}
-                        >
-                          {r.code}
-                        </button>
-                        <small>{r.reason}</small>
-                      </td>
-                      <td>{r.customer}</td>
-                      {canRefunds && (
-                        <>
-                          <td className="money">{refundValue(r, r.supplier_expected)}</td>
-                          <td className="money">
-                            {refundValue(r, r.received)}
-                            <small>{r.received_forms || 'Not received'}</small>
-                          </td>
-                        </>
-                      )}
-                      <td className="money">{money(r.customer_due)}</td>
-                      <td className="money">{money(r.paid)}</td>
-                      <td>
+        {(() => {
+          const refundRows = s.refunds.filter(
+            (r: R) =>
+              filter === 'All' ||
+              Number(r.received) < Number(r.supplier_expected) ||
+              Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
+          );
+          const refundPager = pageSlice<R>(refundRows, tablePage, 12);
+          return (
+            <div className="list-block">
+              <Card title="Refund follow-ups" count={refundRows.length}>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Booking / reason</th>
+                        <th>Customer</th>
                         {canRefunds && (
                           <>
-                            <button
-                              className="btn small"
-                              hidden={Number(r.received) >= Number(r.supplier_expected)}
-                              disabled={!canAction('receive_refund')}
-                              onClick={() => action('receive_refund', { refund_id: r.id })}
-                            >
-                              Receive
-                            </button>{' '}
-                            <button
-                              className="btn small"
-                              hidden={
-                                Number(r.paid) + Number(r.handed_over ?? 0) >=
-                                Number(r.customer_due)
-                              }
-                              disabled={!canAction('pay_refund')}
-                              onClick={() => action('pay_refund', { refund_id: r.id })}
-                            >
-                              Pay customer
-                            </button>
+                            <th className="money">Supplier expected</th>
+                            <th className="money">Supplier received</th>
                           </>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-          <ListPager
-            page={refundPager.page}
-            totalPages={refundPager.totalPages}
-            total={refundPager.total}
-            from={refundPager.from}
-            to={refundPager.to}
-            onPage={setTablePage}
-            label="refunds"
-          />
-              </>
-            );
-          })()}
-          {!s.refunds.length && <Empty>No refunds recorded.</Empty>}
-        </Card>
+                        <th className="money">Customer due</th>
+                        <th className="money">Customer paid</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {refundPager.items.map((r: R) => (
+                        <tr key={r.id}>
+                          <td>
+                            <button
+                              className="booking-code"
+                              onClick={() => openRecord('booking', r.booking_id)}
+                            >
+                              {r.code}
+                            </button>
+                            <small>{r.reason}</small>
+                          </td>
+                          <td>{r.customer}</td>
+                          {canRefunds && (
+                            <>
+                              <td className="money">{refundValue(r, r.supplier_expected)}</td>
+                              <td className="money">
+                                {refundValue(r, r.received)}
+                                <small>{r.received_forms || 'Not received'}</small>
+                              </td>
+                            </>
+                          )}
+                          <td className="money">{money(r.customer_due)}</td>
+                          <td className="money">{money(r.paid)}</td>
+                          <td>
+                            {canRefunds && (
+                              <>
+                                <button
+                                  className="btn small"
+                                  hidden={Number(r.received) >= Number(r.supplier_expected)}
+                                  disabled={!canAction('receive_refund')}
+                                  onClick={() => action('receive_refund', { refund_id: r.id })}
+                                >
+                                  Receive
+                                </button>{' '}
+                                <button
+                                  className="btn small"
+                                  hidden={
+                                    Number(r.paid) + Number(r.handed_over ?? 0) >=
+                                    Number(r.customer_due)
+                                  }
+                                  disabled={!canAction('pay_refund')}
+                                  onClick={() => action('pay_refund', { refund_id: r.id })}
+                                >
+                                  Pay customer
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {!s.refunds.length && <Empty>No refunds recorded.</Empty>}
+              </Card>
+              <ListPager
+                page={refundPager.page}
+                totalPages={refundPager.totalPages}
+                total={refundPager.total}
+                from={refundPager.from}
+                to={refundPager.to}
+                onPage={setTablePage}
+                label="refunds"
+              />
+            </div>
+          );
+        })()}
       </>
     );
   } else if (page === 'Calendar') {
@@ -5296,11 +5288,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           'Activity history',
           'Attributed, chronological events. Financial history is append-only.',
         )}
-        <Card title="Recent events" count={s.audit.length}>
-          {(() => {
-            const activityPager = pageSlice<R>(s.audit, tablePage, 12);
-            return (
-              <>
+        {(() => {
+          const activityPager = pageSlice<R>(s.audit, tablePage, 12);
+          return (
+            <div className="list-block">
+              <Card title="Recent events" count={s.audit.length}>
                 {activityPager.items.map((a: R) => (
                   <div className="activity" key={a.id}>
                     <span className="activity-dot" />
@@ -5321,19 +5313,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </div>
                   </div>
                 ))}
-                <ListPager
-                  page={activityPager.page}
-                  totalPages={activityPager.totalPages}
-                  total={activityPager.total}
-                  from={activityPager.from}
-                  to={activityPager.to}
-                  onPage={setTablePage}
-                  label="events"
-                />
-              </>
-            );
-          })()}
-        </Card>
+              </Card>
+              <ListPager
+                page={activityPager.page}
+                totalPages={activityPager.totalPages}
+                total={activityPager.total}
+                from={activityPager.from}
+                to={activityPager.to}
+                onPage={setTablePage}
+                label="events"
+              />
+            </div>
+          );
+        })()}
       </>
     );
   } else if (page === 'Users & Permissions') {
