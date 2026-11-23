@@ -1193,22 +1193,42 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 <td>
                   <Badge>{kind === 'booking' ? r.reservation_status : 'Sale'}</Badge>
                 </td>
-                <td>
+                <td className="transaction-followup-cell">
                   <span className="transaction-indicators">
-                    {transactionIndicators(kind, r, s.operationalViews ?? {}, {
-                      sale: canSale,
-                      cost: canCosts,
-                    }).map((flag) => (
-                      <Badge key={flag.label} tone={flag.tone}>
-                        {flag.label}
-                      </Badge>
-                    ))}
+                    {(() => {
+                      const flags = transactionIndicators(kind, r, s.operationalViews ?? {}, {
+                        sale: canSale,
+                        cost: canCosts,
+                      });
+                      const shown = flags.slice(0, 3);
+                      const extra = flags.length - shown.length;
+                      return (
+                        <>
+                          {shown.map((flag) => (
+                            <Badge key={flag.label} tone={flag.tone}>
+                              {flag.label}
+                            </Badge>
+                          ))}
+                          {extra > 0 ? (
+                            <Badge
+                              tone="gray"
+                              title={flags
+                                .slice(3)
+                                .map((f) => f.label)
+                                .join(', ')}
+                            >
+                              +{extra}
+                            </Badge>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </span>
                 </td>
                 {canSale && (
                   <td className="money">{money(kind === 'booking' ? r.sale : r.proceeds)}</td>
                 )}
-                <td>
+                <td className="transaction-open-cell">
                   <button
                     className="btn ghost"
                     aria-label={'Open ' + (kind === 'booking' ? r.code : r.asset)}
@@ -3575,12 +3595,14 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             />
           )}
         </div>
-        <Card title="Recent transactions">
-          {transactionTable(transactions.slice(0, 10))}
-          <button className="btn ghost" onClick={() => go('Bookings')}>
+        <div className="list-block">
+          <Card title="Recent transactions">
+            {transactionTable(transactions.slice(0, 8))}
+          </Card>
+          <button className="btn ghost list-block-link" onClick={() => go('Bookings')}>
             View all transactions
           </button>
-        </Card>
+        </div>
         <div className="dashboard-layout">
           <div className="dashboard-attention">
             <OperationalViews

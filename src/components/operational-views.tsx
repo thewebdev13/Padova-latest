@@ -58,16 +58,17 @@ export default function OperationalViews({
       <section className="card operational-followup">
         <div className="card-header">
           <h2>{compact ? 'Needs attention' : 'Operational follow-up'}</h2>
-          {compact && (
+          {compact ? (
             <button className="btn ghost" onClick={() => viewAll?.(selected)}>
               View all
             </button>
-          )}
+          ) : null}
         </div>
-        <div className="followup-tabs">
+        <div className="followup-tabs" role="tablist" aria-label="Follow-up filters">
           {[names[7], ...names.slice(0, 7)].map((n) => (
             <button
               key={n}
+              type="button"
               className={`btn small ${n === selected ? 'primary' : 'ghost'} ${!(views[n] ?? []).length ? 'empty-filter' : ''}`}
               aria-pressed={n === selected}
               onClick={() => setSelected(n)}
@@ -79,7 +80,7 @@ export default function OperationalViews({
         {!rows.length ? (
           <p className="empty">No visible exceptions in {selected}.</p>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap operational-followup-table">
             <table>
               <thead>
                 <tr>
@@ -92,7 +93,7 @@ export default function OperationalViews({
               <tbody>
                 {visible.map((r) => (
                   <tr
-                    key={r.id}
+                    key={r.id ?? r.key ?? `${r.booking_id}-${r.kind}`}
                     className="clickable"
                     onClick={() => (r.booking_id || r.record_id) && open(r)}
                   >
@@ -147,12 +148,12 @@ export default function OperationalViews({
             </table>
           </div>
         )}
-        {compact && rows.length > 5 ? (
-          <button className="btn ghost" onClick={() => viewAll?.(selected)}>
-            View all {rows.length}
-          </button>
-        ) : null}
       </section>
+      {compact && rows.length > 5 ? (
+        <button className="btn ghost list-block-link" onClick={() => viewAll?.(selected)}>
+          View all {rows.length}
+        </button>
+      ) : null}
       {!compact && rows.length > 0 ? (
         <ListPager
           page={pager.page}
