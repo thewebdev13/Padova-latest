@@ -1002,6 +1002,7 @@ export async function partnershipList(db: Database, actor: Actor, params: URLSea
       );
     if (view === 'replies') conditions.push('o.reply_review=true');
     const offset = Math.max(0, Math.min(100000, Math.floor(Number(params.get('offset'))) || 0));
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(params.get('limit')) || 12)));
     const query = `FROM pt_organizations g LEFT JOIN pt_opportunities o ON o.organization_id=g.id LEFT JOIN pt_campaigns c ON c.id=o.campaign_id LEFT JOIN staff s ON s.id=o.owner_id WHERE $1::date IS NOT NULL${conditions.length ? ' AND ' + conditions.join(' AND ') : ''}`;
     const rows = (
       await tx.query(
@@ -1012,7 +1013,7 @@ export async function partnershipList(db: Database, actor: Actor, params: URLSea
       EXISTS(SELECT 1 FROM pt_agreements a WHERE a.organization_id=g.id AND a.version=(SELECT max(a2.version) FROM pt_agreements a2 WHERE a2.organization_id=g.id) AND a.status='accepted' AND a.starts_on<=$1::date AND (a.ends_on IS NULL OR a.ends_on>=$1::date)) confirmation_current,
       (SELECT count(*) FROM pt_referrals r WHERE r.organization_id=g.id AND r.kind IN ('reported_inquiry','verified_inquiry')) inquiries,
       (SELECT count(DISTINCT r.booking_id) FROM pt_referrals r JOIN bookings b ON b.id=r.booking_id WHERE r.organization_id=g.id AND b.reservation_status='Traveled') completed_bookings
-      ${query} ORDER BY o.reply_review DESC NULLS LAST,o.due_on ASC NULLS LAST,o.priority,g.name,g.id LIMIT 50 OFFSET ${offset}`,
+      ${query} ORDER BY o.reply_review DESC NULLS LAST,o.due_on ASC NULLS LAST,o.priority,g.name,g.id LIMIT ${limit} OFFSET ${offset}`,
         values,
       )
     ).rows;
@@ -1044,6 +1045,7 @@ export async function partnershipList(db: Database, actor: Actor, params: URLSea
       rows,
       total,
       offset,
+      limit,
       today,
       campaigns,
       owners,
@@ -1052,13 +1054,14 @@ export async function partnershipList(db: Database, actor: Actor, params: URLSea
     };
   });
 }
-export async function outreachQueue(db: Database, actor: Actor, offset = 0) {
+export async function outreachQueue(db: Database, actor: Actor, offset = 0, limit = 12) {
   return db.transaction(async (tx) => {
     actor = await partnershipActor(tx, actor);
     offset = Math.max(0, Math.min(100000, Math.floor(offset) || 0));
+    limit = Math.min(50, Math.max(1, Math.floor(limit) || 12));
     const drafts = (
       await tx.query(
-        `SELECT d.*,m.value recipient,g.id organization_id,g.name organization,o.reply_review,o.next_action FROM pt_drafts d JOIN pt_contact_methods m ON m.id=d.method_id JOIN pt_opportunities o ON o.id=d.opportunity_id JOIN pt_organizations g ON g.id=o.organization_id WHERE d.state IN ('draft','approved') ORDER BY d.created_at LIMIT 50 OFFSET ${offset}`,
+        `SELECT d.*,m.value recipient,g.id organization_id,g.name organization,o.reply_review,o.next_action FROM pt_drafts d JOIN pt_contact_methods m ON m.id=d.method_id JOIN pt_opportunities o ON o.id=d.opportunity_id JOIN pt_organizations g ON g.id=o.organization_id WHERE d.state IN ('draft','approved') ORDER BY d.created_at LIMIT ${limit} OFFSET ${offset}`,
       )
     ).rows.map((d) => ({ ...d, review_hash: draftApprovalHash(d, { value: d.recipient }) }));
     return {
@@ -1068,6 +1071,7 @@ export async function outreachQueue(db: Database, actor: Actor, offset = 0) {
         (await one(tx, "SELECT count(*) n FROM pt_drafts WHERE state IN ('draft','approved')")).n,
       ),
       offset,
+      limit,
     };
   });
 }
@@ -1110,14 +1114,16 @@ export async function partnershipChoices(db: Database, actor: Actor, q: string) 
     return { organizations, bookings, parties, referrals };
   });
 }
-export async function sourceRegister(db: Database, actor: Actor, offset = 0) {
+export async function sourceRegister(db: Database, actor: Actor, offset = 0, limit = 12) {
   return db.transaction(async (tx) => {
     actor = await partnershipActor(tx, actor);
     requirePermission(actor, 'import_partnerships');
     offset = Math.max(0, Math.min(100000, Math.floor(offset) || 0));
+    limit = Math.min(50, Math.max(1, Math.floor(limit) || 12));
     return {
       actor: { id: actor.id, name: actor.name, role: actor.role, permissions: actor.permissions },
       offset,
+      limit,
       total: Number(
         (await one(tx, "SELECT count(*) n FROM pt_reviews WHERE status IN ('open','deferred')")).n,
       ),
@@ -1134,7 +1140,7 @@ export async function sourceRegister(db: Database, actor: Actor, offset = 0) {
       batches: (await tx.query('SELECT * FROM pt_import_batches ORDER BY imported_at DESC')).rows,
       reviews: (
         await tx.query(
-          `SELECT r.*,g.name organization,i.original_text,i.source_url,i.legacy_id FROM pt_reviews r LEFT JOIN pt_organizations g ON g.id=r.organization_id LEFT JOIN pt_source_items i ON i.id=r.source_item_id WHERE r.status IN ('open','deferred') ORDER BY (r.status='open') DESC,r.id LIMIT 50 OFFSET ${offset}`,
+          `SELECT r.*,g.name organization,i.original_text,i.source_url,i.legacy_id FROM pt_reviews r LEFT JOIN pt_organizations g ON g.id=r.organization_id LEFT JOIN pt_source_items i ON i.id=r.source_item_id WHERE r.status IN ('open','deferred') ORDER BY (r.status='open') DESC,r.id LIMIT ${limit} OFFSET ${offset}`,
         )
       ).rows,
     };

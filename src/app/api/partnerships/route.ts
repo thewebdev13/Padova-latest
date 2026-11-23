@@ -25,9 +25,19 @@ export async function GET(request: Request) {
       p.get('view') === 'choices'
         ? await partnershipChoices(db, actor, p.get('q') ?? '')
         : p.get('view') === 'outreach'
-          ? await outreachQueue(db, actor, Number(p.get('offset') ?? 0))
+          ? await outreachQueue(
+              db,
+              actor,
+              Number(p.get('offset') ?? 0),
+              Number(p.get('limit') ?? 12),
+            )
           : p.get('view') === 'sources'
-            ? await sourceRegister(db, actor, Number(p.get('offset') ?? 0))
+            ? await sourceRegister(
+                db,
+                actor,
+                Number(p.get('offset') ?? 0),
+                Number(p.get('limit') ?? 12),
+              )
             : p.has('id')
               ? await partnershipDetail(db, actor, p.get('id')!)
               : await partnershipList(db, actor, p);

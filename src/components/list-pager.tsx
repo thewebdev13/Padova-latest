@@ -16,6 +16,16 @@ export function pageSlice<T>(items: T[], page: number, pageSize: number) {
   };
 }
 
+/** For API offset pagination (Partnerships, etc.). */
+export function offsetMeta(total: number, offset: number, pageSize: number) {
+  const size = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(total / size) || 1);
+  const page = Math.min(Math.max(1, Math.floor(offset / size) + 1), totalPages);
+  const from = total ? offset + 1 : 0;
+  const to = total ? Math.min(offset + size, total) : 0;
+  return { page, totalPages, total, from, to, pageSize: size };
+}
+
 function pageWindow(current: number, totalPages: number): (number | '…')[] {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
   const pages = new Set<number>([1, totalPages, current, current - 1, current + 1]);

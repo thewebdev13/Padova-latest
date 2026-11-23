@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { stages, relationships, displayStage } from '@/lib/partnerships/contracts';
 import styles from './workspace.module.css';
 import SearchableSelect from '@/components/searchable-select';
+import ListPager, { offsetMeta, pageSlice } from '@/components/list-pager';
 type R = Record<string, any>;
+const PAGE = 12;
 const views = [
   ['queue', 'Work queue'],
   ['all', 'All organizations'],
@@ -301,6 +303,7 @@ export default function Partnerships() {
         view,
         q: search,
         offset: String(offset),
+        limit: String(PAGE),
         ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)),
       });
       const response = await fetch(`/api/partnerships?${p}`),
@@ -1123,18 +1126,22 @@ export default function Partnerships() {
               )}
             </article>
           ))}
-          <footer className={styles.pager}>
-            <span>{state?.total ?? 0} messages</span>
-            <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>
-              Previous
-            </button>
-            <button
-              disabled={offset + 50 >= (state?.total ?? 0)}
-              onClick={() => setOffset(offset + 50)}
-            >
-              Next
-            </button>
-          </footer>
+          {(() => {
+            const m = offsetMeta(Number(state?.total ?? 0), offset, PAGE);
+            return (
+              <div className={styles.pager}>
+                <ListPager
+                  page={m.page}
+                  totalPages={m.totalPages}
+                  total={m.total}
+                  from={m.from}
+                  to={m.to}
+                  onPage={(p) => setOffset((p - 1) * PAGE)}
+                  label="messages"
+                />
+              </div>
+            );
+          })()}
         </div>
       ) : view === 'hotels' ? (
         <div>
@@ -1168,9 +1175,10 @@ export default function Partnerships() {
                 </tr>
               </thead>
               <tbody>
-                {(hotels.length ? hotels : state?.hotels ?? [])
-                  .slice(offset, offset + 50)
-                  .map((h: R) => (
+                {(() => {
+                  const hotelList = hotels.length ? hotels : (state?.hotels ?? []);
+                  const hotelPager = pageSlice(hotelList, Math.floor(offset / PAGE) + 1, PAGE);
+                  return hotelPager.items.map((h: R) => (
                   <tr key={h.id}>
                     <td>{h.location}</td>
                     <td>{h.hotel_name}</td>
@@ -1193,7 +1201,8 @@ export default function Partnerships() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  ));
+                })()}
               </tbody>
             </table>
             {!(hotels.length ? hotels : state?.hotels ?? []).length &&
@@ -1204,20 +1213,23 @@ export default function Partnerships() {
                 </p>
               )}
           </div>
-          <footer className={styles.pager}>
-            <span>{(hotels.length ? hotels : state?.hotels ?? []).length} hotels (max 500)</span>
-            <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>
-              Previous
-            </button>
-            <button
-              disabled={
-                offset + 50 >= (hotels.length ? hotels : state?.hotels ?? []).length
-              }
-              onClick={() => setOffset(offset + 50)}
-            >
-              Next
-            </button>
-          </footer>
+          {(() => {
+            const hotelList = hotels.length ? hotels : (state?.hotels ?? []);
+            const m = offsetMeta(hotelList.length, offset, PAGE);
+            return (
+              <div className={styles.pager}>
+                <ListPager
+                  page={m.page}
+                  totalPages={m.totalPages}
+                  total={m.total}
+                  from={m.from}
+                  to={m.to}
+                  onPage={(p) => setOffset((p - 1) * PAGE)}
+                  label="hotels"
+                />
+              </div>
+            );
+          })()}
         </div>
       ) : view === 'sources' ? (
         <div>
@@ -1329,18 +1341,22 @@ export default function Partnerships() {
               )}
             </article>
           ))}
-          <footer className={styles.pager}>
-            <span>{state?.total ?? 0} open or deferred reviews</span>
-            <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>
-              Previous
-            </button>
-            <button
-              disabled={offset + 50 >= (state?.total ?? 0)}
-              onClick={() => setOffset(offset + 50)}
-            >
-              Next
-            </button>
-          </footer>
+          {(() => {
+            const m = offsetMeta(Number(state?.total ?? 0), offset, PAGE);
+            return (
+              <div className={styles.pager}>
+                <ListPager
+                  page={m.page}
+                  totalPages={m.totalPages}
+                  total={m.total}
+                  from={m.from}
+                  to={m.to}
+                  onPage={(p) => setOffset((p - 1) * PAGE)}
+                  label="reviews"
+                />
+              </div>
+            );
+          })()}
         </div>
       ) : (
         <>
@@ -1429,18 +1445,22 @@ export default function Partnerships() {
               </p>
             )}
           </div>
-          <footer className={styles.pager}>
-            <span>{state?.total ?? 0} matching rows</span>
-            <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>
-              Previous
-            </button>
-            <button
-              disabled={offset + 50 >= (state?.total ?? 0)}
-              onClick={() => setOffset(offset + 50)}
-            >
-              Next
-            </button>
-          </footer>
+          {(() => {
+            const m = offsetMeta(Number(state?.total ?? 0), offset, PAGE);
+            return (
+              <div className={styles.pager}>
+                <ListPager
+                  page={m.page}
+                  totalPages={m.totalPages}
+                  total={m.total}
+                  from={m.from}
+                  to={m.to}
+                  onPage={(p) => setOffset((p - 1) * PAGE)}
+                  label="organizations"
+                />
+              </div>
+            );
+          })()}
         </>
       )}
       {selected && detail && (

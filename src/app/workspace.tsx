@@ -4462,7 +4462,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             refunds. Each movement appears once.
           </p>
           {(() => {
-            const activityPager = pageSlice<R>(activity, tablePage, 20);
+            const activityPager = pageSlice<R>(activity, tablePage, 12);
             return (
               <>
           <div className="table-wrap">
@@ -4518,7 +4518,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         </Card>
         <Card title="Receipts, payments and allocations" count={list.length}>
           {(() => {
-            const paymentPager = pageSlice<R>(list, tablePage, 20);
+            const paymentPager = pageSlice<R>(list, tablePage, 12);
             return (
               <>
           <div className="table-wrap">
@@ -4807,7 +4807,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 Number(r.received) < Number(r.supplier_expected) ||
                 Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
             );
-            const refundPager = pageSlice<R>(refundRows, tablePage, 20);
+            const refundPager = pageSlice<R>(refundRows, tablePage, 12);
             return (
               <>
           <div className="table-wrap">
@@ -5290,7 +5290,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         )}
         <Card title="Recent events" count={s.audit.length}>
           {(() => {
-            const activityPager = pageSlice<R>(s.audit, tablePage, 20);
+            const activityPager = pageSlice<R>(s.audit, tablePage, 12);
             return (
               <>
                 {activityPager.items.map((a: R) => (
