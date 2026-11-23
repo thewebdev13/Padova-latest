@@ -4105,7 +4105,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               <dt>PNR</dt>
                               <dd>{metaValue(draft.intake_pnr)}</dd>
                             </div>
-                            <div>
+                            <div className="intake-draft-meta-sale">
                               <dt>Sale</dt>
                               <dd>
                                 {draft.intake_sale != null && draft.intake_sale !== ''
