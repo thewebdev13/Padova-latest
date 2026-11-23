@@ -4102,21 +4102,27 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       </article>
                       );
                     })}
-                    <div className="intake-draft-more">
-                      <ListPager
-                        page={draftPager.page}
-                        totalPages={draftPager.totalPages}
-                        total={draftPager.total}
-                        from={draftPager.from}
-                        to={draftPager.to}
-                        onPage={setDraftPage}
-                        label="drafts"
-                      />
-                    </div>
                   </>
                 );
               })()}
             </div>
+            {filteredDrafts.length > 0 &&
+              (() => {
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 12);
+                return (
+                  <div className="intake-draft-pager">
+                    <ListPager
+                      page={draftPager.page}
+                      totalPages={draftPager.totalPages}
+                      total={draftPager.total}
+                      from={draftPager.from}
+                      to={draftPager.to}
+                      onPage={setDraftPage}
+                      label="drafts"
+                    />
+                  </div>
+                );
+              })()}
           </details>
         )}
         <Card title="Transactions" count={items.length}>
@@ -4307,7 +4313,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           </label>
         </div>
         {(() => {
-          const directoryPager = pageSlice(list, directoryPage, 40);
+          const directoryPager = pageSlice(list, directoryPage, 20);
           return (
             <>
         <div

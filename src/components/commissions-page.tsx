@@ -2,6 +2,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
 import CommissionPayables from './commission-payables';
+import ListPager, { pageSlice } from '@/components/list-pager';
 import { receivableCommissionLabel } from '@/lib/commission-line-label';
 
 type R = Record<string, any>;
@@ -31,7 +32,7 @@ function shortExpected(iso: string | null | undefined) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-const PAGE_STEP = 6;
+const PAGE_SIZE = 20;
 
 /** Site Feedback 3 Phase 3 — matches Owner sample commissions list. */
 export default function CommissionsPage({
@@ -65,7 +66,7 @@ export default function CommissionsPage({
   const [status, setStatus] = useState<'All' | 'Outstanding' | 'Received'>('All');
   const [sort, setSort] = useState<'newest' | 'due' | 'outstanding'>('newest');
   const [search, setSearch] = useState('');
-  const [visible, setVisible] = useState(PAGE_STEP);
+  const [page, setPage] = useState(1);
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
   const receivableCount = commissions.length;
@@ -106,7 +107,8 @@ export default function CommissionsPage({
     return rows;
   }, [commissions, search, sort, status]);
 
-  const shown = filtered.slice(0, visible);
+  const pager = pageSlice(filtered, page, PAGE_SIZE);
+  const shown = pager.items;
   const sortLabel =
     sort === 'due' ? 'expected date' : sort === 'outstanding' ? 'amount outstanding' : 'newest first';
 
@@ -132,7 +134,7 @@ export default function CommissionsPage({
             className={`commissions-sample-tab${lane === 'receivable' ? ' is-active' : ''}`}
             onClick={() => {
               setLane('receivable');
-              setVisible(PAGE_STEP);
+              setPage(1);
               setMenuFor(null);
             }}
           >
@@ -165,7 +167,7 @@ export default function CommissionsPage({
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
-                    setVisible(PAGE_STEP);
+                    setPage(1);
                   }}
                   aria-label="Search commissions"
                 />
@@ -179,7 +181,7 @@ export default function CommissionsPage({
                     aria-selected={status === x}
                     onClick={() => {
                       setStatus(x);
-                      setVisible(PAGE_STEP);
+                      setPage(1);
                     }}
                   >
                     {x}
@@ -192,7 +194,7 @@ export default function CommissionsPage({
                   value={sort}
                   onChange={(e) => {
                     setSort(e.target.value as typeof sort);
-                    setVisible(PAGE_STEP);
+                    setPage(1);
                   }}
                   aria-label="Sort commissions"
                 >
@@ -327,18 +329,15 @@ export default function CommissionsPage({
 
             {filtered.length > 0 ? (
               <div className="commissions-sample-foot">
-                <span>
-                  Showing {shown.length} of {filtered.length} · {sortLabel}
-                </span>
-                {shown.length < filtered.length ? (
-                  <button
-                    type="button"
-                    className="commissions-show-more"
-                    onClick={() => setVisible((n) => n + PAGE_STEP)}
-                  >
-                    Show more ↓
-                  </button>
-                ) : null}
+                <ListPager
+                  page={pager.page}
+                  totalPages={pager.totalPages}
+                  total={pager.total}
+                  from={pager.from}
+                  to={pager.to}
+                  onPage={setPage}
+                  label={`receivables · ${sortLabel}`}
+                />
               </div>
             ) : null}
           </>
