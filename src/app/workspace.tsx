@@ -3906,7 +3906,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </p>
                   );
                 }
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 10);
                 return (
                   <>
                     {draftPager.items.map((draft: R) => {
@@ -4109,7 +4109,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
             {filteredDrafts.length > 0 &&
               (() => {
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 10);
                 return (
                   <div className="intake-draft-pager">
                     <ListPager
