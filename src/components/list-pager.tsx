@@ -30,6 +30,13 @@ function pageWindow(current: number, totalPages: number): (number | '…')[] {
   return out;
 }
 
+function pluralLabel(total: number, label: string) {
+  if (total === 1 && label.endsWith('s') && !label.includes(' ')) {
+    return label.replace(/s$/, '');
+  }
+  return label;
+}
+
 export default function ListPager({
   page,
   totalPages,
@@ -48,11 +55,14 @@ export default function ListPager({
   label?: string;
 }) {
   if (total <= 0) return null;
+  const itemLabel = pluralLabel(total, label);
   if (totalPages <= 1) {
     return (
-      <p className="list-pager list-pager-only muted" role="status">
-        Showing {total} {label}
-      </p>
+      <nav className="list-pager list-pager-only" aria-label={`${label} count`} role="status">
+        <p className="muted">
+          Showing {total} {itemLabel}
+        </p>
+      </nav>
     );
   }
   const numbers = pageWindow(page, totalPages);

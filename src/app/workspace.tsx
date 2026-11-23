@@ -280,6 +280,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [followupSelected, setFollowupSelected] = useState('Needs Attention'),
     [bookingPage, setBookingPage] = useState(1),
     [tablePage, setTablePage] = useState(1),
+    [expectedPage, setExpectedPage] = useState(1),
     [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7)),
     [day, setDay] = useState(''),
     [intakeOpen, setIntakeOpen] = useState(false),
@@ -3905,7 +3906,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </p>
                   );
                 }
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 12);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
                 return (
                   <>
                     {draftPager.items.map((draft: R) => {
@@ -4108,7 +4109,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
             {filteredDrafts.length > 0 &&
               (() => {
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 12);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
                 return (
                   <div className="intake-draft-pager">
                     <ListPager
@@ -4117,7 +4118,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       total={draftPager.total}
                       from={draftPager.from}
                       to={draftPager.to}
-                      onPage={setDraftPage}
+                      onPage={(p) => {
+                        setDraftPage(p);
+                        document
+                          .querySelector('.intake-drafts')
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
                       label="drafts"
                     />
                   </div>
@@ -4313,7 +4319,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           </label>
         </div>
         {(() => {
-          const directoryPager = pageSlice(list, directoryPage, 20);
+          // 12/page so Companies/Suppliers with 20+ rows get clear Previous/Next (Owner QA).
+          const directoryPager = pageSlice(list, directoryPage, 12);
           return (
             <>
         <div
@@ -4605,7 +4612,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     );
   } else if (page === 'Travel Assets') {
     const list = s.assets.filter((a: R) => filter === 'All' || a.kind === filter);
-    const assetPager = pageSlice<R>(list, tablePage, 20);
+    const assetPager = pageSlice<R>(list, tablePage, 12);
+    const expectedEvents = s.expectedEvents ?? [];
+    const expectedPager = pageSlice<R>(expectedEvents, expectedPage, 8);
     view = (
       <>
         {heading(
@@ -4700,8 +4709,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   Expected value does not change inventory or profit. Post only the actual issuer
                   receipt.
                 </p>
-                {(s.expectedEvents ?? []).map((e: R) => (
-                  <div className="note" key={e.id}>
+                {expectedPager.items.map((e: R) => (
+                  <div className="note expected-event-row" key={e.id}>
                     <strong>
                       {e.kind} · {e.status}
                     </strong>
@@ -4724,6 +4733,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     )}
                   </div>
                 ))}
+                <ListPager
+                  page={expectedPager.page}
+                  totalPages={expectedPager.totalPages}
+                  total={expectedPager.total}
+                  from={expectedPager.from}
+                  to={expectedPager.to}
+                  onPage={setExpectedPage}
+                  label="expected events"
+                />
               </div>
             </Card>
           </div>

@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
+import ListPager, { pageSlice } from '@/components/list-pager';
 type Row = Record<string, any>;
+const PAGE_SIZE = 12;
 const money = (v: any) =>
   v == null
     ? 'Unknown'
@@ -27,6 +29,8 @@ export default function CommissionPayables({
   embedded?: boolean;
 }) {
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pager = pageSlice(rows, page, PAGE_SIZE);
   return (
     <section className={embedded ? 'commissions-payable-embed' : 'card'}>
       {!embedded && (
@@ -58,7 +62,7 @@ export default function CommissionPayables({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {pager.items.map((r) => (
                 <tr key={r.id}>
                   <td>
                     {r.referrer}
@@ -188,6 +192,19 @@ export default function CommissionPayables({
           </table>
         </div>
       )}
+      {rows.length > 0 ? (
+        <div className="commissions-sample-foot">
+          <ListPager
+            page={pager.page}
+            totalPages={pager.totalPages}
+            total={pager.total}
+            from={pager.from}
+            to={pager.to}
+            onPage={setPage}
+            label="payables"
+          />
+        </div>
+      ) : null}
     </section>
   );
 }

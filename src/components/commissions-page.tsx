@@ -32,7 +32,7 @@ function shortExpected(iso: string | null | undefined) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 12;
 
 /** Site Feedback 3 Phase 3 — matches Owner sample commissions list. */
 export default function CommissionsPage({
