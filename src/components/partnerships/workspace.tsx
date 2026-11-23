@@ -1176,9 +1176,9 @@ export default function Partnerships() {
               </thead>
               <tbody>
                 {(() => {
-                  const hotelList = hotels.length ? hotels : (state?.hotels ?? []);
+                  const hotelList: R[] = hotels.length ? hotels : ((state?.hotels ?? []) as R[]);
                   const hotelPager = pageSlice(hotelList, Math.floor(offset / PAGE) + 1, PAGE);
-                  return hotelPager.items.map((h: R) => (
+                  return hotelPager.items.map((h) => (
                   <tr key={h.id}>
                     <td>{h.location}</td>
                     <td>{h.hotel_name}</td>
@@ -1214,7 +1214,7 @@ export default function Partnerships() {
               )}
           </div>
           {(() => {
-            const hotelList = hotels.length ? hotels : (state?.hotels ?? []);
+            const hotelList: R[] = hotels.length ? hotels : ((state?.hotels ?? []) as R[]);
             const m = offsetMeta(hotelList.length, offset, PAGE);
             return (
               <div className={styles.pager}>
