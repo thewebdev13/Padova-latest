@@ -292,9 +292,14 @@
 }
 .pager {
   margin-top: 16px;
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
 }
 .pager :global(.list-pager) {
   margin-top: 0;
+  width: 100%;
+  justify-content: flex-end;
 }
 .empty {
   padding: 35px;
