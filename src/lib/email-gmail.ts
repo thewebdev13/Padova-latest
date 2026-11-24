@@ -347,7 +347,12 @@ export function googleOAuthAuthorizeUrl(opts: {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set(
     'scope',
-    'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.readonly',
+    [
+      'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      // Password-reset mail (forgot password) — re-consent once after deploy.
+      'https://www.googleapis.com/auth/gmail.send',
+    ].join(' '),
   );
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('prompt', 'consent');

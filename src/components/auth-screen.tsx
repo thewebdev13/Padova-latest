@@ -10,9 +10,9 @@ import {
 
 export default function AuthScreen({
   onLogin,
-  synthetic = false,
 }: {
   onLogin: () => Promise<void>;
+  /** Kept for callers; login UI no longer shows a synthetic banner. */
   synthetic?: boolean;
 }) {
   const [mode, setMode] = useState<'login' | 'request' | 'reset' | 'code'>('login'),
@@ -53,9 +53,6 @@ export default function AuthScreen({
     return (
       <div className="login">
         <div className="login-card">
-          {synthetic && (
-            <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
-          )}
           <RecoveryCodes codes={codes} />
           <button
             className="btn primary"
@@ -72,23 +69,24 @@ export default function AuthScreen({
   return (
     <div className="login">
       <div className="login-card">
-        {synthetic && (
-          <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
-        )}
         <div className="eyebrow">PADOVA TRAVEL · INDIVIDUAL ACCESS</div>
         <h1>
           {mode === 'login'
             ? 'Welcome back.'
             : mode === 'request'
-              ? 'Recover your account.'
-              : 'Set your password.'}
+              ? 'Forgot your password?'
+              : mode === 'code'
+                ? 'Use a recovery code.'
+                : 'Set your new password.'}
         </h1>
         <p className="subtitle">
           {mode === 'login'
-            ? 'Use your own staff email and password.'
+            ? 'Sign in with your staff email and password.'
             : mode === 'request'
-              ? 'Request a single-use recovery link from your Owner.'
-              : 'Use a single-use link or your own personal recovery code. Old sessions will be revoked.'}
+              ? 'Enter your staff email. We will send a single-use reset link if the account exists.'
+              : mode === 'code'
+                ? 'Enter your email, one unused personal recovery code, and a new password.'
+                : 'Choose a new password. Previous sessions will be signed out.'}
         </p>
         <form
           key={mode}
@@ -106,7 +104,7 @@ export default function AuthScreen({
             const code = String(f.get('code') ?? '');
             const next: FieldErrorMap = {};
             if (mode !== 'reset' && isEmptyFieldValue(email))
-              next.email = requiredFieldMessage('Individual staff email');
+              next.email = requiredFieldMessage('Staff email');
             if (mode === 'code' && isEmptyFieldValue(code))
               next.code = requiredFieldMessage('Personal recovery code');
             if (mode !== 'request' && isEmptyFieldValue(password))
@@ -152,7 +150,15 @@ export default function AuthScreen({
                 result = await r.json();
               if (!r.ok) throw new Error(result.error);
               if (mode === 'login') await onLogin();
-              else if (mode === 'request') setMessage(result.message);
+              else if (mode === 'request') {
+                const qaUrl =
+                  typeof result.qa_reset_url === 'string' ? result.qa_reset_url.trim() : '';
+                setMessage(
+                  qaUrl
+                    ? `${result.message}\n\nOpen reset link: ${qaUrl}`
+                    : result.message,
+                );
+              }
               else {
                 setToken('');
                 setCodes(result.recovery_codes ?? []);
@@ -185,7 +191,7 @@ export default function AuthScreen({
           {mode !== 'reset' && (
             <div className={formFieldClass('form-field', attempted && !!fieldErrors.email)}>
               <label htmlFor="email">
-                Individual staff email
+                Staff email
                 <ReqMark />
               </label>
               <input
@@ -268,7 +274,7 @@ export default function AuthScreen({
               : mode === 'login'
                 ? 'Sign in'
                 : mode === 'request'
-                  ? 'Request recovery'
+                  ? 'Send reset link'
                   : 'Save new password'}
           </button>
         </form>
@@ -291,13 +297,9 @@ export default function AuthScreen({
               resetFeedback();
             }}
           >
-            Use a personal recovery code
+            I have a personal recovery code
           </button>
         )}
-        <p className="subtitle">
-          No shared Padova login. Your Owner provisions your individual account. Recovery links must
-          be delivered through a verified private channel.
-        </p>
       </div>
     </div>
   );
@@ -309,8 +311,7 @@ export function RecoveryCodes({ codes }: { codes: string[] }) {
       <h2>Save your personal recovery codes</h2>
       <p className="subtitle">
         Store these in your password manager or a protected offline location. Each code works once
-        for your individual account, including when no Owner is signed in. These replace your
-        previous codes and are shown only now.
+        for your individual account. These replace your previous codes and are shown only now.
       </p>
       <textarea
         aria-label="Your private personal recovery codes"

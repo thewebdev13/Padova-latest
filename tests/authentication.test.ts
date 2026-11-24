@@ -401,7 +401,9 @@ test('recovery requests are enumeration-safe; links are hashed, expiring, single
     known = await requestRecovery(db, { email: u.user.email }),
     unknown = await requestRecovery(db, { email: 'unknown@example.invalid' });
   assert.deepEqual(known, unknown);
+  assert.match(known.message, /reset link|inbox/i);
   assert.ok((await listUsers(db, owner)).recoveryRequests.some((r) => r.staff_id === u.actor.id));
+  // Self-serve request already minted a single-use token; Owner re-issue still works.
   const link = await issueRecovery(db, owner, u.actor.id);
   const stored = await one(db, 'SELECT * FROM password_reset_tokens WHERE token_hash=$1', [
     tokenHash(link.token),

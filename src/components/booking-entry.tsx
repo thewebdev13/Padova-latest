@@ -1124,7 +1124,7 @@ export default function BookingEntry(props: Props) {
           `/api/directory?role=${encodeURIComponent(role)}&q=${encodeURIComponent(label)}`,
         );
         if (!response.ok) throw new Error(`Directory lookup failed for ${role}`);
-        const data = await response.json();
+      const data = await response.json();
         const results = (data.results ?? []).filter((row: R) => eligibleParty(row, role));
         const found = exactEligibleMatch(results, label, role);
         if (found) {
@@ -1786,7 +1786,7 @@ export default function BookingEntry(props: Props) {
           secondary_commission: undefined,
           referring_organization_id: can('manage_commissions')
             ? v.referring_organization_id || null
-            : undefined,
+              : undefined,
         },
         ...(received
           ? {
@@ -1937,20 +1937,20 @@ export default function BookingEntry(props: Props) {
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => e.stopPropagation()}
               >
-                <button
-                  type="button"
+            <button
+              type="button"
                   className="btn small ghost"
-                  onClick={() => void copy(quickPasteAIInstructions, 'AI instructions')}
-                >
-                  Copy AI Instructions
-                </button>
-                <button
-                  type="button"
+              onClick={() => void copy(quickPasteAIInstructions, 'AI instructions')}
+            >
+              Copy AI Instructions
+            </button>
+            <button
+              type="button"
                   className="btn small ghost"
-                  onClick={() => void copy(quickPasteExample, 'Example')}
-                >
-                  Copy Example
-                </button>
+              onClick={() => void copy(quickPasteExample, 'Example')}
+            >
+              Copy Example
+            </button>
                 {copyStatus ? <span role="status">{copyStatus}</span> : null}
               </span>
             </summary>
@@ -1986,16 +1986,16 @@ export default function BookingEntry(props: Props) {
                     >
                       <div className="intake-panel-head-row">
                         <h3>What you pasted</h3>
-                      </div>
+          </div>
                       {!paste.trim() && !busy ? (
                         <p className="booking-fill-drop-hint" aria-hidden>
                           Drop PDF, screenshot, .eml, or paste Field: Value text
                         </p>
                       ) : null}
-                      <textarea
+            <textarea
                         className="intake-preview-raw intake-preview-editable"
                         rows={10}
-                        value={paste}
+              value={paste}
                         disabled={busy}
                         aria-label="What you pasted"
                         placeholder="Paste Field: Value lines, or drop a PDF / screenshot above…"
@@ -2036,7 +2036,7 @@ export default function BookingEntry(props: Props) {
                           }}
                         >
                           Use sample
-                        </button>
+            </button>
                         {pasteFileName ? (
                           <span className="intake-file-chip">
                             {pasteFileName}
@@ -2187,7 +2187,7 @@ export default function BookingEntry(props: Props) {
                 >
                   Save as intake draft
                 </button>
-              </div>
+                    </div>
               {pasteIssues.length > 0 ? (
                 <ul className="quick-paste-issues" aria-live="polite">
                   {pasteIssues.map((issue, i) => (
@@ -2359,26 +2359,26 @@ export default function BookingEntry(props: Props) {
                   <>
                     {showTravelerMatches && (
                       <div className="search-select-results" style={travelerMenuStyle}>
-                        {matches.map((p) => (
-                          <button
-                            type="button"
-                            className="btn small"
-                            key={p.id}
+                      {matches.map((p) => (
+                        <button
+                          type="button"
+                          className="btn small"
+                          key={p.id}
                             onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), p] }));
-                              change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
-                              setTraveler('');
-                              travelerInput.current?.focus();
-                            }}
-                          >
-                            {p.name}
-                            {matches.filter((m) => m.name === p.name).length > 1
-                              ? ` · ${p.id.slice(-6)}`
-                              : ''}
-                          </button>
-                        ))}
-                      </div>
+                          onClick={() => {
+                            setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), p] }));
+                            change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
+                            setTraveler('');
+                            travelerInput.current?.focus();
+                          }}
+                        >
+                          {p.name}
+                          {matches.filter((m) => m.name === p.name).length > 1
+                            ? ` · ${p.id.slice(-6)}`
+                            : ''}
+                        </button>
+                      ))}
+                    </div>
                     )}
                     {matches.length > 0 && (
                       <p role="status">
@@ -2476,24 +2476,24 @@ export default function BookingEntry(props: Props) {
                     hint="Passport / ticket details, skip unless needed now"
                     filled={v.traveler_ids.length ? 1 : 0}
                   />
-                  <BookingTicketing
-                    cache={ticketingCache.current}
-                    people={v.traveler_ids
-                      .map((id: string) => rows('parties').find((p: R) => p.id === id))
-                      .filter(Boolean)}
-                    date={
-                      v.product === 'Flight' && v.trip_type === 'Multi-City'
-                        ? (v.segments?.[0]?.date ?? '')
-                        : (v.travel_start ?? '')
-                    }
-                    state={state}
-                    command={onInlineCommand}
-                    onFull={setTravelerDetailsId}
-                    onDirty={(id, dirty) => {
-                      if (dirty) ticketingDirty.current.add(id);
-                      else ticketingDirty.current.delete(id);
-                    }}
-                  />
+                <BookingTicketing
+                  cache={ticketingCache.current}
+                  people={v.traveler_ids
+                    .map((id: string) => rows('parties').find((p: R) => p.id === id))
+                    .filter(Boolean)}
+                  date={
+                    v.product === 'Flight' && v.trip_type === 'Multi-City'
+                      ? (v.segments?.[0]?.date ?? '')
+                      : (v.travel_start ?? '')
+                  }
+                  state={state}
+                  command={onInlineCommand}
+                  onFull={setTravelerDetailsId}
+                  onDirty={(id, dirty) => {
+                    if (dirty) ticketingDirty.current.add(id);
+                    else ticketingDirty.current.delete(id);
+                  }}
+                />
                 </details>
               )}
             </section>
@@ -2876,9 +2876,9 @@ export default function BookingEntry(props: Props) {
                   }
                 >
                   {text(
-                    'travel_start',
-                    v.product === 'Hotel' ? 'Check-in date' : dateLabels.start,
-                    'date',
+                  'travel_start',
+                  v.product === 'Hotel' ? 'Check-in date' : dateLabels.start,
+                  'date',
                     true,
                   )}
                   {travelStartMissing ? (
@@ -2895,13 +2895,13 @@ export default function BookingEntry(props: Props) {
                   }
                 >
                   {text(
-                    'travel_end',
-                    v.product === 'Hotel'
-                      ? 'Check-out date'
-                      : v.product === 'Car'
-                        ? 'Drop-off date'
-                        : dateLabels.end!,
-                    'date',
+                  'travel_end',
+                  v.product === 'Hotel'
+                    ? 'Check-out date'
+                    : v.product === 'Car'
+                      ? 'Drop-off date'
+                      : dateLabels.end!,
+                  'date',
                     true,
                   )}
                   {travelEndMissing ? (
@@ -2915,7 +2915,7 @@ export default function BookingEntry(props: Props) {
                 <p className="form-error full date-order-error" role="alert">
                   {dateOrderIssue}
                 </p>
-              )}
+                )}
               {v.product === 'Flight' && v.trip_type === 'One Way' && (
                 <Field label="Return date">
                   <input
@@ -2935,7 +2935,7 @@ export default function BookingEntry(props: Props) {
                   'primary_reference',
                   v.product === 'Hotel' || v.product === 'Car'
                     ? 'Confirmation #'
-                    : 'Primary confirmation',
+                      : 'Primary confirmation',
                 )
               )}
               <details className="full">
@@ -4040,7 +4040,7 @@ export default function BookingEntry(props: Props) {
                       'number',
                     )}
                   {providerDirect && (
-                    <p className="full">
+                      <p className="full">
                       Customer card paid the provider directly
                       {bookedCostLabel ? ` (${bookedCostLabel})` : ''}. That amount is recorded
                       separately below, it is not owed to Padova. Keep amount owed at $0 and put
@@ -4049,9 +4049,9 @@ export default function BookingEntry(props: Props) {
                     </p>
                   )}
                   {providerDirect && bookedCostCents === undefined && (
-                    <button
-                      type="button"
-                      className="btn small"
+                      <button
+                        type="button"
+                        className="btn small"
                       onClick={() =>
                         setV((old) => ({
                           ...old,
@@ -4060,9 +4060,9 @@ export default function BookingEntry(props: Props) {
                           sale_touched: true,
                         }))
                       }
-                    >
-                      No amount owed to Padova ($0)
-                    </button>
+                      >
+                        No amount owed to Padova ($0)
+                      </button>
                   )}
                   {!percentPricing && (
                     <details>
@@ -4131,10 +4131,10 @@ export default function BookingEntry(props: Props) {
                         );
                       return (
                         <>
-                          <div>
-                            <dt>Amount owed to Padova</dt>
+                    <div>
+                      <dt>Amount owed to Padova</dt>
                             <dd>{dollars(total)}</dd>
-                          </div>
+                    </div>
                           {extraCharge > 0 && (
                             <div>
                               <dt>Includes {feeNote}</dt>
@@ -4270,10 +4270,10 @@ export default function BookingEntry(props: Props) {
         </div>
         <div className="modal-footer">
           <div className="modal-footer-actions">
-            <button
-              type="button"
-              className="btn discard-draft"
-              disabled={busy}
+          <button
+            type="button"
+            className="btn discard-draft"
+            disabled={busy}
               onClick={async () => {
                 const ok = await askConfirm({
                   title: 'Discard draft?',
@@ -4283,48 +4283,48 @@ export default function BookingEntry(props: Props) {
                   tone: 'danger',
                 });
                 if (!ok) return;
-                recoveryFinished.current = true;
-                clearBookingRecovery(state.actor.id);
-                onClose();
-              }}
-            >
-              Discard draft
-            </button>
-            <button type="button" className="btn" onClick={closeBooking} disabled={busy}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  if (hasUnsavedTicketing())
-                    throw new Error(
-                      'Save the edited traveler details to their profiles before saving the draft.',
-                    );
-                  if (!onInlineCommand) throw new Error('Draft save unavailable');
-                  await onInlineCommand(
-                    'booking_draft',
-                    {
-                      title: v.route || v.reservation_summary || `${v.product} draft`,
-                      entry: { ...v, components, pending_traveler: traveler },
-                    },
-                    crypto.randomUUID(),
+              recoveryFinished.current = true;
+              clearBookingRecovery(state.actor.id);
+              onClose();
+            }}
+          >
+            Discard draft
+          </button>
+          <button type="button" className="btn" onClick={closeBooking} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                if (hasUnsavedTicketing())
+                  throw new Error(
+                    'Save the edited traveler details to their profiles before saving the draft.',
                   );
+                if (!onInlineCommand) throw new Error('Draft save unavailable');
+                await onInlineCommand(
+                  'booking_draft',
+                  {
+                    title: v.route || v.reservation_summary || `${v.product} draft`,
+                    entry: { ...v, components, pending_traveler: traveler },
+                  },
+                  crypto.randomUUID(),
+                );
                   recoveryFinished.current = true;
                   clearBookingRecovery(state.actor.id);
-                  onClose();
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : 'Draft save failed');
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Save Draft
-            </button>
+                onClose();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : 'Draft save failed');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save Draft
+          </button>
             <button
               className="btn primary"
               disabled={busy || !!dateOrderIssue || !!livePastePreview.reservationBlock}
@@ -4334,8 +4334,8 @@ export default function BookingEntry(props: Props) {
                   : undefined
               }
             >
-              {busy ? 'Saving…' : 'Save Booking'}
-            </button>
+            {busy ? 'Saving…' : 'Save Booking'}
+          </button>
           </div>
         </div>
       </form>

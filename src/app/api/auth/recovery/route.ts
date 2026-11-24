@@ -21,7 +21,7 @@ export async function POST(request: Request) {
         : action === 'backup_code'
           ? await recoverWithPersonalCode(db, data)
           : action === 'request'
-            ? await requestRecovery(db, data)
+            ? await requestRecovery(db, data, { publicOrigin: request.url })
             : null;
     if (!result) throw new Error('Invalid action');
     if (action === 'reset' || action === 'backup_code') {

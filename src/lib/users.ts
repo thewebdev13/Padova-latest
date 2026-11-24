@@ -398,22 +398,93 @@ export async function listUsers(db: Database, actor: Actor) {
     employeeDefaults: EMPLOYEE_PERMISSIONS,
   };
 }
-export async function requestRecovery(db: Database, input: unknown) {
+export async function requestRecovery(
+  db: Database,
+  input: unknown,
+  opts?: { publicOrigin?: string },
+) {
   const data = z.object({ email }).parse(input);
-  await db.transaction(async (tx) => {
-    if (!(await attempt(tx, `recovery:${data.email}`, 3))) return;
-    const user = (
-      await tx.query('SELECT id FROM staff WHERE lower(email)=$1 AND active=true', [data.email])
-    ).rows[0];
-    if (user) {
-      await tx.query('INSERT INTO recovery_requests(staff_id) VALUES($1)', [user.id]);
-      await securityEvent(tx, null, 'recovery_requested', user.id);
-    }
-  });
-  return {
+  const generic = {
     message:
-      'If this is an active account, its recovery request is available to the Owner. Contact your Owner through a verified private channel for a recovery link.',
+      'If an account exists for that email, we sent a password reset link. Check your inbox (and spam). The link expires in 30 minutes.',
   };
+  type Issued = { staff_id: string; email: string; token: string; expires_at: string };
+  const issued = await db.transaction(async (tx): Promise<Issued | null> => {
+    if (!(await attempt(tx, `recovery:${data.email}`, 3))) return null;
+    const user = (
+      await tx.query(
+        'SELECT id, email, auth_version FROM staff WHERE lower(email)=$1 AND active=true FOR UPDATE',
+        [data.email],
+      )
+    ).rows[0];
+    if (!user) return null;
+    await tx.query('INSERT INTO recovery_requests(staff_id) VALUES($1)', [user.id]);
+    const token = randomBytes(32).toString('hex');
+    await tx.query(
+      'UPDATE password_reset_tokens SET used_at=now() WHERE staff_id=$1 AND used_at IS NULL',
+      [user.id],
+    );
+    const row = await one(
+      tx,
+      "INSERT INTO password_reset_tokens(token_hash,staff_id,issued_by,auth_version,expires_at) VALUES($1,$2,$3,$4,now()+interval '30 minutes') RETURNING expires_at",
+      [tokenHash(token), user.id, user.id, user.auth_version],
+    );
+    await securityEvent(tx, null, 'recovery_requested', user.id, {
+      self_serve_link: true,
+    });
+    return {
+      staff_id: String(user.id),
+      email: String(user.email),
+      token,
+      expires_at: String(row.expires_at),
+    };
+  });
+  if (issued) {
+    try {
+      const { passwordResetLink, publicAppOrigin, sendPasswordResetEmail } =
+        await import('./password-reset-mail');
+      const origin = publicAppOrigin(opts?.publicOrigin);
+      const resetUrl = passwordResetLink(origin, issued.token);
+      const sent = await sendPasswordResetEmail({
+        to: issued.email,
+        resetUrl,
+        expiresMinutes: 30,
+      });
+      if (!sent) {
+        console.warn(
+          '[password-reset] no mail provider accepted the message (configure PADOVA_RESEND_API_KEY or Gmail send scope)',
+        );
+        // QA only: surface the link so staff can finish the flow while Gmail re-consent / Resend is pending.
+        // Production keeps the generic message (no enumeration / no link leak).
+        if (process.env.PADOVA_QA === '1') {
+          return {
+            message: `${generic.message} (QA: email delivery not configured — use this link once: ${resetUrl})`,
+            qa_reset_url: resetUrl,
+          };
+        }
+      } else {
+        await db.transaction(async (tx) => {
+          await securityEvent(tx, null, 'recovery_link_emailed', issued.staff_id, {
+            delivery: 'self_serve',
+          });
+        });
+      }
+    } catch (err) {
+      console.error(
+        `[password-reset] email failed: ${err instanceof Error ? err.message : err}`,
+      );
+      if (process.env.PADOVA_QA === '1') {
+        const { passwordResetLink, publicAppOrigin } = await import('./password-reset-mail');
+        const origin = publicAppOrigin(opts?.publicOrigin);
+        const resetUrl = passwordResetLink(origin, issued.token);
+        return {
+          message: `${generic.message} (QA: email send failed — use this link once: ${resetUrl})`,
+          qa_reset_url: resetUrl,
+        };
+      }
+    }
+  }
+  return generic;
 }
 export async function issueRecovery(db: Database, actor: Actor, target: string) {
   uuid.parse(target);
