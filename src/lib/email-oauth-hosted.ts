@@ -5,6 +5,7 @@ import { emailIntakeClientId, emailIntakeClientSecret } from './email-gmail';
 const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.send',
 ].join(' ');
 
 export function emailOAuthRedirectUri(requestUrl: string): string {
