@@ -58,6 +58,9 @@ const labels: Record<string, string> = {
   'drop off': 'travel_end',
   'dropoff date': 'travel_end',
   'drop-off date': 'travel_end',
+  'airline pnr': 'primary_reference',
+  'airline record locator': 'primary_reference',
+  'carrier pnr': 'primary_reference',
   pnr: 'primary_reference',
   confirmation: 'primary_reference',
   'confirmation number': 'primary_reference',
@@ -68,6 +71,12 @@ const labels: Record<string, string> = {
   'booking ref': 'primary_reference',
   'reservation number': 'primary_reference',
   'record locator': 'primary_reference',
+  'sabre pnr': 'booking_source_confirmation',
+  'sabre record locator': 'booking_source_confirmation',
+  'gds pnr': 'booking_source_confirmation',
+  'gds record locator': 'booking_source_confirmation',
+  'agency pnr': 'booking_source_confirmation',
+  'booking pnr': 'booking_source_confirmation',
   'booked through': 'method',
   'referring organization': 'referring_organization',
   'referring org': 'referring_organization',
@@ -109,7 +118,12 @@ const labels: Record<string, string> = {
   'source account/profile': 'source_profile',
   'points/miles quantity': 'points_quantity',
   'agreed rate': 'quoted_rate',
+  'cost per point': 'quoted_rate',
   'rate unit': 'rate_unit',
+  'per-point unit': 'rate_unit',
+  'account email': 'account_email',
+  'account email used': 'account_email',
+  'points account email': 'account_email',
 };
 
 const MONEY_KEYS = new Set([
@@ -268,7 +282,11 @@ export function exactPointCost(quantity: number, rate: string, unit: string): nu
   return cents;
 }
 
-export const quickPasteAIInstructions = `Extract booking information for Padova. Do not invent or infer missing facts, payments, ownership or costs. Use Unknown when unknown. Output ONLY the exact Field: Value lines below, one field per line, no markdown or commentary. Use dates YYYY-MM-DD and money as plain USD decimals. Use Product Flight, Hotel, Car or Other; Trip Type One Way, Round Trip or Multi-City. For Multi-City retain every segment in Summary for human review. Customer Paid and Seller Paid must be exactly Paid, Partial, Unpaid or Unknown, and actual amounts must be evidence-based. Keep reservation facts in Summary and operational notes in Notes. Never output credentials or full card/account numbers. Keep booking source account/profile separate from the card that paid. Rate unit defaults to cents per point. Supply these labels:
+export const quickPasteAIInstructions = `Extract booking information for Padova. Do not invent or infer missing facts, payments, ownership or costs. Use Unknown when unknown. Output ONLY the exact Field: Value lines below, one field per line, no markdown or commentary. Use dates YYYY-MM-DD and money as plain USD decimals. Use Product Flight, Hotel, Car or Other; Trip Type One Way, Round Trip or Multi-City. For Multi-City retain every segment in Summary for human review. Customer Paid and Seller Paid must be exactly Paid, Partial, Unpaid or Unknown, and actual amounts must be evidence-based. Keep reservation facts in Summary and operational notes in Notes. Never output credentials or full card/account numbers. Keep booking source account/profile separate from the card that paid. Rate unit defaults to cents per point.
+
+Route rules: for a round trip put Trip Type Round Trip and Route as ORIGIN-DESTINATION only (example TLV-BCN), never ORIGIN-DEST-ORIGIN (never TLV-BCN-TLV). Airline PNR is the operating airline / carrier record locator only — never put Sabre, Amadeus, Travelport, or other GDS / agency locators in Airline PNR; those go in Booking Source Confirmation.
+
+Supply these labels:
 Customer: Unknown
 Customer Phone: Unknown
 Customer Email: Unknown
@@ -281,7 +299,8 @@ Property: Unknown
 Route: Unknown
 Departure: Unknown
 Return: Unknown
-PNR: Unknown
+Airline PNR: Unknown
+Cabin: Unknown
 Confirmation #: Unknown
 Flight Numbers: Unknown
 Booked Through: Unknown
@@ -292,8 +311,9 @@ Program: Unknown
 Seller: Unknown
 Bought: Unknown
 Points/Miles Quantity: Unknown
-Agreed Rate: Unknown
+Cost Per Point: Unknown
 Rate Unit: cents per point
+Account Email Used: Unknown
 Seller Cost: Unknown
 Seller Paid: Unknown
 Seller Amount Paid: Unknown
@@ -313,20 +333,22 @@ Traveler: QA Sample Traveler
 Product: Flight
 Trip Type: Round Trip
 Airline: Delta Air Lines
-Route: JFK-ATL-JFK
+Route: JFK-ATL
 Departure: 2027-02-01
 Return: 2027-02-05
-PNR: SAMPLE
+Airline PNR: DL9ABC
+Cabin: Business
 Booked Through: Award Booking
 Referring Organization: Unknown
-Booking Source Confirmation: AWARD-SAMPLE
+Booking Source Confirmation: SABRE-SAMPLE
 Source Account/Profile: Unknown
 Program: Delta SkyMiles
 Seller: QA Sample Seller
 Bought: miles
 Points/Miles Quantity: 13000
-Agreed Rate: 1.30
+Cost Per Point: 1.30
 Rate Unit: cents per point
+Account Email Used: Unknown
 Seller Cost: 169.00
 Seller Paid: Unpaid
 Taxes: 0

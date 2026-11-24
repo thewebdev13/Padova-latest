@@ -49,7 +49,7 @@ export default function PnrInput({
         <input
           id="entry-pnr"
           aria-label="Airline PNR"
-          placeholder="Add PNR…"
+          placeholder="Carrier record locator…"
           value={pending}
           onChange={(e) => {
             if (/[,\n]/.test(e.target.value)) add(e.target.value);
@@ -66,7 +66,7 @@ export default function PnrInput({
           }}
         />
       </div>
-      <small>Press Enter or comma to add more.</small>
+      <small>Airline locator only (not Sabre / GDS).</small>
     </div>
   );
 }

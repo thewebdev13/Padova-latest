@@ -73,8 +73,11 @@ echo.
 
 powershell -NoProfile -Command "try { $c = Get-NetTCPConnection -LocalPort 3927 -State Listen -ErrorAction Stop; if ($c) { exit 0 } else { exit 1 } } catch { exit 1 }"
 if %ERRORLEVEL%==0 (
-  echo Helper is ALREADY running.
-  echo Opening browser only - do not start a second helper.
+  echo Helper is ALREADY running - config was NOT reloaded.
+  echo New phone numbers will NOT work until you fully restart.
+  echo.
+  echo Use RESTART.bat  OR  close the black helper window, then START.bat again.
+  echo.
   start "" "http://127.0.0.1:3927/"
   echo.
   pause

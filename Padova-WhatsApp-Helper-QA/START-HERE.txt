@@ -1,16 +1,24 @@
-Padova WhatsApp Helper QA v1.4.8
+Padova WhatsApp Helper QA v1.4.9
 
-ROLES
-- AI WhatsApp (link THIS only): +972 55-333-7698  (972553337698)
-- Authorized staff (may ask / draft / SAVE to that AI):
-  972553337698, 917901775861, 917986414290, 639474298020, 637325231744
+MODEL
+- AI WhatsApp (QR link THIS only): +972 55-333-7698
+- Staff phones that may talk to it:
+  972553337698, 917901775861, 917986414290, 639474298020, 17325231744, 13475630543, 17322323322
 
-SETUP
-1) Node LTS / NVM OK
-2) START.bat once — keep black window open
-3) Scan QR with +972 55-333-7698 ONLY (not a staff India/other phone)
-4) Wait: linked + "AI assistant +972553337698 linked"
-5) Staff send "hi" FROM an authorized number TO +972 55-333-7698
+HOW TO TEST (important)
+1) PC helper linked with +972 55-333-7698
+2) Take a DIFFERENT staff phone (e.g. 9179… / 6394…)
+3) Open WhatsApp chat WITH +972 55-333-7698
+4) Send "hi"
+5) Black window must show: [inbound] … staff=yes
+6) Reply should come in that chat
 
-If wrong WhatsApp linked: CLEAR-LOGIN.bat → START.bat → scan with 972553337698 again.
-If [inbound] staff=no → that sender is not on assistant_phones — tell developer the from= number.
+After changing phones in config.json:
+  Do NOT only click START.bat (it keeps the old process).
+  Use RESTART.bat  OR  close the black window, then START.bat.
+  Startup line must list your new numbers under "authorized staff".
+
+WRONG: typing "hi" on the +972 phone itself (into some other chat) — helper ignores fromMe.
+RIGHT: other allowlisted phone → message TO +972 55-333-7698
+
+If no [inbound] line: replace helper with v1.4.9 zip, restart START.bat, retry.

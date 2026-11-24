@@ -21,7 +21,9 @@ export default function SearchableSelect({
   addLabel,
   addDisabled,
   emptyLabel,
+  placeholder = 'Search and select…',
   hideCount = false,
+  allowClear,
 }: {
   id: string;
   options: Option[];
@@ -35,7 +37,11 @@ export default function SearchableSelect({
   addLabel?: (query: string) => string;
   addDisabled?: boolean;
   emptyLabel?: string;
+  /** Overrides the default “Search and select…” affordance. */
+  placeholder?: string;
   hideCount?: boolean;
+  /** Show an in-field clear control when a value is selected. Defaults to !required. */
+  allowClear?: boolean;
 }) {
   const frequencies = new Map<string, number>();
   for (const option of options)
@@ -109,8 +115,21 @@ export default function SearchableSelect({
     onChange(option.value);
     setOpen(false);
   };
+  const canClear = (allowClear ?? !required) && !!value;
+  const clearValue = () => {
+    if (blurClose.current != null) window.clearTimeout(blurClose.current);
+    committed.current = '';
+    setText('');
+    input.current?.setCustomValidity('');
+    onChange('');
+    onSearch?.('');
+    setOpen(false);
+    input.current?.focus();
+  };
   return (
-    <div className={`search-select${open ? ' is-open' : ''}`}>
+    <div
+      className={`search-select${open ? ' is-open' : ''}${canClear ? ' has-clear' : ''}`}
+    >
       <div className="search-select-control">
         <input
           ref={input}
@@ -127,7 +146,7 @@ export default function SearchableSelect({
           required={required}
           value={text}
           title={text || undefined}
-          placeholder="Search and select…"
+          placeholder={placeholder}
           onFocus={(e) => {
             if (blurClose.current != null) window.clearTimeout(blurClose.current);
             e.target.select();
@@ -155,8 +174,9 @@ export default function SearchableSelect({
             setOpen(true);
             setActive(0);
             committed.current = found?.value ?? '';
+            // When Add-new is allowed, typing a custom value is valid until Add is clicked.
             e.target.setCustomValidity(
-              next && !found ? 'Select a record from the results below.' : '',
+              next && !found && !onAdd ? 'Select a record from the results below.' : '',
             );
             onChange(found?.value ?? '');
           }}
@@ -195,6 +215,17 @@ export default function SearchableSelect({
             }
           }}
         />
+        {canClear ? (
+          <button
+            type="button"
+            className="search-select-clear"
+            aria-label={`Clear ${accessibleLabel ?? 'selection'}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={clearValue}
+          >
+            ×
+          </button>
+        ) : null}
         <button
           type="button"
           className="search-select-toggle"

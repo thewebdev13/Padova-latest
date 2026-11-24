@@ -52,26 +52,30 @@ export default function BookingPartySelect({
   const valueRef = useRef(value);
   initialRef.current = initial;
   valueRef.current = value;
-  const contactRoles = ['customer', 'traveler', 'seller', 'contact'].includes(role);
+  /** Phone/email/notes only for people we book against — not for profile “contact” picks. */
+  const showContactExtras = ['customer', 'traveler', 'seller'].includes(role);
+  const roleLabel =
+    role === 'contact' ? 'contact' : role === 'seller' ? 'seller' : role;
   const resetContactFields = (seed?: PartyCreateExtras) => {
     setPhone(seed?.phone?.trim() ?? '');
     setEmail(seed?.email?.trim() ?? '');
     setNotes(seed?.notes?.trim() ?? '');
   };
-  const create = async (kind?: 'person' | 'company') => {
+  const create = async (kind?: 'person' | 'company', nameOverride?: string) => {
     if (!onCreate || creating) return;
-    const name = query.trim();
+    const name = (nameOverride ?? query).trim();
     if (!name) return;
     if (lookupFailed) {
       setError('Lookup unavailable. Re-enter the name to retry before creating.');
       return;
     }
+    const useExtras = showContactExtras;
     const identity = JSON.stringify([
       name,
       kind,
-      phone.trim(),
-      email.trim(),
-      notes.trim(),
+      useExtras ? phone.trim() : '',
+      useExtras ? email.trim() : '',
+      useExtras ? notes.trim() : '',
     ]);
     const normalize = (v: string) =>
       v.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
@@ -90,7 +94,7 @@ export default function BookingPartySelect({
       setError('More than one matching record exists. Cancel and choose the correct record.');
       return;
     }
-    const trimmedEmail = email.trim();
+    const trimmedEmail = useExtras ? email.trim() : '';
     if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
       setError('Enter a valid email, or leave email blank.');
       return;
@@ -100,11 +104,13 @@ export default function BookingPartySelect({
     try {
       if (creation.current?.name !== identity)
         creation.current = { name: identity, key: crypto.randomUUID() };
-      const extras: PartyCreateExtras = {
-        phone: phone.trim() || undefined,
-        email: trimmedEmail || undefined,
-        notes: notes.trim() || undefined,
-      };
+      const extras: PartyCreateExtras | undefined = useExtras
+        ? {
+            phone: phone.trim() || undefined,
+            email: trimmedEmail || undefined,
+            notes: notes.trim() || undefined,
+          }
+        : undefined;
       const row = await onCreate(name, creation.current!.key, kind, extras);
       setRows((old) => [...old, row]);
       onChange(row.id);
@@ -212,16 +218,23 @@ export default function BookingPartySelect({
           onAdd={
             onCreate
               ? (name) => {
-                  setQuery(name);
-                  resetContactFields(createDefaults);
-                  setAdding(true);
+                  const trimmed = name.trim();
                   setError('');
                   setLookupFailed(false);
+                  // Profile contact: add by name only — no nested phone/email panel.
+                  if (role === 'contact' && trimmed) {
+                    void create(undefined, trimmed);
+                    return;
+                  }
+                  setQuery(trimmed);
+                  resetContactFields(createDefaults);
+                  setAdding(true);
                 }
               : undefined
           }
-          addLabel={(name) => (name ? `Add “${name}” as a new ${role}` : `Add new ${role}`)}
-          emptyLabel={`No matching ${role}. Search another name or add one below.`}
+          addLabel={(name) => (name ? `Add “${name}”` : `Add ${roleLabel}`)}
+          addDisabled={creating}
+          emptyLabel={`No matching ${roleLabel}`}
         />
       )}
       {adding && (
@@ -240,12 +253,15 @@ export default function BookingPartySelect({
           }}
         >
           <div className="inline-add-head">
-            <strong>Add new {role}</strong>
+            <strong>New {roleLabel}</strong>
             <button
               type="button"
               className="inline-add-close"
-              aria-label={`Close add ${role}`}
-              onClick={() => setAdding(false)}
+              aria-label="Close"
+              onClick={() => {
+                setAdding(false);
+                resetContactFields();
+              }}
             >
               ×
             </button>
@@ -253,13 +269,13 @@ export default function BookingPartySelect({
           <div className="inline-add-fields">
             <div className="inline-add-field">
               <label htmlFor={`${id}-new`}>
-                {label} name <span className="req">required</span>
+                Name <span className="req">*</span>
               </label>
               <input
                 id={`${id}-new`}
                 autoFocus
-                aria-label={`New ${role} name`}
-                placeholder={`Full ${label.toLowerCase()} name`}
+                aria-label={`New ${roleLabel} name`}
+                placeholder="Full name"
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -268,51 +284,48 @@ export default function BookingPartySelect({
                 }}
               />
             </div>
-            {contactRoles && (
-              <>
-                <div className="inline-add-field">
-                  <label htmlFor={`${id}-phone`}>
-                    Phone <span className="opt">optional</span>
-                  </label>
-                  <input
-                    id={`${id}-phone`}
-                    type="tel"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    aria-label={`${label} phone`}
-                    placeholder="Phone number"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
+            {showContactExtras && (
+              <details className="inline-add-more">
+                <summary>Phone / email (optional)</summary>
+                <div className="inline-add-fields">
+                  <div className="inline-add-field">
+                    <label htmlFor={`${id}-phone`}>Phone</label>
+                    <input
+                      id={`${id}-phone`}
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      aria-label="Phone"
+                      placeholder="Phone"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                  </div>
+                  <div className="inline-add-field">
+                    <label htmlFor={`${id}-email`}>Email</label>
+                    <input
+                      id={`${id}-email`}
+                      type="email"
+                      autoComplete="email"
+                      aria-label="Email"
+                      placeholder="Email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="inline-add-field full">
+                    <label htmlFor={`${id}-notes`}>Notes</label>
+                    <textarea
+                      id={`${id}-notes`}
+                      rows={2}
+                      aria-label="Notes"
+                      placeholder="Notes"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="inline-add-field">
-                  <label htmlFor={`${id}-email`}>
-                    Email <span className="opt">optional</span>
-                  </label>
-                  <input
-                    id={`${id}-email`}
-                    type="email"
-                    autoComplete="email"
-                    aria-label={`${label} email`}
-                    placeholder="name@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-                <div className="inline-add-field full">
-                  <label htmlFor={`${id}-notes`}>
-                    Notes <span className="opt">optional</span>
-                  </label>
-                  <textarea
-                    id={`${id}-notes`}
-                    rows={2}
-                    aria-label={`${label} notes`}
-                    placeholder="Small notes, preferences, how to reach, etc."
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                  />
-                </div>
-              </>
+              </details>
             )}
           </div>
           <div className="inline-add-actions">
@@ -325,7 +338,7 @@ export default function BookingPartySelect({
                 resetContactFields();
               }}
             >
-              Cancel
+              Back
             </button>
             <button
               type="button"
@@ -333,7 +346,7 @@ export default function BookingPartySelect({
               disabled={!query.trim() || creating || lookupFailed}
               onClick={() => void create()}
             >
-              {creating ? 'Saving…' : `Add ${role}`}
+              {creating ? 'Saving…' : 'Add'}
             </button>
             {['customer', 'seller'].includes(role) && (
               <button
@@ -342,20 +355,18 @@ export default function BookingPartySelect({
                 disabled={!query.trim() || creating || lookupFailed}
                 onClick={() => void create('company')}
               >
-                Add organization
+                Add as org
               </button>
             )}
           </div>
-          <small className="inline-add-hint inline-add-hint-stable" aria-live="polite">
-            {lookupFailed
-              ? 'Lookup unavailable, re-enter the name to retry.'
-              : !query.trim()
-                ? `Enter a name to enable Add ${role}.`
-                : '\u00a0'}
-          </small>
+          {lookupFailed ? (
+            <small className="inline-add-hint" role="alert">
+              Lookup unavailable — re-enter the name.
+            </small>
+          ) : null}
         </div>
       )}
-      {lookupFailed && (
+      {!adding && lookupFailed && (
         <p role="alert">Lookup unavailable. Re-enter the name to retry before creating.</p>
       )}
       {error && <p role="alert">{error}</p>}
