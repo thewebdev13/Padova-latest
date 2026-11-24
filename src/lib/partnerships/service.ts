@@ -648,7 +648,7 @@ export async function executePartnership(
           organization_id: data.organization_id,
           review_id: data.id,
           actor_id: actor.id,
-          reason: command.reason + ' — ' + data.resolution,
+          reason: command.reason + ', ' + data.resolution,
           version: Number(latest?.version ?? 0) + 1,
         });
         await audit(
@@ -1041,6 +1041,22 @@ export async function partnershipList(db: Database, actor: Actor, params: URLSea
       (SELECT count(*) FROM pt_reviews WHERE status='open') reviews`,
       [today],
     );
+    let chatgptNotesLinked = false;
+    try {
+      chatgptNotesLinked =
+        Number(
+          (
+            await one(
+              tx,
+              `SELECT count(*)::int n FROM pt_ai_grants
+               WHERE staff_id=$1 AND revoked_at IS NULL AND expires_at > now()`,
+              [actor.id],
+            )
+          ).n,
+        ) > 0;
+    } catch {
+      chatgptNotesLinked = false;
+    }
     return {
       rows,
       total,
@@ -1050,6 +1066,7 @@ export async function partnershipList(db: Database, actor: Actor, params: URLSea
       campaigns,
       owners,
       metrics,
+      chatgpt_notes_linked: chatgptNotesLinked,
       actor: { id: actor.id, name: actor.name, role: actor.role, permissions: actor.permissions },
     };
   });

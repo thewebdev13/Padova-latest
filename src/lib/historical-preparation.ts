@@ -86,7 +86,7 @@ const layouts: Record<string, Record<string, string>> = {
 function cellAt(row: R, column?: string): R | undefined {
   if (!column) return;
   return Object.entries(row.original_fields ?? {}).find(
-    ([key]) => key.split(' — ')[0] === column,
+    ([key]) => key.split(', ')[0] === column,
   )?.[1] as R | undefined;
 }
 function scalar(cell?: R): unknown {

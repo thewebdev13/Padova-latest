@@ -21,6 +21,7 @@ import { travelsBetween, upcomingBookings, nextTravelDate } from '@/lib/travel-s
 import { assetUnit, formatQuantity, refundQuantityUnit } from '@/lib/asset-units';
 import { latestCreditRequests, sourceConfirmationLabel } from '@/lib/v1-entry';
 import AuthScreen from '@/components/auth-screen';
+import { FormAlert } from '@/components/form-feedback';
 import CommissionsPage from '@/components/commissions-page';
 import OperationalViews from '@/components/operational-views';
 import {
@@ -44,6 +45,7 @@ import {
   intakeChannelFilterKey,
   intakeSourceTableTag,
 } from '@/lib/intake-channel-label';
+import { formatIntakeMissingSummary } from '@/lib/intake-confidence';
 import {
   applyIntakeFieldOverrides,
   buildIntakeMappingPreview,
@@ -69,6 +71,7 @@ import UserAdministration, {
   PersonalRecoveryCodes,
 } from '@/components/user-administration';
 import { hasPermission, commandPermission, Permission } from '@/lib/permissions';
+import { eligibleParty } from '@/lib/directory-eligibility';
 import {
   LayoutDashboard,
   Plane,
@@ -96,7 +99,7 @@ import {
   Clock,
   Hotel,
   Car,
-  MoreHorizontal,
+  MoreVertical,
   Menu,
   X,
   LogOut,
@@ -312,7 +315,23 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       whatsapp?: string;
     } | null>(null),
     [draftChannelFilter, setDraftChannelFilter] = useState('All'),
-    [draftPage, setDraftPage] = useState(1);
+    [draftPage, setDraftPage] = useState(1),
+    [draftsOpen, setDraftsOpen] = useState(() => {
+      if (typeof window === 'undefined') return true;
+      try {
+        return window.localStorage.getItem('padova.transactions.draftsOpen') !== '0';
+      } catch {
+        return true;
+      }
+    });
+  const setDraftsOpenPersist = (open: boolean) => {
+    setDraftsOpen(open);
+    try {
+      window.localStorage.setItem('padova.transactions.draftsOpen', open ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  };
   const resetIntakeChannels = (clearText = false) => {
     setIntakeFile(null);
     setIntakePreview(null);
@@ -348,6 +367,33 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [intakeOpen, intakeBusy]);
+  // Draft card ⋮ menus: close on outside click / Escape (do not leave open).
+  useEffect(() => {
+    const closeDraftMenus = () => {
+      document.querySelectorAll('details.intake-draft-menu[open]').forEach((el) => {
+        (el as HTMLDetailsElement).open = false;
+      });
+    };
+    const onPointer = (e: PointerEvent) => {
+      const open = document.querySelector('details.intake-draft-menu[open]');
+      if (!open) return;
+      const target = e.target as Node | null;
+      if (target && open.contains(target)) return;
+      closeDraftMenus();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (!document.querySelector('details.intake-draft-menu[open]')) return;
+      e.preventDefault();
+      closeDraftMenus();
+    };
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
   // Keep unread preview from binary extract until staff pastes real text.
   useEffect(() => {
     if (!intakeOpen) return;
@@ -1127,20 +1173,20 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   )
                 }
               >
-                <td>{date ? dateLabel(date) : 'Unknown date'}</td>
+                <td className="transaction-date-cell">
+                  {date ? dateLabel(date) : 'Unknown date'}
+                </td>
                 <td>
                   <span
                     className="transaction-description"
                     title={kind === 'booking' ? tripTitle(tripView(r)) : r.asset}
                   >
                     <strong>{kind === 'booking' ? tripTitle(tripView(r)) : r.asset}</strong>
-                    <span className="transaction-meta">
-                      {' '}
-                      ·
+                    <small className="transaction-meta">
                       {kind === 'booking'
                         ? [r.product, r.code, r.confirmations].filter(Boolean).join(' · ')
                         : 'Voucher / asset sale'}
-                    </span>
+                    </small>
                   </span>
                 </td>
                 <td>
@@ -1151,9 +1197,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       .join(' · ')}
                   >
                     <strong>{kind === 'booking' ? r.customer : r.buyer}</strong>
-                    {kind === 'booking' && r.travelers && (
-                      <span className="transaction-meta"> · {r.travelers}</span>
-                    )}
+                    {kind === 'booking' && r.travelers ? (
+                      <small className="transaction-meta">{r.travelers}</small>
+                    ) : null}
                   </span>
                 </td>
                 <td>
@@ -1180,7 +1226,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           {aiMade ? (
                             <Badge
                               tone="amber"
-                              title="AI-assisted intake — verify money and parties; not the same as staff-entered books"
+                              title="AI-assisted intake. Verify money and parties before treating as staff-entered books."
                             >
                               AI
                             </Badge>
@@ -1193,25 +1239,47 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 <td>
                   <Badge>{kind === 'booking' ? r.reservation_status : 'Sale'}</Badge>
                 </td>
-                <td>
+                <td className="transaction-followup-cell">
                   <span className="transaction-indicators">
-                    {transactionIndicators(kind, r, s.operationalViews ?? {}, {
-                      sale: canSale,
-                      cost: canCosts,
-                    }).map((flag) => (
-                      <Badge key={flag.label} tone={flag.tone}>
-                        {flag.label}
-                      </Badge>
-                    ))}
+                    {(() => {
+                      const flags = transactionIndicators(kind, r, s.operationalViews ?? {}, {
+                        sale: canSale,
+                        cost: canCosts,
+                      });
+                      const shown = flags.slice(0, 3);
+                      const extra = flags.length - shown.length;
+                      return (
+                        <>
+                          {shown.map((flag) => (
+                            <Badge key={flag.label} tone={flag.tone}>
+                              {flag.label}
+                            </Badge>
+                          ))}
+                          {extra > 0 ? (
+                            <Badge
+                              tone="gray"
+                              title={flags
+                                .slice(3)
+                                .map((f) => f.label)
+                                .join(', ')}
+                            >
+                              +{extra}
+                            </Badge>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </span>
                 </td>
                 {canSale && (
                   <td className="money">{money(kind === 'booking' ? r.sale : r.proceeds)}</td>
                 )}
-                <td>
+                <td className="transaction-open-cell">
                   <button
-                    className="btn ghost"
+                    type="button"
+                    className="transaction-open-icon"
                     aria-label={'Open ' + (kind === 'booking' ? r.code : r.asset)}
+                    title="Open"
                     onClick={(e) => {
                       e.stopPropagation();
                       openRecord(
@@ -1220,7 +1288,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       );
                     }}
                   >
-                    Open
+                    <MoreVertical size={16} aria-hidden />
                   </button>
                 </td>
               </tr>
@@ -1528,7 +1596,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </p>
               <p>{m.rationale}</p>
               <p>
-                Travel date: {m.facts.travel_on ?? 'Unknown — original text preserved'} · Cost:{' '}
+                Travel date: {m.facts.travel_on ?? 'Unknown, original text preserved'} · Cost:{' '}
                 {m.facts.source_cost_cents === null
                   ? 'Unknown'
                   : `${money(m.facts.source_cost_cents)} (unverified source claim)`}
@@ -2067,8 +2135,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           <strong>{primaryValue}</strong>
                           <small className="seller-metric-hint">
                             {recorded.primaryCents != null
-                              ? 'Recorded receivable — not cash until a receipt is allocated.'
-                              : 'Expected only — not received until Add commission posts a receivable.'}
+                              ? 'Recorded receivable. Not cash until a receipt is allocated.'
+                              : 'Expected only. Not received until Add commission posts a receivable.'}
                           </small>
                         </div>
                         <div className="seller-metric">
@@ -2080,8 +2148,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           <strong>{secondaryValue}</strong>
                           <small className="seller-metric-hint">
                             {recorded.secondaryCents != null
-                              ? 'Recorded receivable — separate from primary; cash after receipt.'
-                              : 'Expected only — separate from primary; use Add commission to post.'}
+                              ? 'Recorded receivable (separate from primary). Cash after receipt.'
+                              : 'Expected only (separate from primary). Use Add commission to post.'}
                           </small>
                         </div>
                         <div className="seller-metric">
@@ -2094,7 +2162,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 : '—'}
                           </strong>
                           <small className="seller-metric-hint">
-                            Padova pays out — not the same as who owes Padova.
+                            Padova pays out, not the same as who owes Padova.
                           </small>
                         </div>
                       </div>
@@ -2780,7 +2848,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 ? money(primaryExpected.amount)
                                 : 'Amount TBD'}
                             <small>
-                              Expected on booking — not a recorded receivable yet. Received: none.
+                              Expected on booking. Not a recorded receivable yet. Received: none.
                             </small>
                           </li>
                         )}
@@ -2794,7 +2862,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 ? money(secondaryExpected.amount)
                                 : 'Amount TBD'}
                             <small>
-                              Expected on booking — not a recorded receivable yet. Received: none.
+                              Expected on booking. Not a recorded receivable yet. Received: none.
                             </small>
                           </li>
                         )}
@@ -3179,6 +3247,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         p.roles.some((role: string) =>
           ['seller', 'supplier', 'source', 'partner'].includes(role),
         ) || p.kind === 'supplier';
+      /** Seller payment / Purchased From — not referral partners alone. */
+      const canPayAsSeller = eligibleParty(p, 'seller');
       const sourceRows = detail.sourceStatement ?? [];
       const members = s.relationships.filter((r: R) => r.group_id === p.id || r.person_id === p.id);
       const entries: R[] = (detail.statement ?? []).map((r: R) => ({
@@ -3246,12 +3316,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               <Plus size={14} />
               New booking
             </button>
-            {canPay && (p.roles.includes('customer') || !isSource) && (
+            {canPay && (p.roles.includes('customer') || !canPayAsSeller) && (
               <button className="btn" onClick={() => action('payment', { party_id: p.id })}>
                 Add payment
               </button>
             )}
-            {isSource && can('manage_funding') && (
+            {canPayAsSeller && can('manage_funding') && (
               <button
                 className="btn"
                 onClick={() => action('payment', { party_id: p.id, direction: 'supplier' })}
@@ -3515,7 +3585,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     view = <Partnerships />;
   } else if (page === 'Dashboard') {
     view = (
-      <>
+      <div className="dashboard-page">
         {heading(
           'Your business, at a glance.',
           `A clear view of your travel operations. ${dateLabel(today, { weekday: 'long', month: 'long', day: 'numeric' })}.`,
@@ -3527,7 +3597,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {newButton('New booking', 'booking')}
           </>,
         )}
-        <div className="metrics">
+        <div className={`metrics${canAssetBasis ? ' metrics-5' : ' metrics-4'}`}>
           <Metric
             label="Active bookings"
             value={String(bks.filter((b) => b.reservation_status === 'Booked').length)}
@@ -3575,12 +3645,14 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             />
           )}
         </div>
-        <Card title="Recent transactions">
-          {transactionTable(transactions.slice(0, 10))}
-          <button className="btn ghost" onClick={() => go('Bookings')}>
+        <div className="list-block">
+          <Card title="Recent transactions">
+            {transactionTable(transactions.slice(0, 10))}
+          </Card>
+          <button className="btn ghost list-block-link" onClick={() => go('Bookings')}>
             View all transactions
           </button>
-        </Card>
+        </div>
         <div className="dashboard-layout">
           <div className="dashboard-attention">
             <OperationalViews
@@ -3767,7 +3839,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </Card>
           </div>
         </div>
-      </>
+      </div>
     );
   } else if (page === 'Bookings') {
     const items = transactions.filter(
@@ -3785,10 +3857,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       return intakeChannelFilterKey(draft.intake_source) === draftChannelFilter;
     });
     view = (
-      <>
+      <div className="transactions-page">
         {heading(
           'Transactions',
-          'One row per booking or sale, newest booked or sold first. Payments stay inside each record.',
+          'Bookings and sales in one list. Open a row for payments and delivery.',
           <>
             {canAction('booking_draft') && (
               <button
@@ -3816,7 +3888,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         whatsapp: wa
                           ? wa.mode === 'pc_bridge_token_present'
                             ? 'WhatsApp PC bridge token set on server (read-only; never sends).'
-                            : 'WhatsApp: paste chat or PC bridge — token not set on this server yet.'
+                            : 'WhatsApp: paste chat or PC bridge, token not set on this server yet.'
                           : 'WhatsApp status unavailable.',
                       });
                     } catch {
@@ -3834,43 +3906,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {newButton('New booking', 'booking')}
           </>,
         )}
-        <div className="toolbar">
-          {['All', 'Flight', 'Hotel', 'Car', 'Other', 'Voucher / asset sales'].map((v) => (
-            <button
-              className={`btn ${filter === v ? 'primary' : ''}`}
-              key={v}
-              onClick={() => setFilter(v)}
-            >
-              {v}
-            </button>
-          ))}
-          <label>
-            Status{' '}
-            <select
-              aria-label="Booking status"
-              value={bookingStatus}
-              onChange={(e) => setBookingStatus(e.target.value)}
-            >
-              {['All', ...new Set<string>(bks.map((b) => b.reservation_status))].map((v) => (
-                <option key={v}>{v}</option>
-              ))}
-            </select>
-          </label>
-          {day && (
-            <button className="btn" onClick={() => setDay('')}>
-              {day}
-              <X size={12} />
-            </button>
-          )}
-        </div>
         {!!s.bookingDrafts?.length && (
-          <details className="card section-body intake-drafts" open>
+          <div className="list-block intake-drafts-block">
+          <details
+            className="card section-body intake-drafts"
+            open={draftsOpen}
+            onToggle={(e) => {
+              const next = (e.currentTarget as HTMLDetailsElement).open;
+              if (next !== draftsOpen) setDraftsOpenPersist(next);
+            }}
+          >
             <summary>
-              Drafts & unposted historical records (
-              {draftChannelFilter === 'All'
-                ? filteredDrafts.length
-                : `${filteredDrafts.length} of ${s.bookingDrafts.length}`}
-              ) — separate from the transactions below
+              <span className="intake-drafts-summary-title">Drafts</span>
+              <span className="intake-drafts-summary-count">
+                {draftChannelFilter === 'All'
+                  ? filteredDrafts.length
+                  : `${filteredDrafts.length} of ${s.bookingDrafts.length}`}
+              </span>
+              <span className="intake-drafts-summary-note">Not live until staff continue</span>
             </summary>
             <div className="intake-draft-filters" role="group" aria-label="Filter drafts">
               {(
@@ -3907,7 +3960,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </p>
                   );
                 }
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 20);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
                 return (
                   <>
                     {draftPager.items.map((draft: R) => {
@@ -3950,47 +4003,80 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             </span>
                           )}
                           {canAction('booking_draft') && (
-                            <button
-                              type="button"
-                              className="btn small intake-draft-delete"
-                              disabled={busy}
-                              aria-label="Delete draft"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                const label = title || 'this draft';
-                                const ok = await askConfirm({
-                                  title: 'Delete draft?',
-                                  message: `Delete “${String(label).slice(0, 80)}”?`,
-                                  confirmLabel: 'Delete',
-                                  cancelLabel: 'Cancel',
-                                  tone: 'danger',
-                                });
-                                if (!ok) return;
-                                setBusy(true);
-                                try {
-                                  await command('booking_draft_delete', {
-                                    draft_id: draft.id,
+                            <details
+                              className="intake-draft-menu"
+                              onClick={(e) => e.stopPropagation()}
+                              onToggle={(e) => {
+                                const open = (e.currentTarget as HTMLDetailsElement).open;
+                                if (!open) return;
+                                document
+                                  .querySelectorAll('details.intake-draft-menu[open]')
+                                  .forEach((el) => {
+                                    if (el !== e.currentTarget)
+                                      (el as HTMLDetailsElement).open = false;
                                   });
-                                  setSelected(null);
-                                  setDetail(null);
-                                  await refresh();
-                                  setToast('Draft deleted.');
-                                } catch (err) {
-                                  setError((err as Error).message);
-                                } finally {
-                                  setBusy(false);
-                                }
                               }}
                             >
-                              <Trash2 size={13} aria-hidden />
-                            </button>
+                              <summary
+                                className="intake-draft-menu-trigger"
+                                aria-label="Draft actions"
+                              >
+                                <MoreVertical size={16} aria-hidden />
+                              </summary>
+                              <div className="intake-draft-menu-panel" role="menu">
+                                <button
+                                  type="button"
+                                  className="intake-draft-menu-item danger"
+                                  role="menuitem"
+                                  disabled={busy}
+                                  onClick={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const root = (e.currentTarget as HTMLElement).closest(
+                                      'details',
+                                    );
+                                    if (root) (root as HTMLDetailsElement).open = false;
+                                    const label = title || 'this draft';
+                                    const ok = await askConfirm({
+                                      title: 'Delete draft?',
+                                      message: `Delete “${String(label).slice(0, 80)}”?`,
+                                      confirmLabel: 'Delete',
+                                      cancelLabel: 'Cancel',
+                                      tone: 'danger',
+                                    });
+                                    if (!ok) return;
+                                    setBusy(true);
+                                    try {
+                                      await command('booking_draft_delete', {
+                                        draft_id: draft.id,
+                                      });
+                                      setSelected(null);
+                                      setDetail(null);
+                                      await refresh();
+                                      setToast('Draft deleted.');
+                                    } catch (err) {
+                                      setError((err as Error).message);
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 size={14} aria-hidden />
+                                  Delete draft
+                                </button>
+                              </div>
+                            </details>
                           )}
                         </div>
                         <button
                           type="button"
                           className="intake-draft-card-open"
                           onClick={async () => {
+                            document
+                              .querySelectorAll('details.intake-draft-menu[open]')
+                              .forEach((el) => {
+                                (el as HTMLDetailsElement).open = false;
+                              });
                             try {
                               if (
                                 draft.kind === 'voucher_sale' ||
@@ -4050,11 +4136,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               })}
                             </p>
                           )}
-                          {Array.isArray(draft.intake_missing) && draft.intake_missing.length > 0 && (
-                            <p className="intake-draft-missing">
-                              Missing: {draft.intake_missing.join(', ')}
-                            </p>
-                          )}
+                          {(() => {
+                            const missingLine = formatIntakeMissingSummary(draft.intake_missing);
+                            return missingLine ? (
+                              <p className="intake-draft-missing">{missingLine}</p>
+                            ) : null;
+                          })()}
                           <dl className="intake-draft-meta">
                             <div>
                               <dt>Customer</dt>
@@ -4081,7 +4168,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               <dt>PNR</dt>
                               <dd>{metaValue(draft.intake_pnr)}</dd>
                             </div>
-                            <div>
+                            <div className="intake-draft-meta-sale">
                               <dt>Sale</dt>
                               <dd>
                                 {draft.intake_sale != null && draft.intake_sale !== ''
@@ -4110,7 +4197,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
             {filteredDrafts.length > 0 &&
               (() => {
-                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 20);
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
                 return (
                   <div className="intake-draft-pager">
                     <ListPager
@@ -4122,7 +4209,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       onPage={(p) => {
                         setDraftPage(p);
                         document
-                          .querySelector('.intake-drafts')
+                          .querySelector('.intake-drafts-block')
                           ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                       }}
                       label="drafts"
@@ -4131,27 +4218,59 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 );
               })()}
           </details>
+          </div>
         )}
-        <Card title="Transactions" count={items.length}>
-          {(() => {
-            const bookingPager = pageSlice(items, bookingPage, 20);
-            return (
-              <>
+        <div className="toolbar transactions-toolbar">
+          <div className="transactions-filter-group" role="group" aria-label="Product filter">
+            {['All', 'Flight', 'Hotel', 'Car', 'Other', 'Voucher / asset sales'].map((v) => (
+              <button
+                className={`btn ${filter === v ? 'primary' : ''}`}
+                key={v}
+                onClick={() => setFilter(v)}
+              >
+                {v === 'Voucher / asset sales' ? 'Vouchers' : v}
+              </button>
+            ))}
+          </div>
+          <label className="transactions-status-filter">
+            Status
+            <select
+              aria-label="Booking status"
+              value={bookingStatus}
+              onChange={(e) => setBookingStatus(e.target.value)}
+            >
+              {['All', ...new Set<string>(bks.map((b) => b.reservation_status))].map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </label>
+          {day && (
+            <button className="btn" onClick={() => setDay('')}>
+              {day}
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {(() => {
+          const bookingPager = pageSlice(items, bookingPage, 20);
+          return (
+            <div className="list-block">
+              <Card title="Transactions" count={items.length}>
                 {transactionTable(bookingPager.items)}
-                <ListPager
-                  page={bookingPager.page}
-                  totalPages={bookingPager.totalPages}
-                  total={bookingPager.total}
-                  from={bookingPager.from}
-                  to={bookingPager.to}
-                  onPage={setBookingPage}
-                  label="transactions"
-                />
-              </>
-            );
-          })()}
-        </Card>
-      </>
+              </Card>
+              <ListPager
+                page={bookingPager.page}
+                totalPages={bookingPager.totalPages}
+                total={bookingPager.total}
+                from={bookingPager.from}
+                to={bookingPager.to}
+                onPage={setBookingPage}
+                label="transactions"
+              />
+            </div>
+          );
+        })()}
+      </div>
     );
   } else if (['People & Families', 'Companies', 'Suppliers', 'Sources & Brokers'].includes(page)) {
     const list = parties
@@ -4323,7 +4442,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           // 12/page so Companies/Suppliers with 20+ rows get clear Previous/Next (Owner QA).
           const directoryPager = pageSlice(list, directoryPage, 12);
           return (
-            <>
+            <div className="list-block">
         <div
           className="directory-list"
           role="list"
@@ -4422,7 +4541,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           onPage={setDirectoryPage}
           label="records"
         />
-            </>
+            </div>
           );
         })()}
       </>
@@ -4644,6 +4763,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           ))}
         </div>
+        <div className="list-block">
         <div className="asset-grid">
           {assetPager.items.map((a: R) => (
             <div className="card asset-card" key={a.id}>
@@ -4705,9 +4825,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           onPage={setTablePage}
           label="assets"
         />
+        </div>
         {!canAssets && <Empty>Travel Assets access requires permission.</Empty>}
         {s.fulfillmentEnabled && can('manage_assets') && (
-          <div className="detail-section">
+          <div className="detail-section list-block">
             <Card
               title="Pending transfers & rewards"
               action={newButton('Track expected event', 'expected_event')}
@@ -4741,17 +4862,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     )}
                   </div>
                 ))}
-                <ListPager
-                  page={expectedPager.page}
-                  totalPages={expectedPager.totalPages}
-                  total={expectedPager.total}
-                  from={expectedPager.from}
-                  to={expectedPager.to}
-                  onPage={setExpectedPage}
-                  label="expected events"
-                />
               </div>
             </Card>
+            <ListPager
+              page={expectedPager.page}
+              totalPages={expectedPager.totalPages}
+              total={expectedPager.total}
+              from={expectedPager.from}
+              to={expectedPager.to}
+              onPage={setExpectedPage}
+              label="expected events"
+            />
           </div>
         )}
       </>
@@ -4797,112 +4918,102 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           ))}
         </div>
-        <Card
-          title="Refund follow-ups"
-          count={
-            s.refunds.filter(
-              (r: R) =>
-                filter === 'All' ||
-                Number(r.received) < Number(r.supplier_expected) ||
-                Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-            ).length
-          }
-        >
-          {(() => {
-            const refundRows = s.refunds.filter(
-              (r: R) =>
-                filter === 'All' ||
-                Number(r.received) < Number(r.supplier_expected) ||
-                Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-            );
-            const refundPager = pageSlice<R>(refundRows, tablePage, 12);
-            return (
-              <>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Booking / reason</th>
-                  <th>Customer</th>
-                  {canRefunds && (
-                    <>
-                      <th className="money">Supplier expected</th>
-                      <th className="money">Supplier received</th>
-                    </>
-                  )}
-                  <th className="money">Customer due</th>
-                  <th className="money">Customer paid</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {refundPager.items.map((r: R) => (
-                    <tr key={r.id}>
-                      <td>
-                        <button
-                          className="booking-code"
-                          onClick={() => openRecord('booking', r.booking_id)}
-                        >
-                          {r.code}
-                        </button>
-                        <small>{r.reason}</small>
-                      </td>
-                      <td>{r.customer}</td>
-                      {canRefunds && (
-                        <>
-                          <td className="money">{refundValue(r, r.supplier_expected)}</td>
-                          <td className="money">
-                            {refundValue(r, r.received)}
-                            <small>{r.received_forms || 'Not received'}</small>
-                          </td>
-                        </>
-                      )}
-                      <td className="money">{money(r.customer_due)}</td>
-                      <td className="money">{money(r.paid)}</td>
-                      <td>
+        {(() => {
+          const refundRows = s.refunds.filter(
+            (r: R) =>
+              filter === 'All' ||
+              Number(r.received) < Number(r.supplier_expected) ||
+              Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
+          );
+          const refundPager = pageSlice<R>(refundRows, tablePage, 12);
+          return (
+            <div className="list-block">
+              <Card title="Refund follow-ups" count={refundRows.length}>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Booking / reason</th>
+                        <th>Customer</th>
                         {canRefunds && (
                           <>
-                            <button
-                              className="btn small"
-                              hidden={Number(r.received) >= Number(r.supplier_expected)}
-                              disabled={!canAction('receive_refund')}
-                              onClick={() => action('receive_refund', { refund_id: r.id })}
-                            >
-                              Receive
-                            </button>{' '}
-                            <button
-                              className="btn small"
-                              hidden={
-                                Number(r.paid) + Number(r.handed_over ?? 0) >=
-                                Number(r.customer_due)
-                              }
-                              disabled={!canAction('pay_refund')}
-                              onClick={() => action('pay_refund', { refund_id: r.id })}
-                            >
-                              Pay customer
-                            </button>
+                            <th className="money">Supplier expected</th>
+                            <th className="money">Supplier received</th>
                           </>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-          <ListPager
-            page={refundPager.page}
-            totalPages={refundPager.totalPages}
-            total={refundPager.total}
-            from={refundPager.from}
-            to={refundPager.to}
-            onPage={setTablePage}
-            label="refunds"
-          />
-              </>
-            );
-          })()}
-          {!s.refunds.length && <Empty>No refunds recorded.</Empty>}
-        </Card>
+                        <th className="money">Customer due</th>
+                        <th className="money">Customer paid</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {refundPager.items.map((r: R) => (
+                        <tr key={r.id}>
+                          <td>
+                            <button
+                              className="booking-code"
+                              onClick={() => openRecord('booking', r.booking_id)}
+                            >
+                              {r.code}
+                            </button>
+                            <small>{r.reason}</small>
+                          </td>
+                          <td>{r.customer}</td>
+                          {canRefunds && (
+                            <>
+                              <td className="money">{refundValue(r, r.supplier_expected)}</td>
+                              <td className="money">
+                                {refundValue(r, r.received)}
+                                <small>{r.received_forms || 'Not received'}</small>
+                              </td>
+                            </>
+                          )}
+                          <td className="money">{money(r.customer_due)}</td>
+                          <td className="money">{money(r.paid)}</td>
+                          <td>
+                            {canRefunds && (
+                              <>
+                                <button
+                                  className="btn small"
+                                  hidden={Number(r.received) >= Number(r.supplier_expected)}
+                                  disabled={!canAction('receive_refund')}
+                                  onClick={() => action('receive_refund', { refund_id: r.id })}
+                                >
+                                  Receive
+                                </button>{' '}
+                                <button
+                                  className="btn small"
+                                  hidden={
+                                    Number(r.paid) + Number(r.handed_over ?? 0) >=
+                                    Number(r.customer_due)
+                                  }
+                                  disabled={!canAction('pay_refund')}
+                                  onClick={() => action('pay_refund', { refund_id: r.id })}
+                                >
+                                  Pay customer
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {!s.refunds.length && <Empty>No refunds recorded.</Empty>}
+              </Card>
+              <ListPager
+                page={refundPager.page}
+                totalPages={refundPager.totalPages}
+                total={refundPager.total}
+                from={refundPager.from}
+                to={refundPager.to}
+                onPage={setTablePage}
+                label="refunds"
+              />
+            </div>
+          );
+        })()}
       </>
     );
   } else if (page === 'Calendar') {
@@ -5296,11 +5407,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           'Activity history',
           'Attributed, chronological events. Financial history is append-only.',
         )}
-        <Card title="Recent events" count={s.audit.length}>
-          {(() => {
-            const activityPager = pageSlice<R>(s.audit, tablePage, 12);
-            return (
-              <>
+        {(() => {
+          const activityPager = pageSlice<R>(s.audit, tablePage, 12);
+          return (
+            <div className="list-block">
+              <Card title="Recent events" count={s.audit.length}>
                 {activityPager.items.map((a: R) => (
                   <div className="activity" key={a.id}>
                     <span className="activity-dot" />
@@ -5321,19 +5432,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </div>
                   </div>
                 ))}
-                <ListPager
-                  page={activityPager.page}
-                  totalPages={activityPager.totalPages}
-                  total={activityPager.total}
-                  from={activityPager.from}
-                  to={activityPager.to}
-                  onPage={setTablePage}
-                  label="events"
-                />
-              </>
-            );
-          })()}
-        </Card>
+              </Card>
+              <ListPager
+                page={activityPager.page}
+                totalPages={activityPager.totalPages}
+                total={activityPager.total}
+                from={activityPager.from}
+                to={activityPager.to}
+                onPage={setTablePage}
+                label="events"
+              />
+            </div>
+          );
+        })()}
       </>
     );
   } else if (page === 'Users & Permissions') {
@@ -5684,7 +5795,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               ) : (
                 <Empty>
                   {/^pdv[-\s]?\d+/i.test(query.trim()) && s.qaMode
-                    ? 'No matching records on QA. Production booking codes (PDV-…) usually live only on production — not in this QA database.'
+                    ? 'No matching records on QA. Production booking codes (PDV-…) usually live only on production, not in this QA database.'
                     : 'No matching records.'}
                 </Empty>
               )}
@@ -5695,7 +5806,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           {s.qaMode && !s.developmentData && (
             <div className="demo-banner qa-host-banner">
               <ShieldCheck size={13} />
-              <strong>QA — practice workspace</strong>
+              <strong>QA practice workspace</strong>
               <span>
                 Intake and UX testing only. 2026 production books and Batch A history allocations are
                 not in this database until Owner moves work to production.
@@ -5706,7 +5817,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <div className="demo-banner">
               <ShieldCheck size={13} />
               <strong>
-                {s.qaMode ? 'PRACTICE / QA — NOT REAL DATA' : 'TEST / SYNTHETIC — PRACTICE ONLY'}
+                {s.qaMode ? 'PRACTICE / QA (NOT REAL DATA)' : 'TEST / SYNTHETIC (PRACTICE ONLY)'}
               </strong>
               <span>
                 This is the local test workspace. Entries here do not go to the real US Padova
@@ -5715,18 +5826,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
           )}
 
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-              <button
-                style={{ float: 'right' }}
-                onClick={() => setError('')}
-                aria-label="Dismiss error"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
+          <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
           {view}
           <div className="footer-note">
             <span>PADOVA TRAVEL · Private operating workspace</span>
@@ -5892,6 +5992,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         )}
                     </div>
                     <div className="intake-preview-scroll">
+                      {liveIntakePreview?.reservationBlock ? (
+                        <p className="intake-preview-unread intake-reservation-gate" role="alert">
+                          {liveIntakePreview.reservationBlock}
+                        </p>
+                      ) : null}
                       {liveIntakePreview?.unread ? (
                         <p className="intake-preview-unread" role="alert">
                           {liveIntakePreview.unreadMessage || UNREAD_FILE_MESSAGE}
@@ -6027,7 +6132,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       if (on) setIntakeAsWhatsApp(false);
                     }}
                   />
-                  Forwarded email (Shmuel@ or mindy@ only) — saves as email intake draft
+                  Forwarded email (Shmuel@ or mindy@ only). Saves as an email intake draft.
                 </label>
                 {intakeAsEmail && (
                   <div className="intake-email-fields">
@@ -6078,7 +6183,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       if (on) setIntakeAsEmail(false);
                     }}
                   />
-                  WhatsApp chat paste — saves as WhatsApp intake draft (read-only; never sends)
+                  WhatsApp chat paste. Saves as a WhatsApp intake draft (read-only; never sends).
                 </label>
                 {intakeAsWhatsApp && (
                   <div className="intake-email-fields">
@@ -6157,7 +6262,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       ? 'Reading file…'
                       : 'Working…'
                   : liveIntakePreview?.unread
-                    ? 'Could not read — paste text instead'
+                    ? 'Could not read. Paste text instead.'
                     : !intakeText.trim()
                       ? 'Paste text or Use sample to map fields'
                       : liveIntakePreview
@@ -6180,6 +6285,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     intakeBusy ||
                     (!intakeText.trim() && !intakeFile) ||
                     Boolean(liveIntakePreview?.unread) ||
+                    Boolean(liveIntakePreview?.reservationBlock) ||
                     !liveIntakePreview ||
                     liveIntakePreview.found === 0
                   }
@@ -6212,6 +6318,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
 
                         if (!liveIntakePreview || liveIntakePreview.unread)
                           throw new Error('Review the mapping before creating a draft');
+                        if (liveIntakePreview.reservationBlock)
+                          throw new Error(liveIntakePreview.reservationBlock);
                         if (!intakeText.trim() && !intakeFile)
                           throw new Error('Paste reservation text or drop a file first');
 

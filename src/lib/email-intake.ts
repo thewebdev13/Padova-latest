@@ -87,7 +87,7 @@ export function emailIntakeStatus() {
     poll_path: '/api/booking-intake/email/poll',
     note: configured
       ? 'OAuth env present. Poll → drafts (+ high-confidence live). Pattern before AI; cron skips LLM near timeout. Never invents money.'
-      : 'Automatic mailbox poll is not configured. Connect Shmuel@ / mindy@ / bookings@ via hosted OAuth — see docs/EMAIL_INTAKE_OAUTH.md.',
+      : 'Automatic mailbox poll is not configured. Connect Shmuel@ / mindy@ / bookings@ via hosted OAuth, see docs/EMAIL_INTAKE_OAUTH.md.',
   };
 }
 
@@ -181,7 +181,7 @@ export async function prepareEmailIntakeDrafts(
     message.text?.trim() ||
     [
       message.subject ? `Subject: ${message.subject}` : '',
-      'Notes: Email body empty or unread — draft kept for human review. Do not invent money.',
+      'Notes: Email body empty or unread, draft kept for human review. Do not invent money.',
     ]
       .filter(Boolean)
       .join('\n');
@@ -373,7 +373,7 @@ export async function pollEmailIntakeMailboxes(
         result.skipped.push({
           message_id: '—',
           reason: 'alias_mailbox_skip_poll',
-          subject: 'Alias mailbox — mail is read via the primary Google inbox',
+          subject: 'Alias mailbox, mail is read via the primary Google inbox',
         });
       } else {
         result.errors.push({ error: `No refresh token configured for ${mailbox}` });
@@ -467,7 +467,7 @@ export async function pollEmailIntakeMailboxes(
             for (const built of toSave) {
               built.issues = [
                 ...(built.issues || []),
-                'Low field recognition — draft kept for human review (no silent drop)',
+                'Low field recognition, draft kept for human review (no silent drop)',
               ];
             }
           }

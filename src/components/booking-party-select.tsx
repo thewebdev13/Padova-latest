@@ -307,7 +307,7 @@ export default function BookingPartySelect({
                     id={`${id}-notes`}
                     rows={2}
                     aria-label={`${label} notes`}
-                    placeholder="Small notes — preferences, how to reach, etc."
+                    placeholder="Small notes, preferences, how to reach, etc."
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                   />
@@ -348,7 +348,7 @@ export default function BookingPartySelect({
           </div>
           <small className="inline-add-hint inline-add-hint-stable" aria-live="polite">
             {lookupFailed
-              ? 'Lookup unavailable — re-enter the name to retry.'
+              ? 'Lookup unavailable, re-enter the name to retry.'
               : !query.trim()
                 ? `Enter a name to enable Add ${role}.`
                 : '\u00a0'}

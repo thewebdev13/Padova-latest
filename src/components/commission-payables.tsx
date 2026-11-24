@@ -18,6 +18,9 @@ export default function CommissionPayables({
   enabled,
   action,
   embedded = false,
+  hidePager = false,
+  page: controlledPage,
+  onPage,
 }: {
   rows: Row[];
   payments: Row[];
@@ -27,11 +30,17 @@ export default function CommissionPayables({
   enabled: boolean;
   action: (kind: string, defaults?: Row) => void;
   embedded?: boolean;
+  hidePager?: boolean;
+  page?: number;
+  onPage?: (page: number) => void;
 }) {
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
+  const [internalPage, setInternalPage] = useState(1);
+  const page = controlledPage ?? internalPage;
+  const setPage = onPage ?? setInternalPage;
   const pager = pageSlice(rows, page, PAGE_SIZE);
   return (
+    <div className="list-block">
     <section className={embedded ? 'commissions-payable-embed' : 'card'}>
       {!embedded && (
         <div className="card-header">
@@ -192,19 +201,18 @@ export default function CommissionPayables({
           </table>
         </div>
       )}
-      {rows.length > 0 ? (
-        <div className="commissions-sample-foot">
-          <ListPager
-            page={pager.page}
-            totalPages={pager.totalPages}
-            total={pager.total}
-            from={pager.from}
-            to={pager.to}
-            onPage={setPage}
-            label="payables"
-          />
-        </div>
-      ) : null}
     </section>
+      {!hidePager && rows.length > 0 ? (
+        <ListPager
+          page={pager.page}
+          totalPages={pager.totalPages}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          onPage={setPage}
+          label="payables"
+        />
+      ) : null}
+    </div>
   );
 }

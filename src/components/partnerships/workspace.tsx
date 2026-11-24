@@ -4,6 +4,13 @@ import { stages, relationships, displayStage } from '@/lib/partnerships/contract
 import styles from './workspace.module.css';
 import SearchableSelect from '@/components/searchable-select';
 import ListPager, { offsetMeta, pageSlice } from '@/components/list-pager';
+import { FieldError, FormAlert } from '@/components/form-feedback';
+import {
+  isEmptyFieldValue,
+  mapErrorMessageToFields,
+  requiredFieldMessage,
+  type FieldErrorMap,
+} from '@/lib/form-field-errors';
 type R = Record<string, any>;
 const PAGE = 12;
 const views = [
@@ -125,7 +132,9 @@ function EntryForm({
   description?: string;
 }) {
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({}),
+    [attempted, setAttempted] = useState(false);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || busy) return;
@@ -138,16 +147,41 @@ function EntryForm({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [busy, onClose]);
+  const clearField = (name: string) =>
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
+    setAttempted(true);
     setError('');
     const data = Object.fromEntries(new FormData(event.currentTarget));
+    const next: FieldErrorMap = {};
+    for (const field of fields) {
+      if (!field.required || field.lookup) continue;
+      if (isEmptyFieldValue(data[field.name]))
+        next[field.name] = requiredFieldMessage(field.label);
+    }
+    if (Object.keys(next).length) {
+      setFieldErrors(next);
+      return;
+    }
+    setFieldErrors({});
+    setBusy(true);
     try {
       await onSave(data);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed');
+      const msg = e instanceof Error ? e.message : 'Save failed';
+      const mapped = mapErrorMessageToFields(
+        msg,
+        fields.map((f) => f.name),
+      );
+      setFieldErrors(mapped.fieldErrors);
+      setError(mapped.leftover || (Object.keys(mapped.fieldErrors).length ? '' : msg));
     } finally {
       setBusy(false);
     }
@@ -157,7 +191,6 @@ function EntryForm({
       <section className={styles.modal} role="dialog" aria-modal="true" aria-label={title}>
         <header className={styles.modalHeader}>
           <div className={styles.modalHeaderCopy}>
-            <span className={styles.modalEyebrow}>Partnerships</span>
             <h2>{title}</h2>
             {description ? <p className={styles.modalLead}>{description}</p> : null}
           </div>
@@ -171,75 +204,86 @@ function EntryForm({
             ×
           </button>
         </header>
-        <form className={styles.modalForm} onSubmit={submit}>
+        <form className={styles.modalForm} onSubmit={submit} noValidate>
           <div className={styles.modalFields}>
-            {fields.map((field) => (
-              <div
-                key={field.name}
-                className={`${styles.fieldBlock}${field.width === 'half' ? ` ${styles.fieldHalf}` : ''}`.trim()}
-              >
-                {field.section ? (
-                  <p className={styles.fieldSection}>{field.section}</p>
-                ) : null}
-                <div className={styles.fieldLabel}>
-                  {field.lookup ? (
-                    <>
-                      {field.hint ? <small className={styles.fieldHint}>{field.hint}</small> : null}
-                      <LookupField field={field} />
-                    </>
-                  ) : (
-                    <label>
+            {fields.map((field) => {
+              const hasError = attempted && !!fieldErrors[field.name];
+              const half = field.width === 'half';
+              const control = field.lookup ? (
+                <LookupField field={field} />
+              ) : field.type === 'textarea' ? (
+                <textarea
+                  name={field.name}
+                  defaultValue={String(field.value ?? '')}
+                  rows={3}
+                  onChange={() => clearField(field.name)}
+                />
+              ) : field.options ? (
+                <select
+                  name={field.name}
+                  defaultValue={String(field.value ?? '')}
+                  onChange={() => clearField(field.name)}
+                >
+                  {field.options.map((o) => (
+                    <option value={o.value} key={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  name={field.name}
+                  type={field.type ?? 'text'}
+                  defaultValue={String(field.value ?? '')}
+                  step={field.type === 'number' ? 'any' : undefined}
+                  placeholder={
+                    field.name === 'name'
+                      ? 'Organization name'
+                      : field.name === 'location'
+                        ? 'City'
+                        : field.name === 'service_areas'
+                          ? 'e.g. Brooklyn, Manhattan'
+                          : field.name === 'summary'
+                            ? 'Short facts only'
+                            : undefined
+                  }
+                  onChange={() => clearField(field.name)}
+                />
+              );
+              return (
+                <div
+                  key={field.name}
+                  className={[
+                    styles.fieldBlock,
+                    half ? styles.fieldHalf : '',
+                    hasError ? styles.fieldHasError : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  {field.section ? (
+                    <p className={styles.fieldSection}>{field.section}</p>
+                  ) : null}
+                  <div className={styles.fieldStack}>
+                    <div className={styles.fieldHead}>
                       <span className={styles.fieldLabelText}>
                         {field.label}
                         {field.required ? <em className={styles.reqMark}>*</em> : null}
                       </span>
-                      {field.hint ? <small className={styles.fieldHint}>{field.hint}</small> : null}
-                      {field.type === 'textarea' ? (
-                        <textarea
-                          name={field.name}
-                          defaultValue={String(field.value ?? '')}
-                          required={field.required}
-                          rows={4}
-                        />
-                      ) : field.options ? (
-                        <select
-                          name={field.name}
-                          defaultValue={String(field.value ?? '')}
-                          required={field.required}
-                        >
-                          {field.options.map((o) => (
-                            <option value={o.value} key={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          name={field.name}
-                          type={field.type ?? 'text'}
-                          defaultValue={String(field.value ?? '')}
-                          required={field.required}
-                          step={field.type === 'number' ? 'any' : undefined}
-                          placeholder={
-                            field.name === 'name'
-                              ? 'e.g. QA Test Synagogue'
-                              : field.name === 'location'
-                                ? 'City'
-                                : undefined
-                          }
-                        />
-                      )}
-                    </label>
-                  )}
+                      {field.hint && !hasError ? (
+                        <small className={styles.fieldHint}>{field.hint}</small>
+                      ) : null}
+                    </div>
+                    <div className={styles.fieldControl}>{control}</div>
+                    {hasError ? <FieldError>{fieldErrors[field.name]}</FieldError> : null}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-          {error ? (
-            <p role="alert" className={styles.error}>
-              {error}
-            </p>
-          ) : null}
+          <div className={styles.modalAlertWrap}>
+            <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
+          </div>
           <footer className={styles.modalFooter}>
             <button type="button" className={styles.ghostBtn} onClick={onClose} disabled={busy}>
               Cancel
@@ -364,13 +408,11 @@ export default function Partnerships() {
   const organizationForm = (existing?: R) =>
     setForm({
       title: existing ? 'Edit organization' : 'Add organization',
-      description:
-        'Referring org for affiliate share. Fill what you know — blanks stay empty (not zero).',
+      description: 'Affiliate referring org. Leave unknown fields blank.',
       fields: [
         {
           ...f('name', 'Organization / branch name', existing?.name, 'text', true),
           width: 'full',
-          hint: 'Exact org or branch name staff will pick on bookings',
         },
         {
           ...f('location', 'City / location', existing?.location),
@@ -387,31 +429,27 @@ export default function Partnerships() {
         {
           ...f('service_areas', 'Service areas', existing?.service_areas),
           width: 'half',
-          hint: 'e.g. Brooklyn, Manhattan',
         },
         {
           ...f('summary', 'Factual summary', existing?.summary, 'textarea'),
           width: 'full',
-          hint: 'Short facts only — no invented money or agreements',
         },
         {
-          ...f('parent_id', 'Parent organization / branch (optional)', existing?.parent_id),
+          ...f('parent_id', 'Parent organization', existing?.parent_id),
           lookup: 'organizations',
           width: 'full',
           section: 'Optional links',
-          hint: 'Leave empty for a new top-level org',
         },
         ...(can('manage_commissions')
           ? [
               {
                 ...f(
                   'accounting_party_id',
-                  'Existing referral account (optional)',
+                  'Referral account in People',
                   existing?.accounting_party_id,
                 ),
                 lookup: 'parties' as const,
                 width: 'full' as const,
-                hint: 'Link payee party if already in People — else leave empty',
               },
             ]
           : []),
@@ -615,7 +653,7 @@ export default function Partnerships() {
     setForm({
       title: row ? 'Edit hotel directory entry' : 'Add hotel by location',
       description:
-        'Structured catalog for corp code, IATA, hotel commission, and best book method. Leave unknown fields blank — never invent amounts.',
+        'Corp code, IATA, hotel commission, and best book method. Leave unknown fields blank.',
       fields: [
         f('location', 'Location / city', row?.location ?? '', 'text', true),
         f('hotel_name', 'Hotel name', row?.hotel_name ?? '', 'text', true),
@@ -746,7 +784,7 @@ export default function Partnerships() {
         {
           ...f('original_wording', 'Original agreed / proposed wording', '', 'textarea', true),
           width: 'full',
-          hint: 'Paste or type the deal wording — do not invent money beyond what was agreed',
+          hint: 'Paste or type the deal wording, do not invent money beyond what was agreed',
         },
         {
           ...f('confirmed_on', 'Confirmation date', '', 'date'),
@@ -938,14 +976,11 @@ export default function Partnerships() {
           <p className={styles.eyebrow}>Relationships & referrals</p>
           <h1>Partnerships</h1>
           <p className={styles.headingLead}>
-            Orgs refer guests — mark them on the booking after an accepted deal. Move each
-            conversation to a clear next step.
+            Organizations refer guests. After a deal is accepted, mark the org on the booking
+            and keep each conversation moving to a clear next step.
           </p>
         </div>
         <div className={styles.actions}>
-          <a className={styles.ghostLink} href="/partnerships/connect">
-            ChatGPT connection
-          </a>
           {can('manage_partnerships') && (
             <button className={styles.primary} onClick={() => organizationForm()}>
               + Add organization
@@ -954,9 +989,9 @@ export default function Partnerships() {
         </div>
       </header>
       {error && (
-        <div role="alert" className={styles.error}>
+        <FormAlert title="Partnerships" onDismiss={() => setError('')}>
           {error}
-        </div>
+        </FormAlert>
       )}
       {notice && (
         <div role="status">
@@ -1147,9 +1182,8 @@ export default function Partnerships() {
         <div>
           <h2>Hotel directory</h2>
           <p>
-            Hotels by location with corp code, IATA, commission, and best book method — separate from
-            per-organization research notes. Search filters the catalog. Hosted install uses the
-            reviewed SQL package when Owner authorizes.
+            Hotels by location with corp code, IATA, commission, and best book method. This catalog
+            is separate from per-organization research notes. Search filters the list.
           </p>
           {state && state.enabled === false && (
             <p role="status">{state.note || 'Hotel directory is not installed yet.'}</p>
@@ -1209,7 +1243,7 @@ export default function Partnerships() {
               state?.enabled !== false && (
                 <p className={styles.empty}>
                   No hotels yet. Use + Add hotel for location, corp code, IATA, commission, and best
-                  book tips. Booking form can look these up — tips only, never posts money.
+                  book tips. Booking form can look these up for tips only. Nothing posts money.
                 </p>
               )}
           </div>
@@ -1387,7 +1421,7 @@ export default function Partnerships() {
                       </small>
                       <span className={styles.badge}>
                         {r.relationship === 'active' && !r.confirmation_current
-                          ? 'Confirmation expired — review'
+                          ? 'Confirmation expired. Review'
                           : displayStage(r.relationship)}
                       </span>
                       {r.do_not_contact && <strong>Do not contact</strong>}
@@ -1474,7 +1508,7 @@ export default function Partnerships() {
               <p>{org.summary}</p>
               <span className={styles.badge}>
                 {org.relationship === 'active' && !org.confirmation_current
-                  ? 'Confirmation expired — review'
+                  ? 'Confirmation expired. Review'
                   : displayStage(org.relationship)}
               </span>
             </div>
@@ -1644,8 +1678,8 @@ export default function Partnerships() {
                     Version {a.version} · {a.status}
                   </h3>
                   <p>
-                    {label(a.starts_on)} — {label(a.ends_on)} · confirmed {label(a.confirmed_on)}{' '}
-                    via {label(a.confirmation_method)}
+                    {label(a.starts_on)} to {label(a.ends_on)} · confirmed{' '}
+                    {label(a.confirmed_on)} via {label(a.confirmation_method)}
                   </p>
                   <pre>{a.original_wording}</pre>
                   <p>

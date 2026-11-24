@@ -42,7 +42,7 @@ export function formatOwnerReminderDigest(input: {
   const fingerprint = reminderDigestFingerprint(items, input.as_of);
   if (!items.length) {
     return {
-      text: `Padova — ${input.as_of}\nNo open reminders right now.`,
+      text: `Padova, ${input.as_of}\nNo open reminders right now.`,
       fingerprint,
       count: 0,
     };
@@ -55,7 +55,7 @@ export function formatOwnerReminderDigest(input: {
   );
   const top = sorted.slice(0, maxLines);
   const lines = [
-    `Padova reminders — ${input.as_of}`,
+    `Padova reminders, ${input.as_of}`,
     `${items.length} open item${items.length === 1 ? '' : 's'} (DB facts only):`,
     ...top.map((i) => {
       const tag =

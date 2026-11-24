@@ -2,11 +2,19 @@
 import { useEffect, useState } from 'react';
 import { PERMISSIONS, EMPLOYEE_PERMISSIONS } from '@/lib/permissions';
 import { RecoveryCodes } from './auth-screen';
+import { FieldError, FormAlert, ReqMark, formFieldClass } from './form-feedback';
+import {
+  isEmptyFieldValue,
+  requiredFieldMessage,
+  type FieldErrorMap,
+} from '@/lib/form-field-errors';
 type R = Record<string, any>;
 export default function UserAdministration() {
   const [state, setState] = useState<R | null>(null),
     [editing, setEditing] = useState<R | null>(null),
     [error, setError] = useState(''),
+    [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({}),
+    [attempted, setAttempted] = useState(false),
     [busy, setBusy] = useState(false),
     [link, setLink] = useState(''),
     [message, setMessage] = useState('');
@@ -72,11 +80,7 @@ export default function UserAdministration() {
           Owner/Admin has full access. Employee/Worker starts with operational access and customer
           payment entry. Financial visibility and additional actions require explicit grants.
         </p>
-        {error && (
-          <div className="form-error" role="alert">
-            {error}
-          </div>
-        )}
+        <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
         {link && (
           <div className="note">
             <strong>Private setup / recovery link</strong>
@@ -102,14 +106,29 @@ export default function UserAdministration() {
         {editing && (
           <form
             style={{ margin: '22px 0' }}
+            noValidate
             onSubmit={async (e) => {
               e.preventDefault();
-              setBusy(true);
+              setAttempted(true);
               setError('');
               setLink('');
+              const next: FieldErrorMap = {};
+              if (isEmptyFieldValue(editing.name))
+                next.name = requiredFieldMessage('Full name');
+              if (isEmptyFieldValue(editing.email))
+                next.email = requiredFieldMessage('Individual email');
+              else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(editing.email)))
+                next.email = 'Enter a valid email address';
+              if (Object.keys(next).length) {
+                setFieldErrors(next);
+                return;
+              }
+              setFieldErrors({});
+              setBusy(true);
               try {
                 const user = await post({ action: editing.id ? 'update' : 'create', ...editing });
                 setEditing(null);
+                setAttempted(false);
                 setMessage('User saved. Existing sessions are revoked after access changes.');
                 await load();
                 if (!editing.id && user.active) await issue(user.id);
@@ -121,24 +140,48 @@ export default function UserAdministration() {
             }}
           >
             <div className="form-grid">
-              <div className="form-field">
-                <label htmlFor="staff-name">Full name</label>
+              <div
+                className={formFieldClass('form-field', attempted && !!fieldErrors.name)}
+              >
+                <label htmlFor="staff-name">
+                  Full name
+                  <ReqMark />
+                </label>
                 <input
                   id="staff-name"
-                  required
                   value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  onChange={(e) => {
+                    setFieldErrors((p) => {
+                      const n = { ...p };
+                      delete n.name;
+                      return n;
+                    });
+                    setEditing({ ...editing, name: e.target.value });
+                  }}
                 />
+                {attempted ? <FieldError>{fieldErrors.name}</FieldError> : null}
               </div>
-              <div className="form-field">
-                <label htmlFor="staff-email">Individual email</label>
+              <div
+                className={formFieldClass('form-field', attempted && !!fieldErrors.email)}
+              >
+                <label htmlFor="staff-email">
+                  Individual email
+                  <ReqMark />
+                </label>
                 <input
                   id="staff-email"
                   type="email"
-                  required
                   value={editing.email}
-                  onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                  onChange={(e) => {
+                    setFieldErrors((p) => {
+                      const n = { ...p };
+                      delete n.email;
+                      return n;
+                    });
+                    setEditing({ ...editing, email: e.target.value });
+                  }}
                 />
+                {attempted ? <FieldError>{fieldErrors.email}</FieldError> : null}
               </div>
               <div className="form-field">
                 <label htmlFor="staff-role">Role</label>
@@ -156,8 +199,8 @@ export default function UserAdministration() {
                     })
                   }
                 >
-                  <option value="OWNER">Owner / Admin — full access</option>
-                  <option value="EMPLOYEE">Employee / Worker — explicit permissions</option>
+                  <option value="OWNER">Owner / Admin, full access</option>
+                  <option value="EMPLOYEE">Employee / Worker, explicit permissions</option>
                 </select>
               </div>
               <div className="form-field">
@@ -344,7 +387,16 @@ export default function UserAdministration() {
 }
 export function PasswordChange() {
   const [error, setError] = useState(''),
+    [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({}),
+    [attempted, setAttempted] = useState(false),
     [busy, setBusy] = useState(false);
+  const clear = (key: string) =>
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   return (
     <section className="card">
       <div className="card-header">
@@ -352,69 +404,102 @@ export function PasswordChange() {
       </div>
       <form
         className="section-body"
+        noValidate
         onSubmit={async (e) => {
           e.preventDefault();
-          setBusy(true);
+          setAttempted(true);
           setError('');
           const f = new FormData(e.currentTarget);
+          const current = String(f.get('current') ?? '');
+          const password = String(f.get('password') ?? '');
+          const confirm = String(f.get('confirm') ?? '');
+          const next: FieldErrorMap = {};
+          if (isEmptyFieldValue(current))
+            next.current = requiredFieldMessage('Current password');
+          if (isEmptyFieldValue(password))
+            next.password = requiredFieldMessage('New password');
+          else if (password.length < 14) next.password = 'Use at least 14 characters';
+          if (isEmptyFieldValue(confirm))
+            next.confirm = requiredFieldMessage('Confirm new password');
+          else if (password !== confirm) next.confirm = 'Passwords do not match';
+          if (Object.keys(next).length) {
+            setFieldErrors(next);
+            return;
+          }
+          setFieldErrors({});
+          setBusy(true);
           try {
-            if (f.get('password') !== f.get('confirm')) throw new Error('Passwords do not match');
             const r = await fetch('/api/users', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 action: 'change_password',
-                current_password: f.get('current'),
-                password: f.get('password'),
+                current_password: current,
+                password,
               }),
             });
             if (!r.ok) throw new Error((await r.json()).error);
             window.location.assign('/');
           } catch (err) {
-            setError((err as Error).message);
+            const msg = (err as Error).message || 'Unable to change password';
+            if (/current|incorrect|invalid/i.test(msg))
+              setFieldErrors({ current: msg });
+            else setError(msg);
           } finally {
             setBusy(false);
           }
         }}
       >
         <div className="form-grid">
-          <div className="form-field">
-            <label htmlFor="current-pw">Current password</label>
+          <div className={formFieldClass('form-field', attempted && !!fieldErrors.current)}>
+            <label htmlFor="current-pw">
+              Current password
+              <ReqMark />
+            </label>
             <input
               id="current-pw"
               name="current"
               type="password"
               autoComplete="current-password"
-              required
               maxLength={500}
+              onChange={() => clear('current')}
             />
+            {attempted ? <FieldError>{fieldErrors.current}</FieldError> : null}
           </div>
-          <div className="form-field">
-            <label htmlFor="new-pw">New password (14+ characters)</label>
+          <div className={formFieldClass('form-field', attempted && !!fieldErrors.password)}>
+            <label htmlFor="new-pw">
+              New password (14+ characters)
+              <ReqMark />
+            </label>
             <input
               id="new-pw"
               name="password"
               type="password"
               autoComplete="new-password"
-              required
               minLength={14}
               maxLength={500}
+              onChange={() => clear('password')}
             />
+            {attempted ? <FieldError>{fieldErrors.password}</FieldError> : null}
           </div>
-          <div className="form-field">
-            <label htmlFor="confirm-pw">Confirm new password</label>
+          <div className={formFieldClass('form-field', attempted && !!fieldErrors.confirm)}>
+            <label htmlFor="confirm-pw">
+              Confirm new password
+              <ReqMark />
+            </label>
             <input
               id="confirm-pw"
               name="confirm"
               type="password"
               autoComplete="new-password"
-              required
               minLength={14}
               maxLength={500}
+              onChange={() => clear('confirm')}
             />
+            {attempted ? <FieldError>{fieldErrors.confirm}</FieldError> : null}
           </div>
         </div>
-        {error && <div className="form-error">{error}</div>}
+        <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
         <button className="btn primary" disabled={busy} style={{ marginTop: 16 }}>
           Change password & sign out all sessions
         </button>
@@ -475,7 +560,7 @@ export function PersonalRecoveryCodes() {
             maxLength={500}
           />
         </div>
-        {error && <div className="form-error">{error}</div>}
+        <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
         <button className="btn" disabled={busy} style={{ marginTop: 15 }}>
           Generate / replace my recovery codes
         </button>
@@ -483,7 +568,7 @@ export function PersonalRecoveryCodes() {
           <>
             <RecoveryCodes codes={codes} />
             <button className="btn small" type="button" onClick={() => setCodes([])}>
-              I saved my codes — hide them
+              I saved my codes, hide them
             </button>
           </>
         )}

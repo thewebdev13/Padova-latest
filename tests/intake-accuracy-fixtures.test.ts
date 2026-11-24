@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assessIntakeCapture } from '../src/lib/intake-confidence';
-import { looksLikeBookingRelatedEmail, looksLikeBookingRelatedWhatsApp } from '../src/lib/booking-message-detect';
+import {
+  looksLikeBookingRelatedEmail,
+  looksLikeBookingRelatedWhatsApp,
+  isScheduleChangeNotice,
+  intakeReservationBlockReason,
+} from '../src/lib/booking-message-detect';
 import { parseQuickPaste } from '../src/lib/quick-paste';
 
 /** Phase 5 accuracy pack — golden gates (no live DB, no invented money). */
@@ -61,6 +66,35 @@ test('marketing email skipped; reservation email kept', () => {
     }),
     true,
   );
+});
+
+test('Capital One flight-change notice is not a new booking', () => {
+  const change = `Your flight details have changed
+Here are your Capital One Business Travel and airline confirmation details.
+TLV-BRU SN3294 updated departure time.`;
+  assert.equal(isScheduleChangeNotice(change), true);
+  assert.equal(looksLikeBookingRelatedWhatsApp(change), false);
+  assert.equal(
+    looksLikeBookingRelatedEmail({
+      subject: 'Your flight details have changed',
+      text: change,
+      from_address: 'noreply@capitalone.com',
+    }),
+    false,
+  );
+  assert.match(String(intakeReservationBlockReason(change)), /change notice/i);
+});
+
+test('real purchase confirmation still passes booking gate', () => {
+  const purchase = `Thanks for your purchase
+Capital One Travel itinerary confirmation
+Passenger: Ada Lovelace
+Route: TLV-JFK
+PNR: AB12CD
+Ticket issued`;
+  assert.equal(isScheduleChangeNotice(purchase), false);
+  assert.equal(looksLikeBookingRelatedWhatsApp(purchase), true);
+  assert.equal(intakeReservationBlockReason(purchase), null);
 });
 
 test('whatsapp hotel confirmation looks booking-related; chatter does not', () => {

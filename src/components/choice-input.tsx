@@ -39,11 +39,11 @@ export default function ChoiceInput({
             {option}
           </option>
         ))}
-        <option value="__other__">Other — specify</option>
+        <option value="__other__">Other, specify</option>
       </select>
       {custom && (
         <input
-          aria-label={`${label} — other`}
+          aria-label={`${label}, other`}
           placeholder={`Enter ${label.toLowerCase()}`}
           required={required}
           value={value}

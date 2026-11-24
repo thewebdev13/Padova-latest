@@ -21,7 +21,11 @@ export async function GET(request: Request) {
     const query = `%${term.replace(/[\\%_]/g, '\\$&')}%`;
     const rows = (
       await db.query(
-        `SELECT id,name,kind,roles FROM parties WHERE archived_at IS NULL AND lower(name) LIKE lower($1) AND ($2=ANY(roles) OR ($2='contact' AND kind='person' AND NOT (roles && ARRAY['airline','property','rental']::text[]))) AND COALESCE((details->>'traveler_review_only')::boolean,false)=false AND ($2<>'traveler' OR kind='person') ORDER BY name,id LIMIT 30`,
+        `SELECT id,name,kind,roles FROM parties WHERE archived_at IS NULL AND lower(name) LIKE lower($1) AND (
+           $2=ANY(roles)
+           OR ($2='seller' AND (kind='supplier' OR roles && ARRAY['seller','source','supplier']::text[]))
+           OR ($2='contact' AND kind='person' AND NOT (roles && ARRAY['airline','property','rental']::text[]))
+         ) AND COALESCE((details->>'traveler_review_only')::boolean,false)=false AND ($2<>'traveler' OR kind='person') ORDER BY name,id LIMIT 30`,
         [query, role],
       )
     ).rows;

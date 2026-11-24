@@ -534,7 +534,7 @@ function extractTravelDates(text: string): { start?: string; end?: string } {
 
   // Marriott header: Sun, Jul 05, 2026 – Tue, Jul 07, 2026
   const weekdaySpan = text.match(
-    /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})\s*[-–—]\s*(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})/i,
+    /\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})\s*[-– - ]\s*(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})/i,
   );
   if (weekdaySpan) {
     return {
@@ -556,7 +556,7 @@ function extractTravelDates(text: string): { start?: string; end?: string } {
 
   // Amex / trip header: Jan 7, 2027 - Jan 17, 2027
   const tripSpan = text.match(
-    /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),\s*(20\d{2})\s*[-–—]\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),\s*(20\d{2})/i,
+    /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),\s*(20\d{2})\s*[-– - ]\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),\s*(20\d{2})/i,
   );
   if (tripSpan) {
     return {
@@ -796,7 +796,7 @@ function hasRoundTripEvidence(text: string, dates: { start?: string; end?: strin
   if (numbered.length >= 2 && dates.start && dates.end && dates.start !== dates.end) return true;
   // Amex trip span header with outbound+return flight days
   if (
-    /Jan\s+\d+,\s*20\d{2}\s*[-–—]\s*Jan/i.test(text) &&
+    /Jan\s+\d+,\s*20\d{2}\s*[-– - ]\s*Jan/i.test(text) &&
     numbered.length >= 2
   )
     return true;
@@ -995,18 +995,18 @@ export function normalizeReservationProseToPaste(raw: string): string {
   const customerNote =
     customer.source === 'primary_traveler'
       ? hotel
-        ? 'Customer set from guest name — confirm billed-to before Save.'
-        : 'Customer set from primary traveler — confirm billed-to before Save.'
+        ? 'Customer set from guest name, confirm billed-to before Save.'
+        : 'Customer set from primary traveler, confirm billed-to before Save.'
       : customer.source === 'account'
-        ? 'Customer set from account/cardmember name — confirm billed-to before Save.'
+        ? 'Customer set from account/cardmember name, confirm billed-to before Save.'
         : customer.source === 'thanks'
-          ? 'Customer set from confirmation greeting — confirm billed-to before Save.'
+          ? 'Customer set from confirmation greeting, confirm billed-to before Save.'
           : '';
   if (isEtihadExtrasReceipt(text)) {
     const seat = text.match(/\bSeat\s*:?\s*([A-Z0-9]{1,4})\b/i)?.[1];
     const extrasTotal = text.match(/Total Amount\s*:?\s*USD\s*([\d,.]+)/i)?.[1];
     const bits = [
-      'Etihad extras/EMD receipt — seat fee is not the flight sale; leave Sale blank until ticket price is known.',
+      'Etihad extras/EMD receipt, seat fee is not the flight sale; leave Sale blank until ticket price is known.',
       seat ? `Seat ${seat.toUpperCase()}.` : '',
       extrasTotal ? `Extras total USD ${extrasTotal.replace(/,/g, '')} on receipt.` : '',
       customerNote,
@@ -1015,7 +1015,7 @@ export function normalizeReservationProseToPaste(raw: string): string {
   } else if (total && !foreignTotal) {
     lines.push(`Total: ${total}`);
     const bits = [
-      'Total from reservation receipt — confirm customer price vs card/points charge before Save.',
+      'Total from reservation receipt, confirm customer price vs card/points charge before Save.',
       pointsUsed ? `Points used: ${pointsUsed}.` : '',
       commissionable ? 'Confirmation says rate is commissionable.' : '',
       customerNote,
@@ -1024,7 +1024,7 @@ export function normalizeReservationProseToPaste(raw: string): string {
   } else if (foreignTotal) {
     // Do not invent USD from EUR/GBP — staff enter customer price after FX review.
     const bits = [
-      `Total for Stay ${foreignTotal.amount} ${foreignTotal.currency} on confirmation — not posted as USD; confirm customer price / FX before Save.`,
+      `Total for Stay ${foreignTotal.amount} ${foreignTotal.currency} on confirmation, not posted as USD; confirm customer price / FX before Save.`,
       commissionable ? 'Confirmation says rate is commissionable.' : '',
       customerNote,
     ].filter(Boolean);
@@ -1033,7 +1033,7 @@ export function normalizeReservationProseToPaste(raw: string): string {
     if (!lines.some((l) => l.startsWith('Notes:'))) lines.push(`Notes: ${customerNote}`);
   } else if (!lines.some((l) => l.startsWith('Notes:'))) {
     lines.push(
-      'Notes: Normalized from reservation email/PDF — review fields before Save.',
+      'Notes: Normalized from reservation email/PDF, review fields before Save.',
     );
   }
 

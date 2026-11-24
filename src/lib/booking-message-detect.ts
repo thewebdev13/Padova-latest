@@ -33,6 +33,21 @@ const REFERENCE_CODE = /\b(?:reference|ref(?:erence)?\.?|conf(?:irmation)?\.?)\s
 const OPERATIONAL_NOISE =
   /\b(it'?s\s+time\s+to\s+check[- ]?in|time\s+to\s+check[- ]?in|ready\s+to\s+check[- ]?in|check[- ]?in\s+is\s+(now\s+)?open|online\s+check[- ]?in|web\s+check[- ]?in|mobile\s+check[- ]?in|check[- ]?in\s+for\s+your\s+flight|boarding\s+pass\s+(is\s+)?ready|download\s+your\s+boarding\s+pass|select\s+your\s+seats?|seat\s+selection\s+(is\s+)?open|flight\s+reminder|day\s+of\s+(your\s+)?travel|upcoming\s+trip\s+reminder)\b/i;
 
+/**
+ * Schedule / itinerary *change* notices — not a new booking confirmation.
+ * Capital One / airline “Your flight details have changed” must not become drafts.
+ */
+const SCHEDULE_CHANGE_NOISE =
+  /\b((your\s+)?flight\s+details\s+have\s+changed|(your\s+)?itinerary\s+has\s+changed|(your\s+)?trip\s+details\s+have\s+changed|schedule\s+change|flight\s+(has\s+been\s+)?(changed|rescheduled|rebooked|delayed)|change(?:s)?\s+to\s+your\s+(flight|trip|itinerary|reservation|booking)|we(?:'ve| have)\s+(updated|changed)\s+your\s+(flight|itinerary|trip|reservation)|important\s+change\s+to\s+your\s+(flight|trip|itinerary)|updated\s+flight\s+times?|departure\s+time\s+(has\s+)?changed|gate\s+change\s+notification)\b/i;
+
+/** Info / status links without a new purchase confirmation. */
+const INFORMATIONAL_TRIP_NOISE =
+  /\b(track\s+your\s+flight|flight\s+status\s+alert|view\s+your\s+(trip|itinerary)\s+online|manage\s+your\s+trip|trip\s+alert|travel\s+advisory|weather\s+advisory)\b/i;
+
+/** Strong proof this is a *new* purchase / ticket — overrides weak “confirmation” wording. */
+const STRONG_NEW_BOOKING =
+  /\b(thanks for your purchase|thank you for (your )?purchase|booking confirmation|reservation confirmed|e-?ticket\b|ticket issued|you(?:'ve| have) booked|purchase complete|new\s+booking\s+confirmation|itinerary confirmation)\b/i;
+
 /** Hebrew “check-in opened / preparations for your flight” style subjects. */
 const OPERATIONAL_NOISE_HE = /צ['׳']?ק[- ]?אין|טיסתך\s+נפתחה|הכנות\s+לקראת\s+טיסת/;
 
@@ -41,7 +56,7 @@ const OPERATIONAL_NOISE_HE = /צ['׳']?ק[- ]?אין|טיסתך\s+נפתחה|ה�
  * These mention Flight/Hotel/confirmation while listing open DB items.
  */
 const PADOVA_INTERNAL_NOISE =
-  /\b(padova\s+reminders?|padova\s+intake\s+alert|owner\s+only\s*[—\-–]\s*not\s+a\s+customer\s+reply|open\s+items\s*\(\s*db\s+facts\s+only\s*\)|db\s+facts\s+only)\b/i;
+  /\b(padova\s+reminders?|padova\s+intake\s+alert|owner\s+only\s*[ - \-–]\s*not\s+a\s+customer\s+reply|open\s+items\s*\(\s*db\s+facts\s+only\s*\)|db\s+facts\s+only)\b/i;
 
 export function isPadovaInternalNoise(text: string): boolean {
   const t = String(text || '');
@@ -59,11 +74,57 @@ export function isPadovaInternalNoise(text: string): boolean {
   return false;
 }
 
+/** Flight/itinerary change notice — never treat as a new booking confirmation. */
+export function isScheduleChangeNotice(text: string): boolean {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  if (!SCHEDULE_CHANGE_NOISE.test(t)) return false;
+  // Extremely rare: change notice glued to a brand-new purchase confirmation.
+  if (STRONG_NEW_BOOKING.test(t) && /\b(thanks for your purchase|ticket issued|e-?ticket)\b/i.test(t))
+    return false;
+  return true;
+}
+
+export function isInformationalTripNoise(text: string): boolean {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  if (!INFORMATIONAL_TRIP_NOISE.test(t)) return false;
+  // Do not call looksLikePurchaseOrEnquiry here (it uses operational noise → cycle).
+  if (STRONG_NEW_BOOKING.test(t) || PURCHASE_OR_ENQUIRY.test(t)) return false;
+  if (CONFIRM_SIGNAL.test(t) && /\b(e-?ticket|reservation confirmed|booking confirmation)\b/i.test(t))
+    return false;
+  return true;
+}
+
 export function isOperationalTravelNoise(text: string): boolean {
   const t = String(text || '');
   return (
-    isPadovaInternalNoise(t) || OPERATIONAL_NOISE.test(t) || OPERATIONAL_NOISE_HE.test(t)
+    isPadovaInternalNoise(t) ||
+    isScheduleChangeNotice(t) ||
+    isInformationalTripNoise(t) ||
+    OPERATIONAL_NOISE.test(t) ||
+    OPERATIONAL_NOISE_HE.test(t)
   );
+}
+
+/**
+ * Staff-facing gate before draft / AI fill / Save Booking.
+ * Returns why the text is not a new booking confirmation (or null when OK).
+ */
+export function intakeReservationBlockReason(text: string): string | null {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  if (isPadovaInternalNoise(t))
+    return 'This looks like a Padova desk reminder/alert, not a customer reservation.';
+  if (isScheduleChangeNotice(t))
+    return 'This looks like a flight/itinerary change notice, not a new booking confirmation. Do not Save Booking until you verify — or Discard.';
+  if (isInformationalTripNoise(t))
+    return 'This looks like trip info / status mail, not a new booking confirmation.';
+  if (OPERATIONAL_NOISE.test(t) || OPERATIONAL_NOISE_HE.test(t))
+    return 'This looks like a check-in / boarding reminder, not a new booking confirmation.';
+  if (!looksLikeBookingReservationText(t) && t.length >= 40)
+    return 'Could not verify a booking confirmation in this text. Paste a real reservation (or Field: Value lines) before Save Booking.';
+  return null;
 }
 
 export function looksLikePurchaseOrEnquiry(text: string): boolean {

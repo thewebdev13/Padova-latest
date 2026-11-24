@@ -111,7 +111,7 @@ export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage
   // Desk digests / intake alerts must never become drafts (even with files attached).
   if (isPadovaInternalNoise(message.text || '')) {
     throw new Error(
-      'Padova desk reminder/alert skipped — not a customer reservation (no draft created)',
+      'Padova desk reminder/alert skipped, not a customer reservation (no draft created)',
     );
   }
 
@@ -152,7 +152,7 @@ export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage
 
     if (isPadovaInternalNoise(probe)) {
       throw new Error(
-        'Padova desk reminder/alert skipped — not a customer reservation (no draft created)',
+        'Padova desk reminder/alert skipped, not a customer reservation (no draft created)',
       );
     }
 
@@ -175,7 +175,7 @@ export async function prepareWhatsAppIntakeDraft(message: InboundWhatsAppMessage
     ) {
       built.issues = [
         ...(built.issues || []),
-        'Low field recognition — draft kept for human review (no silent drop)',
+        'Low field recognition, draft kept for human review (no silent drop)',
       ];
       const capture = assessIntakeCapture({
         entry: built.entry,

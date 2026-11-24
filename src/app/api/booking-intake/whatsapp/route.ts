@@ -34,6 +34,7 @@ import { collectOpsReminders } from '@/lib/ai-ops-reminders';
 import {
   classifyStaffChatIntent,
   draftStaffChatReply,
+  formatStaffFactReply,
   formatStaffGuideReply,
   formatStaffOpeningReply,
   padovaPageUrl,
@@ -208,50 +209,53 @@ export async function POST(request: Request) {
         reply = formatStaffOpeningReply(text).text;
       } else if (intent === 'guide') {
         reply = formatStaffGuideReply(text);
-      } else if (intent === 'ops' || intent === 'report') {
-        // Report / pending only when asked — realtime from DB, no guessing.
+      } else {
+        // Every real question → DB facts first (correct results), then optional LLM polish.
         try {
           const reminders = await collectOpsReminders(db, staff);
-          reply = formatAssistantOpsBriefing({
-            as_of: reminders.as_of,
-            counts: reminders.counts,
-            items: reminders.items,
-            full: intent === 'report',
-          });
-        } catch {
-          reply = polishHumanChat(
-            `I could not read the desk list from the database right now. Open Attention: ${padovaPageUrl('Attention')}`,
-          );
-        }
-      } else {
-        // Unclear question: ask in English. Do not guess. Skip slow LLM by default.
-        const allowLlm = /^(1|true|yes)$/i.test(
-          String(process.env.PADOVA_WA_CHAT_LLM || '').trim(),
-        );
-        reply = polishHumanChat(
-          [
-            'I want an accurate answer from Padova, so I should not guess.',
-            'Please ask one of these:',
-            '1) pending / missing work',
-            '2) give me a report',
-            '3) where are drafts / payments / attention',
-            '4) send a reservation file',
-          ].join('\n'),
-        );
-        if (allowLlm) {
-          try {
-            const reminders = await collectOpsReminders(db, staff);
+          const open = await findOpenAssistantDraft(db, fromNumber || '');
+          const factReply =
+            intent === 'ops' || intent === 'report' || intent === 'chat'
+              ? formatStaffFactReply({
+                  question: text,
+                  as_of: reminders.as_of,
+                  counts: reminders.counts,
+                  items: reminders.items,
+                  openDraft: open
+                    ? { id: open.id, title: open.title || open.id }
+                    : null,
+                })
+              : formatAssistantOpsBriefing({
+                  as_of: reminders.as_of,
+                  counts: reminders.counts,
+                  items: reminders.items,
+                  full: intent === 'report',
+                });
+          reply = factReply;
+          // Prefer grounded AI when keys exist; never invent money (system prompt).
+          const allowLlm =
+            /^(1|true|yes)$/i.test(String(process.env.PADOVA_WA_CHAT_LLM || '').trim()) ||
+            /^(1|true|yes)$/i.test(String(process.env.PADOVA_AI_INTAKE || '').trim()) ||
+            Boolean(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY);
+          if (allowLlm && intent === 'chat') {
             const drafted = await draftStaffChatReply({
               question: text,
               intent: 'chat',
-              contextBlock: reminders.plain_summary,
-              fallback: reply,
+              contextBlock: [
+                reminders.plain_summary,
+                open
+                  ? `Open draft for this chat: ${open.title || open.id} (not live until SAVE).`
+                  : 'No open assistant draft for this chat.',
+              ].join('\n'),
+              fallback: factReply,
             });
             reply = drafted.text;
             usedAi = drafted.used_ai;
-          } catch {
-            /* keep clarifying reply */
           }
+        } catch {
+          reply = polishHumanChat(
+            `I could not read Padova right now. Try Attention: ${padovaPageUrl('Attention')} or send the reservation file.`,
+          );
         }
       }
 

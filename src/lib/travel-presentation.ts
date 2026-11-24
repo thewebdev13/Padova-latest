@@ -12,7 +12,7 @@ export function tripTitle(b: R): string {
   if (location) return `${b.product} · ${location}`;
   // Remove only machine-formatted date suffixes, never arbitrary employee prose.
   return String(b.summary || b.product || 'Booking').replace(
-    /\s*[·|]\s*\d{4}-\d{2}-\d{2}(?:\s*[–—-]\s*\d{4}-\d{2}-\d{2})?\s*$/,
+    /\s*[·|]\s*\d{4}-\d{2}-\d{2}(?:\s*[– - -]\s*\d{4}-\d{2}-\d{2})?\s*$/,
     '',
   );
 }

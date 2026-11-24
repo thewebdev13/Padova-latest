@@ -63,6 +63,7 @@ import {
   INTAKE_SAMPLE_PASTE,
   UNREAD_FILE_MESSAGE,
 } from '@/lib/intake-preview';
+import { intakeReservationBlockReason } from '@/lib/booking-message-detect';
 import {
   extractTextFromEml,
   looksLikeEml,
@@ -137,17 +138,34 @@ function Field({
   label,
   children,
   full = false,
+  required = false,
+  error = '',
 }: {
   label: string;
   children: ReactNode;
   full?: boolean;
+  required?: boolean;
+  error?: string;
 }) {
   return (
     <div
-      className={`form-field ${full ? 'full' : ''} ${label === 'Travelers' ? 'traveler-field' : ''}`}
+      className={`form-field ${full ? 'full' : ''} ${label === 'Travelers' ? 'traveler-field' : ''} ${error ? 'has-error' : ''}`}
     >
-      <label>{label}</label>
+      <label>
+        {label}
+        {required ? (
+          <span className="req-star" aria-hidden="true">
+            {' '}
+            *
+          </span>
+        ) : null}
+      </label>
       {children}
+      {error ? (
+        <small className="field-hint-error" role="alert">
+          {error}
+        </small>
+      ) : null}
     </div>
   );
 }
@@ -545,7 +563,7 @@ export default function BookingEntry(props: Props) {
       (r: R, i: number, a: R[]) => a.findIndex((x) => x.id === r.id) === i,
     );
   const text = (key: string, label: string, type = 'text', required = false, large = false) => (
-    <Field key={key} label={label} full={large}>
+    <Field key={key} label={label} full={large} required={required}>
       {large ? (
         <textarea
           aria-label={label}
@@ -561,7 +579,6 @@ export default function BookingEntry(props: Props) {
         <input
           aria-label={label}
           type={type}
-          required={required}
           step={type === 'number' ? '0.01' : undefined}
           min={type === 'number' ? 0 : undefined}
           value={v[key] ?? ''}
@@ -579,8 +596,9 @@ export default function BookingEntry(props: Props) {
     values: string[],
     set = (value: string) => change(key, value),
     value = v[key] ?? '',
+    required = false,
   ) => (
-    <Field label={label}>
+    <Field label={label} required={required}>
       <SearchableSelect
         id={`entry-${key}`}
         label={label}
@@ -614,7 +632,7 @@ export default function BookingEntry(props: Props) {
     value = v[key] ?? '',
     filter = (r: R) => true,
   ) => (
-    <Field label={label}>
+    <Field label={label} required={Boolean(defaults.required)}>
       <>
         {source === 'parties' ? (
           <BookingPartySelect
@@ -1007,6 +1025,13 @@ export default function BookingEntry(props: Props) {
     }
     if (rawText != null && rawText !== paste) setPaste(sourceText);
     else if (sourceText !== paste && looksLikeEml(paste)) setPaste(sourceText);
+    const reservationBlock = intakeReservationBlockReason(sourceText);
+    if (reservationBlock) {
+      setPasteIssues([reservationBlock]);
+      setPasteHelperStatus('Verify this is a real booking confirmation before filling fields.');
+      setError(reservationBlock);
+      return;
+    }
     const preview = parseQuickPaste(sourceText),
       p = preview.fields,
       // Quiet successes / unknown labels — mapping panel covers them. Keep only blocking notes.
@@ -1075,7 +1100,7 @@ export default function BookingEntry(props: Props) {
               ? 'Multi-City'
               : '';
       if (!next.trip_type)
-        issues.push('Trip Type unclear — pick One Way, Round Trip, or Multi-City');
+        issues.push('Trip Type unclear, pick One Way, Round Trip, or Multi-City');
     }
     if (p.reservation_summary) next.summary_override = true;
     if (p.sale !== undefined && !can('edit_customer_charges')) {
@@ -1113,7 +1138,7 @@ export default function BookingEntry(props: Props) {
         );
         if (exacts.length > 1) {
           issues.push(
-            `Multiple ${role} records named “${label}” — choose the correct one before Save.`,
+            `Multiple ${role} records named “${label}”, choose the correct one before Save.`,
           );
           return '';
         }
@@ -1122,7 +1147,7 @@ export default function BookingEntry(props: Props) {
           return '';
         }
         if (!onInlineCommand) {
-          issues.push(`Unable to create ${role} “${label}” — inline create unavailable`);
+          issues.push(`Unable to create ${role} “${label}”, inline create unavailable`);
           return '';
         }
         const keyId = `${role}:${label.normalize('NFKC').trim().toLowerCase()}`;
@@ -1248,7 +1273,7 @@ export default function BookingEntry(props: Props) {
         } else if (hits.length > 1) {
           next.referring_organization_id = '';
           issues.push(
-            `Multiple referring organizations named “${p.referring_organization}” — choose the correct one before Save.`,
+            `Multiple referring organizations named “${p.referring_organization}”, choose the correct one before Save.`,
           );
         } else {
           next.referring_organization_id = '';
@@ -1332,7 +1357,7 @@ export default function BookingEntry(props: Props) {
       !issues.some((i) => i.startsWith('Contradiction:'))
     )
       issues.push(
-        'One Way with a return date — return was not applied; check Trip Type.',
+        'One Way with a return date, return was not applied; check Trip Type.',
       );
     next = transitionBookingProduct(next, next.product, rows('bookingSourceMethods'));
     setV(next);
@@ -1371,7 +1396,7 @@ export default function BookingEntry(props: Props) {
           setPasteHelperStatus('');
           setError(
             result.unread_message ||
-              `“${file.name}” has no readable text — paste the reservation text instead.`,
+              `“${file.name}” has no readable text, paste the reservation text instead.`,
           );
           return;
         }
@@ -1389,15 +1414,15 @@ export default function BookingEntry(props: Props) {
                 : 'file text';
         setPasteHelperStatus(
           found > 0
-            ? `Filled ${found} field${found === 1 ? '' : 's'} from ${via} — review, then Save Booking. Missing stays Unknown.`
-            : `Loaded text from ${via} — map fields on the right, then Re-apply if needed. Nothing posts money yet.`,
+            ? `Filled ${found} field${found === 1 ? '' : 's'} from ${via}, review, then Save Booking. Missing stays Unknown.`
+            : `Loaded text from ${via}, map fields on the right, then Re-apply if needed. Nothing posts money yet.`,
         );
         return;
       }
       setPasteHelperStatus(`Loading “${file.name}”…`);
       const text = await file.text();
       if (text.includes('\u0000'))
-        throw new Error('File looks binary — use plain text, .eml, PDF, or a screenshot image');
+        throw new Error('File looks binary, use plain text, .eml, PDF, or a screenshot image');
       const loaded = pasteTextFromUpload(text, file.name);
       const nextText = loaded.text.slice(0, 20000);
       setPaste(nextText);
@@ -1406,8 +1431,8 @@ export default function BookingEntry(props: Props) {
       const found = preview.found || 0;
       setPasteHelperStatus(
         found > 0
-          ? `Filled ${found} field${found === 1 ? '' : 's'} from file — review, then Save Booking.`
-          : `Loaded “${file.name}” — paste Field: Value lines if mapping is empty.`,
+          ? `Filled ${found} field${found === 1 ? '' : 's'} from file, review, then Save Booking.`
+          : `Loaded “${file.name}”, paste Field: Value lines if mapping is empty.`,
       );
     } catch (err) {
       setPasteHelperStatus('');
@@ -1848,9 +1873,9 @@ export default function BookingEntry(props: Props) {
               {props.config.defaults.draft_id ? 'Continue Draft' : 'New Booking'}
             </h2>
             {state.developmentData && (
-              <strong className="test-dialog-label">TEST / SYNTHETIC — PRACTICE ONLY</strong>
+              <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
             )}
-            <p>Enter each fact once — money can stay Unknown until known.</p>
+            <p>Enter each fact once. Money can stay Unknown until known.</p>
           </div>
           <button type="button" onClick={closeBooking} disabled={busy} aria-label="Close dialog">
             ×
@@ -1859,7 +1884,7 @@ export default function BookingEntry(props: Props) {
         <div className="modal-body">
           <p className="booking-essentials-hint" role="note">
             <strong>Need to save:</strong> Customer · Product · Travel dates · Booked Through.
-            Money, PNR, and affiliate can stay empty or Unknown — use <em>Save Draft</em> anytime.
+            Money, PNR, and affiliate can stay empty or Unknown, use <em>Save Draft</em> anytime.
           </p>
           {error && !/select a customer/i.test(error) ? (
             <div
@@ -1874,13 +1899,19 @@ export default function BookingEntry(props: Props) {
           ) : null}
           {props.config.defaults.intake_provenance?.source && (
             <div className="intake-provenance-banner" role="status">
-              <strong>Intake draft — review before Save Booking</strong>
+              <strong>Intake draft. Review before Save Booking</strong>
               <span>
                 {formatIntakeProvenanceLine(props.config.defaults.intake_provenance)}
               </span>
               <span>Nothing posts money until you approve and Save Booking.</span>
             </div>
           )}
+          {livePastePreview.reservationBlock ? (
+            <div className="form-alert form-alert-warn intake-reservation-gate" role="alert">
+              <strong>Not a verified booking confirmation</strong>
+              <span>{livePastePreview.reservationBlock}</span>
+            </div>
+          ) : null}
           <details
             ref={quickPasteRef}
             className="booking-quick-paste"
@@ -1897,7 +1928,7 @@ export default function BookingEntry(props: Props) {
               <span className="booking-quick-paste-summary-copy">
                 <strong>Quick start</strong>
                 <small>
-                  Paste text, or drop a PDF / screenshot / .eml — we fill matching fields. You
+                  Paste text, or drop a PDF / screenshot / .eml, we fill matching fields. You
                   review before Save Booking. Missing stays Unknown.
                 </small>
               </span>
@@ -1967,7 +1998,7 @@ export default function BookingEntry(props: Props) {
                         value={paste}
                         disabled={busy}
                         aria-label="What you pasted"
-                        placeholder="Paste Field: Value lines — or drop a PDF / screenshot above…"
+                        placeholder="Paste Field: Value lines, or drop a PDF / screenshot above…"
                         onChange={(e) => {
                           const text = e.target.value;
                           setPaste(text);
@@ -2107,8 +2138,8 @@ export default function BookingEntry(props: Props) {
                       const found = livePastePreview.found || 0;
                       setPasteHelperStatus(
                         found > 0
-                          ? `Re-applied ${found} field${found === 1 ? '' : 's'} — review before Save.`
-                          : 'Re-applied — check mapping; missing stays Unknown.',
+                          ? `Re-applied ${found} field${found === 1 ? '' : 's'}, review before Save.`
+                          : 'Re-applied, check mapping; missing stays Unknown.',
                       );
                     });
                   }}
@@ -2144,7 +2175,7 @@ export default function BookingEntry(props: Props) {
                         const result = await response.json();
                         if (!response.ok) throw new Error(result.error || 'Intake draft failed');
                         setPasteIssues([
-                          `Draft saved${result.title ? ` (${result.title})` : ''} — open from Drafts to finish.`,
+                          `Draft saved${result.title ? ` (${result.title})` : ''}, open from Drafts to finish.`,
                         ]);
                       } catch (err) {
                         setError(err instanceof Error ? err.message : 'Intake draft failed');
@@ -2191,7 +2222,10 @@ export default function BookingEntry(props: Props) {
                   customerMissing ? 'booking-field-wrap is-invalid full' : 'booking-field-wrap full'
                 }
               >
-                {entity('customer_id', 'Customer', 'parties', 'party', { roles: ['customer'] })}
+                {entity('customer_id', 'Customer', 'parties', 'party', {
+                  roles: ['customer'],
+                  required: true,
+                })}
                 {customerMissing ? (
                   <small className="field-hint-error" role="alert">
                     Select a customer here, or use Save Draft if this booking is still incomplete.
@@ -2205,7 +2239,7 @@ export default function BookingEntry(props: Props) {
                 >
                   <OptionalSummary
                     title="Referring organization (affiliate)"
-                    hint="Optional — Padova owes that org; IATA / secondary stay under Add commission after Save"
+                    hint="Padova owes this org. IATA / secondary commissions stay under Add commission after Save."
                     filled={v.referring_organization_id ? 1 : 0}
                   />
                   <Field label="Referring organization (affiliate)" full>
@@ -2216,7 +2250,7 @@ export default function BookingEntry(props: Props) {
                       options={[
                         {
                           value: '',
-                          label: 'None — no affiliate on this booking',
+                          label: 'None (no affiliate on this booking)',
                         },
                         ...(state.referralOrganizations ?? []).map((r: R) => ({
                           value: r.id,
@@ -2228,7 +2262,7 @@ export default function BookingEntry(props: Props) {
                         })),
                       ]}
                       onChange={(id) => change('referring_organization_id', id || '')}
-                      emptyLabel="No matching organization — pick None or set up Partnerships"
+                      emptyLabel="No matching organization, pick None or set up Partnerships"
                       hideCount
                     />
                     <small>
@@ -2439,7 +2473,7 @@ export default function BookingEntry(props: Props) {
                 <details className="optional-block">
                   <OptionalSummary
                     title="Traveler travel docs (optional)"
-                    hint="Passport / ticket details — skip unless needed now"
+                    hint="Passport / ticket details, skip unless needed now"
                     filled={v.traveler_ids.length ? 1 : 0}
                   />
                   <BookingTicketing
@@ -2467,7 +2501,7 @@ export default function BookingEntry(props: Props) {
               <h3 className="form-section-title">
                 <span>2</span> Travel<small>What was booked and when</small>
               </h3>
-              {select('product', 'Product', products, changeProduct)}
+              {select('product', 'Product', products, changeProduct, v.product ?? '', true)}
               {v.product !== 'Other' &&
                 entity(
                   'provider_id',
@@ -2679,7 +2713,7 @@ export default function BookingEntry(props: Props) {
                                 if (!(data.hotels ?? []).length) {
                                   if (!data.total_active) {
                                     setHotelDirectoryNote(
-                                      'Catalog empty — add hotels under Partnerships → Hotels.',
+                                      'Catalog empty, add hotels under Partnerships → Hotels.',
                                     );
                                   } else {
                                     setHotelDirectoryNote(
@@ -2718,7 +2752,7 @@ export default function BookingEntry(props: Props) {
                               key={h.id}
                               onClick={() => {
                                 void (async () => {
-                                  const tip = `Hotel directory: ${h.hotel_name} — best book: ${
+                                  const tip = `Hotel directory: ${h.hotel_name}, best book: ${
                                     h.best_book_method || 'n/a'
                                   }${h.corporate_code ? `; corp ${h.corporate_code}` : ''}${
                                     h.iata_code ? `; IATA ${h.iata_code}` : ''
@@ -2845,6 +2879,7 @@ export default function BookingEntry(props: Props) {
                     'travel_start',
                     v.product === 'Hotel' ? 'Check-in date' : dateLabels.start,
                     'date',
+                    true,
                   )}
                   {travelStartMissing ? (
                     <small className="field-hint-error" role="alert">
@@ -2867,6 +2902,7 @@ export default function BookingEntry(props: Props) {
                         ? 'Drop-off date'
                         : dateLabels.end!,
                     'date',
+                    true,
                   )}
                   {travelEndMissing ? (
                     <small className="field-hint-error" role="alert">
@@ -3273,7 +3309,7 @@ export default function BookingEntry(props: Props) {
                               </div>
                             )}
                           {c.supplied === 'Other / Custom' && (
-                            <Field label="What seller supplied — custom">
+                            <Field label="What seller supplied, custom">
                               <input
                                 aria-label={`Custom supplied value ${i + 1}`}
                                 value={c.custom_supplied ?? ''}
@@ -3932,7 +3968,7 @@ export default function BookingEntry(props: Props) {
                   )}
                   <p className="full customer-price-hint">
                     {providerDirect
-                      ? `Customer already paid the provider${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Default amount owed to Padova is $0 — add only a fee below, or use booked cost if Padova is also collecting the trip price.`
+                      ? `Customer already paid the provider${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Default amount owed to Padova is $0, add only a fee below, or use booked cost if Padova is also collecting the trip price.`
                       : `Typical: customer price matches what the trip was booked for${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Adjust only when it differs. Commissions stay separate.`}
                   </p>
                   {bookedCostCents !== undefined && (
@@ -4007,7 +4043,7 @@ export default function BookingEntry(props: Props) {
                     <p className="full">
                       Customer card paid the provider directly
                       {bookedCostLabel ? ` (${bookedCostLabel})` : ''}. That amount is recorded
-                      separately below — it is not owed to Padova. Keep amount owed at $0 and put
+                      separately below, it is not owed to Padova. Keep amount owed at $0 and put
                       any booking/service fee in Extra charge, or click Use booked cost only if
                       Padova is also collecting the trip price.
                     </p>
@@ -4049,7 +4085,7 @@ export default function BookingEntry(props: Props) {
                   <details open={!!v.additional_charge || !!v.additional_charge_note}>
                     <OptionalSummary
                       title="Extra charge / fee"
-                      hint="Booking fee or other amount owed to Padova — say what it is"
+                      hint="Booking fee or other amount owed to Padova, say what it is"
                       filled={
                         [v.additional_charge, v.additional_charge_note].filter(Boolean).length
                       }
@@ -4186,7 +4222,7 @@ export default function BookingEntry(props: Props) {
                 <p className="full note">
                   After Save, open <strong>Add commission</strong> on the booking to record who owes
                   Padova (IATA partner and any secondary payer). Affiliate payable comes from the
-                  referring organization above when set — do not post the same payout twice.
+                  referring organization above when set, do not post the same payout twice.
                 </p>
               )}
             </section>
@@ -4289,7 +4325,15 @@ export default function BookingEntry(props: Props) {
             >
               Save Draft
             </button>
-            <button className="btn primary" disabled={busy || !!dateOrderIssue}>
+            <button
+              className="btn primary"
+              disabled={busy || !!dateOrderIssue || !!livePastePreview.reservationBlock}
+              title={
+                livePastePreview.reservationBlock
+                  ? 'Blocked until this looks like a real booking confirmation'
+                  : undefined
+              }
+            >
               {busy ? 'Saving…' : 'Save Booking'}
             </button>
           </div>

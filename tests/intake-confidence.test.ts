@@ -4,6 +4,8 @@ import {
   assessIntakeCapture,
   formatIntakeOwnerAlert,
   applyIntakeCaptureToEntry,
+  formatIntakeMissingLabel,
+  formatIntakeMissingSummary,
 } from '../src/lib/intake-confidence';
 
 test('high confidence when product, dates, traveler present (sale Unknown OK)', () => {
@@ -59,6 +61,19 @@ test('owner alert text never invents money and marks Owner-only', () => {
   assert.match(text, /Do not invent amounts/);
   assert.doesNotMatch(text, /\$0/);
   assert.match(text, /Draft only/);
+});
+
+test('missing keys render as staff labels, not snake_case', () => {
+  assert.equal(formatIntakeMissingLabel('travel_start'), 'Travel date');
+  assert.equal(formatIntakeMissingLabel('customer_or_traveler'), 'Customer or traveler');
+  assert.match(
+    formatIntakeMissingSummary(['product', 'travel_start', 'traveler']),
+    /Still need: Product, Travel date, and Traveler/,
+  );
+  assert.doesNotMatch(
+    formatIntakeMissingSummary(['product', 'travel_start']),
+    /travel_start|customer_or/,
+  );
 });
 
 test('applyIntakeCaptureToEntry stores tags on entry', () => {

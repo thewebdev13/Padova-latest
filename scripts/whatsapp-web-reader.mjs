@@ -144,11 +144,20 @@ async function loadHelperConfig() {
       if (Array.isArray(data.owner_phones) && data.owner_phones.length) {
         process.env.PADOVA_WHATSAPP_OWNER_PHONES = data.owner_phones.map(String).join(',');
       }
-      // Staff assistant allowlist (defaults to owner_phones when unset).
+      // Staff who may talk TO the AI WhatsApp (ask / draft / SAVE). Not the linked bot identity.
       if (Array.isArray(data.assistant_phones) && data.assistant_phones.length) {
         process.env.PADOVA_WA_ASSISTANT_PHONES = data.assistant_phones.map(String).join(',');
       } else if (Array.isArray(data.owner_phones) && data.owner_phones.length) {
         process.env.PADOVA_WA_ASSISTANT_PHONES = data.owner_phones.map(String).join(',');
+      }
+      // The one WhatsApp that ACTS as the AI (must be the account scanned/linked on this PC).
+      const linked =
+        data.assistant_whatsapp ||
+        data.linked_whatsapp ||
+        data.assistant_phone ||
+        data.ai_whatsapp;
+      if (linked != null && String(linked).trim()) {
+        process.env.PADOVA_WA_ASSISTANT_WHATSAPP = String(linked).replace(/\D/g, '');
       }
       console.log(`[whatsapp-web-reader] config: ${filePath}`);
       return;
@@ -208,8 +217,26 @@ const assistantPhones = String(
   .split(/[,;\s]+/)
   .map((p) => p.replace(/\D/g, ''))
   .filter((p) => p.length >= 8 && p.length <= 15);
+/** WhatsApp account that is the AI assistant (QR link this number only). */
+const assistantWhatsapp = String(process.env.PADOVA_WA_ASSISTANT_WHATSAPP || '')
+  .replace(/\D/g, '')
+  .slice(0, 15);
+
+function phonesMatch(a, b) {
+  const x = String(a || '').replace(/\D/g, '');
+  const y = String(b || '').replace(/\D/g, '');
+  if (!x || !y) return false;
+  return x === y || x.endsWith(y) || y.endsWith(x);
+}
 /** Mutable draft entry per staff chat — drafts table is immutable until SAVE promote. */
 const assistantSessions = new Map();
+/** Message ids we just sent — never re-process (stops reply loops). */
+const recentlySentIds = new Set();
+/** Recent outbound text fingerprints — stop ping-pong when another helper echoes us. */
+const recentlySentText = new Map(); // fingerprint → expiresAt
+/** Per-chat outbound throttle (ms since last assistant text). */
+const lastAssistantSendAt = new Map();
+const ASSISTANT_SEND_GAP_MS = 600;
 const alertIntervalMinutes = Math.max(
   30,
   Number(process.env.PADOVA_WHATSAPP_ALERT_INTERVAL_MINUTES || 240) || 240,
@@ -287,10 +314,50 @@ function isAssistantPhone(fromNumber) {
   return assistantPhones.some((p) => n === p || n.endsWith(p) || p.endsWith(n));
 }
 
+function textFingerprint(text) {
+  return String(text || '')
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .slice(0, 280);
+}
+
+function rememberSentText(text) {
+  const fp = textFingerprint(text);
+  if (!fp || fp.length < 8) return;
+  recentlySentText.set(fp, Date.now() + 90_000);
+  if (recentlySentText.size > 200) {
+    const now = Date.now();
+    for (const [k, exp] of recentlySentText) {
+      if (exp < now) recentlySentText.delete(k);
+    }
+  }
+}
+
+function isEchoOfOurRecentReply(text) {
+  const fp = textFingerprint(text);
+  if (!fp) return false;
+  const exp = recentlySentText.get(fp);
+  if (exp && exp > Date.now()) return true;
+  // Known assistant templates (other linked helper / phone echo).
+  if (
+    /waiting for this message/i.test(fp) ||
+    /still here, just tell me what you need/i.test(fp) ||
+    /^i'?m good, thanks\.?\s*what do you need\??$/i.test(fp) ||
+    /^got it\.?\s*drafted from that/i.test(fp) ||
+    /^sure\.?\s*what do you need\??$/i.test(fp) ||
+    /i want an accurate answer from padova/i.test(fp)
+  )
+    return true;
+  return false;
+}
+
 const chatToneMemory = new Map(); // phone key → { helpCount, lastHelpAt }
 const HELP_COOLDOWN_MS = 25 * 60 * 1000;
 /** Instinct-style: screenshots arriving together → one booking draft. */
-const MEDIA_BURST_MS = 10_000;
+/** Instinct-style: wait briefly so multi-page PDFs/screenshots merge, then reply fast. */
+const MEDIA_BURST_MS = 2800;
 const mediaBursts = new Map(); // remoteJid → { items, timer, meta }
 
 function toneKey(fromNumber) {
@@ -329,6 +396,9 @@ function isAssistantGreetingText(text) {
     .replace(/[!?.…]+$/g, '');
   if (!t || t.length > 48) return false;
   if (isStaffSmalltalkText(t)) return true;
+  // "ready?" / "test" / "ping" — staff often probe after helper restart
+  if (/^(ready|ok|okay|ping|test|here|you there|are you (there|ready|up))\b/.test(t))
+    return true;
   return /^(hi|hello|hey|yo|hola|help|menu|options|start|hiya|sup|good\s*(morning|afternoon|evening)|what can you do|how (can|may) i help)\b/.test(
     t,
   );
@@ -438,6 +508,13 @@ function isAssistantGuideQuestion(text) {
 function isAssistantFreeChat(text) {
   const t = String(text || '').trim();
   if (!t || t.length < 2 || t.length > 280) return false;
+  // Never treat our own assistant phrasing as a new staff question.
+  if (
+    /^(i'?m good|hey again|hi\. still here|sure\. (pick one|what do you need)|got it\.|send the reservation)/i.test(
+      t,
+    )
+  )
+    return false;
   if (isAssistantGreetingText(t)) return false;
   if (isAssistantOpsQuestion(t)) return false;
   if (isAssistantGuideQuestion(t)) return false;
@@ -467,42 +544,70 @@ function sessionKey(fromNumber) {
 
 /**
  * Never send assistant text into a customer chat.
- * - If sender is staff phone → reply in that chat.
- * - Else (customer reservation) → fan-out only to assistant/owner phones.
+ * - Allowlisted staff only (fromNumber).
+ * - Always reply on the SAME inbound remoteJid (WhatsApp may use @lid opaque ids
+ *   that differ from the MSISDN — do NOT compare peer digits to phone digits).
+ * - Never blast other allowlisted phones.
  */
 async function sendAssistantReply(sock, remoteJid, fromNumber, text) {
   if (!sock || !text) return;
-  const targets = [];
-  if (isAssistantPhone(fromNumber) && remoteJid) {
-    targets.push({ jid: remoteJid, label: fromNumber });
-  } else {
-    const phones = assistantPhones.length ? assistantPhones : ownerPhones;
-    for (const phone of phones) {
-      const jid = phoneToJid(phone);
-      if (jid) targets.push({ jid, label: phone });
-    }
-  }
-  if (!targets.length) {
-    console.warn(
-      '[assistant] no staff phones to notify — set owner_phones / assistant_phones in config.json',
+  if (!isAssistantPhone(fromNumber) || !remoteJid) {
+    console.log(
+      '[assistant] skip text notify (customer/unknown chat — reaction only)',
     );
     return;
   }
+  const now = Date.now();
+  const last = lastAssistantSendAt.get(remoteJid) || 0;
+  if (now - last < ASSISTANT_SEND_GAP_MS) {
+    console.log('[assistant] throttle — skip duplicate send in same chat');
+    return;
+  }
   const body = String(text).slice(0, 3500);
-  for (const t of targets) {
-    await sock.sendMessage(t.jid, { text: body });
-    console.log(`[assistant] reply → ${t.label}`);
+  try {
+    const sent = await sock.sendMessage(remoteJid, { text: body });
+    lastAssistantSendAt.set(remoteJid, now);
+    rememberSentText(body);
+    const sentId = sent?.key?.id;
+    if (sentId) {
+      recentlySentIds.add(sentId);
+      setTimeout(() => recentlySentIds.delete(sentId), 120_000);
+    }
+    console.log(
+      `[assistant] reply → ${fromNumber} (chat ${String(remoteJid).split('@')[0]})`,
+    );
+  } catch (err) {
+    console.warn(
+      `[assistant] reply failed: ${err instanceof Error ? err.message : err}`,
+    );
   }
 }
 
-function rememberAssistantSession(draftId, entry, title) {
-  if (!draftId || !entry) return;
-  const payload = { draft_id: String(draftId), entry, title: title || '' };
-  const phones = assistantPhones.length ? assistantPhones : ownerPhones;
-  for (const phone of phones) {
-    const sk = sessionKey(phone);
-    if (sk) assistantSessions.set(sk, payload);
+/** Send one text and remember id so messages.upsert does not re-ingest it. */
+async function sendTrackedText(sock, jid, text) {
+  if (!sock || !jid || !text) return null;
+  const body = String(text).slice(0, 3500);
+  const sent = await sock.sendMessage(jid, { text: body });
+  const sentId = sent?.key?.id;
+  if (sentId) {
+    recentlySentIds.add(sentId);
+    setTimeout(() => recentlySentIds.delete(sentId), 120_000);
   }
+  rememberSentText(body);
+  lastAssistantSendAt.set(jid, Date.now());
+  return sent;
+}
+
+/** Session belongs to ONE staff phone only — never share across allowlist. */
+function rememberAssistantSession(fromNumber, draftId, entry, title) {
+  if (!draftId || !entry) return;
+  const sk = sessionKey(fromNumber);
+  if (!sk || !isAssistantPhone(fromNumber)) return;
+  assistantSessions.set(sk, {
+    draft_id: String(draftId),
+    entry,
+    title: title || '',
+  });
 }
 
 async function fetchOwnerDigest() {
@@ -560,7 +665,7 @@ async function maybeSendOwnerAlerts(sock, processed) {
   for (const phone of ownerPhones) {
     const jid = phoneToJid(phone);
     if (!jid) continue;
-    await sock.sendMessage(jid, { text: String(digest.text) });
+    await sendTrackedText(sock, jid, String(digest.text));
     console.log(`[owner-alert] sent digest (${digest.item_count} items) → ${phone}`);
   }
   processed.last_alert_fingerprint = digest.fingerprint || null;
@@ -734,6 +839,53 @@ function jidToNumber(jid) {
   return base || undefined;
 }
 
+/** Prefer real phone digits over WhatsApp @lid opaque ids (Baileys multi-device). */
+function resolveSenderPhone(msg, remoteJid) {
+  const key = msg?.key || {};
+  const candidates = [
+    key.senderPn,
+    key.remoteJidAlt,
+    key.participantAlt,
+    key.participantPn,
+    key.participant,
+    msg?.participant,
+    remoteJid,
+  ];
+  for (const c of candidates) {
+    if (!c) continue;
+    const raw = String(c);
+    // Skip @lid opaque ids (not phone numbers)
+    if (raw.includes('@lid')) continue;
+    const n = String(jidToNumber(c) || raw).replace(/\D/g, '');
+    // Real MSISDN: 8–15 digits. Skip long opaque lid tokens.
+    if (n.length >= 8 && n.length <= 15) return n;
+  }
+  if (String(remoteJid || '').includes('@lid')) return undefined;
+  const fallback = String(jidToNumber(remoteJid) || '').replace(/\D/g, '');
+  return fallback && fallback.length >= 8 && fallback.length <= 15 ? fallback : undefined;
+}
+
+function isStaffStatusQuestion(text) {
+  const t = String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.…]+$/g, '');
+  if (!t || t.length > 120) return false;
+  return (
+    /\b(is|was|did|has|have)\b/.test(t) &&
+    /\b(booking|draft|reservation|it)\b/.test(t) &&
+    /\b(created|create|made|saved|done|ready|posted|live|filed)\b/.test(t)
+  );
+}
+
+/** Allowlisted staff: never silently ignore short chat — always answer. */
+function isStaffAnyChat(text) {
+  const t = String(text || '').trim();
+  if (!t || t.length > 500) return false;
+  if (isEchoOfOurRecentReply(t)) return false;
+  return true;
+}
+
 async function resolveChatName(sock, jid) {
   if (!jid) return 'unknown-chat';
   try {
@@ -782,12 +934,14 @@ async function sendOwnerImmediateAlert(sock, text) {
   for (const phone of ownerPhones) {
     const jid = phoneToJid(phone);
     if (!jid) continue;
-    await sock.sendMessage(jid, { text: String(text).slice(0, 3500) });
+    await sendTrackedText(sock, jid, String(text).slice(0, 3500));
     console.log(`[owner-alert] immediate intake alert → ${phone}`);
   }
 }
 
 async function postDraft(payload) {
+  const staffChat =
+    assistantEnabled && isAssistantPhone(payload.from_number);
   const body = {
     session_label: sessionLabel,
     chat_name: payload.chat_name || undefined,
@@ -802,8 +956,8 @@ async function postDraft(payload) {
     files: Array.isArray(payload.files) ? payload.files : undefined,
     draft_id: payload.draft_id || undefined,
     entry: payload.entry || undefined,
-    // Default ON — same for Owner PC + Staff PC; server trusts bridge token.
-    assistant: assistantEnabled,
+    // Only allowlisted sender gets staff assistant mode (never all chats).
+    assistant: staffChat,
   };
   const response = await fetch(url, {
     method: 'POST',
@@ -1475,16 +1629,37 @@ async function startReader() {
         console.log('\n—— waiting for scan ——\n');
       }
       if (connection === 'open') {
+        const linkedMe = String(jidToNumber(sock?.user?.id) || '').replace(/\D/g, '');
+        let linkOk = true;
+        let linkDetail = allowOwnerAlerts
+          ? 'Linked. Inbound → drafts. Owner alerts enabled (allowlist only).'
+          : 'Leave this PC on. New inbound texts become drafts for staff approval.';
+        if (assistantWhatsapp) {
+          console.log(
+            `[whatsapp-web-reader] AI WhatsApp (must be linked): ${assistantWhatsapp} | this session: ${linkedMe || 'unknown'}`,
+          );
+          if (linkedMe && !phonesMatch(linkedMe, assistantWhatsapp)) {
+            linkOk = false;
+            linkDetail = `Wrong WhatsApp linked (${linkedMe}). Unlink, then scan QR with +${assistantWhatsapp} only.`;
+            console.error(`[whatsapp-web-reader] ${linkDetail}`);
+          } else if (linkedMe) {
+            linkDetail = `AI assistant +${assistantWhatsapp} linked. Staff on allowlist may ask / draft / SAVE.`;
+          }
+        }
         setLive({
-          status: 'linked',
-          detail: allowOwnerAlerts
-            ? 'Linked. Inbound → drafts. Owner alerts enabled (allowlist only).'
-            : 'Leave this PC on. New inbound texts become drafts for staff approval.',
+          status: linkOk ? 'linked' : 'error',
+          detail: linkDetail,
           qrDataUrl: null,
         });
         console.log('[whatsapp-web-reader] linked. Listening for inbound text…');
+        console.log(
+          `[whatsapp-web-reader] authorized staff (can talk to AI): ${assistantPhones.join(', ') || '(none — replies will not send)'}`,
+        );
         console.log('[whatsapp-web-reader] Ctrl+C to stop. PC must stay online.');
-        startOwnerAlertLoop();
+        console.log(
+          '[whatsapp-web-reader] Tip: staff message FROM allowlisted phone TO the AI WhatsApp. Watch for [inbound] lines.',
+        );
+        if (linkOk) startOwnerAlertLoop();
       }
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -1538,6 +1713,13 @@ async function startReader() {
           )
             continue;
 
+          // Never ingest our own outbound (or phone-app echoes). That was the
+          // cross-number reply loop: our "What do you need?" matched free-chat
+          // and got posted again → another send → forever.
+          if (msg.key?.fromMe) continue;
+          const rawMsgId = msg.key?.id;
+          if (rawMsgId && recentlySentIds.has(rawMsgId)) continue;
+
           let text = extractText(msg).trim();
           const pdfDoc = isPdfDocumentMessage(msg);
           const imageMedia = isImageMediaMessage(msg);
@@ -1547,13 +1729,30 @@ async function startReader() {
           const id = messageKeyId(msg);
           if (processed.processed[id]) continue;
 
-          const chatName = await resolveChatName(sock, remoteJid);
-          const fromNumber =
-            jidToNumber(msg.key?.participant || remoteJid) || undefined;
+          // Drop echoes of our own assistant text (multi-helper / sync stubs).
+          if (
+            text &&
+            !pdfDoc &&
+            !imageMedia &&
+            !audioMedia &&
+            isEchoOfOurRecentReply(text)
+          ) {
+            processed.processed[id] = new Date().toISOString();
+            await saveState(processed);
+            console.log('[skip] echo of our recent assistant reply');
+            continue;
+          }
 
-          // Numbered menu picks (1–4) after opener.
+          const chatName = await resolveChatName(sock, remoteJid);
+          const fromNumber = resolveSenderPhone(msg, remoteJid);
+          console.log(
+            `[inbound] from=${fromNumber || 'UNKNOWN'} staff=${isAssistantPhone(fromNumber) ? 'yes' : 'no'} jid=${String(remoteJid).slice(0, 48)} text=${JSON.stringify(String(text || '').slice(0, 60))}`,
+          );
+
+          // Numbered menu picks (1–4) after opener — staff chats only.
           if (
             assistantEnabled &&
+            isAssistantPhone(fromNumber) &&
             !pdfDoc &&
             !imageMedia &&
             !audioMedia &&
@@ -1577,7 +1776,7 @@ async function startReader() {
             }
             if (pick === '1' || pick === '4') {
               try {
-                await sock.sendMessage(remoteJid, { text: reply });
+                await sendTrackedText(sock, remoteJid, reply);
               } catch (err) {
                 console.warn(
                   `[assistant] menu pick failed: ${err instanceof Error ? err.message : err}`,
@@ -1596,20 +1795,15 @@ async function startReader() {
             !audioMedia &&
             isAssistantGreetingText(text)
           ) {
-            const inbound = !msg.key?.fromMe;
-            const remoteDigits = jidToNumber(remoteJid);
-            const staffChat =
-              isAssistantPhone(fromNumber) ||
-              isAssistantPhone(remoteDigits) ||
-              !assistantPhones.length;
-            if (inbound || staffChat) {
+            const staffChat = isAssistantPhone(fromNumber);
+            if (staffChat) {
               processed.processed[id] = new Date().toISOString();
               await saveState(processed);
               const mem = getToneMemory(fromNumber);
               const opening = formatAssistantOpeningReply(text, mem);
               rememberToneHelp(fromNumber, opening.showedMenu);
               try {
-                await sock.sendMessage(remoteJid, { text: opening.text });
+                await sendTrackedText(sock, remoteJid, opening.text);
                 console.log(`[assistant] opener → ${chatName}`);
               } catch (err) {
                 console.warn(
@@ -1617,37 +1811,77 @@ async function startReader() {
                 );
               }
               setLive({
+                lastChat: chatName,
                 detail: `Listening. Replied in ${chatName}.`,
               });
               continue;
             }
+            console.log(
+              `[skip] greeting ignored — sender not on assistant_phones (from=${fromNumber || 'UNKNOWN'}). Add that number to config.json assistant_phones.`,
+            );
           }
 
           const skEarly = sessionKey(fromNumber);
-          const staffSide =
-            isAssistantPhone(fromNumber) || !assistantPhones.length;
-          const assistantOps = assistantEnabled && isAssistantOpsQuestion(text);
+          const staffSide = isAssistantPhone(fromNumber);
+          if (assistantEnabled && !staffSide && text && !pdfDoc && !imageMedia && !audioMedia) {
+            console.log(
+              `[skip] not on assistant allowlist (${fromNumber || 'unknown'}): ${text
+                .slice(0, 40)
+                .replace(/\s+/g, ' ')}`,
+            );
+          }
+          // Fast local answer for "is booking created?" when we already have a session.
+          if (
+            assistantEnabled &&
+            staffSide &&
+            !pdfDoc &&
+            !imageMedia &&
+            !audioMedia &&
+            isStaffStatusQuestion(text)
+          ) {
+            processed.processed[id] = new Date().toISOString();
+            await saveState(processed);
+            const open = skEarly ? assistantSessions.get(skEarly) : null;
+            const reply = open?.draft_id
+              ? [
+                  'Not a live booking yet.',
+                  `I already drafted it${open.title ? ` (${open.title})` : ''}.`,
+                  'Open Bookings → Drafts, review, then reply SAVE here to post live, or finish in Padova.',
+                ].join('\n')
+              : [
+                  'No open draft in this chat yet.',
+                  'Send the reservation PDF/screenshot (or paste confirmation text) and I will draft it, then you can SAVE.',
+                ].join('\n');
+            try {
+              await sendTrackedText(sock, remoteJid, reply);
+              console.log(`[assistant] status → ${chatName}`);
+            } catch (err) {
+              console.warn(
+                `[assistant] status failed: ${err instanceof Error ? err.message : err}`,
+              );
+            }
+            setLive({ detail: `Listening. Answered status in ${chatName}.` });
+            continue;
+          }
+          const assistantOps =
+            assistantEnabled && staffSide && isAssistantOpsQuestion(text);
           const assistantGuide =
             assistantEnabled && staffSide && isAssistantGuideQuestion(text);
           const assistantFree =
-            assistantEnabled && staffSide && isAssistantFreeChat(text);
+            assistantEnabled &&
+            staffSide &&
+            (isAssistantFreeChat(text) || isStaffAnyChat(text));
+          // Follow-ups only from the same allowlisted sender with that phone's session.
           const assistantFollowUp =
-            (isAssistantPhone(fromNumber) &&
-              Boolean(skEarly && assistantSessions.get(skEarly)) &&
+            staffSide &&
+            ((Boolean(skEarly && assistantSessions.get(skEarly)) &&
               /^(save|yes|confirm|cancel|stop|no)\b/i.test(text.trim())) ||
-            (isAssistantPhone(fromNumber) &&
-              /^(customer|traveler|product|travel\s*start|travel\s*end|sale|price|booked\s*through|where\s*booked|cost\s*notes?|route|location)\s*[:\-]?\s+/im.test(
-                text,
-              )) ||
-            (assistantEnabled &&
-              Boolean(skEarly && assistantSessions.get(skEarly)) &&
-              /^(save|yes|confirm|cancel|stop|no)\b/i.test(text.trim())) ||
-            (assistantEnabled &&
               /^(customer|traveler|product|travel\s*start|travel\s*end|sale|price|booked\s*through|where\s*booked|cost\s*notes?|route|location)\s*[:\-]?\s+/im.test(
                 text,
               ));
 
           // Text-only: skip chatter unless media, staff follow-up, desk Q&A, guide, or free chat.
+          // Allowlisted staff never get a silent ignore on short chat.
           if (
             !pdfDoc &&
             !imageMedia &&
@@ -1780,12 +2014,31 @@ async function startReader() {
                       result?.live_booking ? '✅' : '📝',
                     );
                   }
-                  if (result?.assistant_reply_text) {
+                  const staffBurst = isAssistantPhone(batch.fromNumber);
+                  if (result?.assistant && result.id && result.entry && staffBurst) {
+                    rememberAssistantSession(
+                      batch.fromNumber,
+                      result.id,
+                      result.entry,
+                      result.title || '',
+                    );
+                  }
+                  let burstReply = result?.assistant_reply_text || null;
+                  if (!burstReply && staffBurst && (result?.id || result?.draft?.id)) {
+                    burstReply = [
+                      'Draft saved (not live yet).',
+                      result?.title ? `Title: ${result.title}` : '',
+                      'Review in Bookings → Drafts, then reply SAVE here to post live.',
+                    ]
+                      .filter(Boolean)
+                      .join('\n');
+                  }
+                  if (burstReply) {
                     await sendAssistantReply(
                       sock,
                       remoteJid,
                       batch.fromNumber,
-                      result.assistant_reply_text,
+                      burstReply,
                     );
                   }
                   setLive({
@@ -1854,41 +2107,52 @@ async function startReader() {
 
           if (result?.assistant) {
             if (result.live_booking) {
+              // Clear only THIS staff phone's session — never wipe/share others.
               if (sk) assistantSessions.delete(sk);
-              for (const phone of assistantPhones.length ? assistantPhones : ownerPhones) {
-                const psk = sessionKey(phone);
-                if (psk) assistantSessions.delete(psk);
-              }
-            } else if (result.id && result.entry) {
+            } else if (result.id && result.entry && isAssistantPhone(fromNumber)) {
               rememberAssistantSession(
+                fromNumber,
                 result.id,
                 result.entry,
                 result.title || openSession?.title || '',
               );
-              if (sk && isAssistantPhone(fromNumber)) {
-                assistantSessions.set(sk, {
-                  draft_id: String(result.id),
-                  entry: result.entry,
-                  title: result.title || openSession?.title || '',
-                });
-              }
             }
           }
 
-          if (result?.assistant_reply_text) {
+          let replyText = result?.assistant_reply_text || null;
+          // Always confirm to allowlisted staff after a draft — never leave only a 📝 reaction.
+          if (!replyText && staffSide && (result?.id || result?.draft?.id)) {
+            const draftId = result?.draft?.id || result?.id;
+            replyText = [
+              'Draft saved (not live yet).',
+              result?.title ? `Title: ${result.title}` : '',
+              'Review in Bookings → Drafts, then reply SAVE here to post live, or finish in Padova.',
+              draftId ? `Draft id: ${draftId}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n');
+          }
+          if (replyText) {
             try {
-              await sendAssistantReply(
-                sock,
-                msg.key.remoteJid,
-                fromNumber,
-                result.assistant_reply_text,
-              );
+              await sendAssistantReply(sock, msg.key.remoteJid, fromNumber, replyText);
             } catch (assistErr) {
               console.error(
                 `[assistant] reply failed: ${
                   assistErr instanceof Error ? assistErr.message : assistErr
                 }`,
               );
+            }
+          } else if (staffSide && text) {
+            // Last resort: never ignore allowlisted staff questions.
+            try {
+              await sendAssistantReply(
+                sock,
+                msg.key.remoteJid,
+                fromNumber,
+                'I got that. Ask me pending work, where drafts are, or send a reservation file and I will draft it.',
+              );
+            } catch {
+              /* ignore */
             }
           }
 

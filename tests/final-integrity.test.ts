@@ -29,6 +29,12 @@ test('Quick Paste protocol retains unknowns, exact eligible matches, whole point
   const party = { id: randomUUID(), name: 'Delta', kind: 'company', roles: ['issuer'] };
   assert.equal(exactEligibleMatch([party], 'Delta', 'airline'), undefined);
   assert.equal(eligibleParty({ ...party, roles: ['supplier'] }, 'airline'), false);
+  assert.equal(eligibleParty({ kind: 'company', roles: ['seller'] }, 'seller'), true);
+  assert.equal(eligibleParty({ kind: 'company', roles: ['source'] }, 'seller'), true);
+  assert.equal(eligibleParty({ kind: 'company', roles: ['supplier'] }, 'seller'), true);
+  assert.equal(eligibleParty({ kind: 'supplier', roles: [] }, 'seller'), true);
+  assert.equal(eligibleParty({ kind: 'company', roles: ['partner'] }, 'seller'), false);
+  assert.equal(eligibleParty({ kind: 'person', roles: ['customer'] }, 'seller'), false);
   assert.equal(
     exactEligibleMatch(
       [

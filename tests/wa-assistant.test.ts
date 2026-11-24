@@ -11,10 +11,12 @@ import {
   isAssistantGuideQuestion,
   isAssistantOpsQuestion,
   isWaAssistantPhone,
+  isWaAssistantRequest,
   mergeAssistantFields,
   parseAssistantStaffReply,
   stampAssistantDraftEntry,
 } from '../src/lib/wa-assistant';
+import { formatStaffFactReply } from '../src/lib/wa-staff-chat';
 
 describe('wa-assistant staff Q&A', () => {
   it('parses SAVE / CANCEL / labeled and plain fields', () => {
@@ -66,11 +68,17 @@ describe('wa-assistant staff Q&A', () => {
     assert.equal(isAssistantGreetingText('hi'), true);
     assert.equal(isAssistantOpsQuestion('anything pending?'), true);
     assert.equal(isAssistantOpsQuestion('give me a full report'), true);
+    assert.equal(isAssistantOpsQuestion('is booking created?'), true);
+    assert.equal(isAssistantOpsQuestion('did you create the booking'), true);
     assert.equal(isAssistantGuideQuestion('where are drafts?'), true);
     assert.equal(isAssistantFreeChat('can you walk me through a new booking?'), true);
     assert.equal(isAssistantFollowUpText('SAVE'), true);
     process.env.PADOVA_WA_ASSISTANT_PHONES = '15550109999';
     assert.equal(isWaAssistantPhone('+1 555-010-9999'), true);
+    assert.equal(isWaAssistantRequest('+1 555-010-9999', { assistant: true }), true);
+    // assistant=true alone must NOT unlock non-allowlisted numbers (loop fix).
+    assert.equal(isWaAssistantRequest('+63 947 429 8020', { assistant: true }), false);
+    assert.equal(isWaAssistantRequest('639474298020', { assistant: true }), false);
   });
 
   it('greets and briefs without AI-looking copy', () => {
@@ -86,5 +94,27 @@ describe('wa-assistant staff Q&A', () => {
     });
     assert.match(busy, /desk/i);
     assert.doesNotMatch(busy, /\u2014/);
+  });
+
+  it('answers booking-created from draft facts', () => {
+    const withDraft = formatStaffFactReply({
+      question: 'is booking created?',
+      as_of: '2026-11-23',
+      counts: { 'Open draft': 1 },
+      items: [{ kind: 'Open draft', title: 'St Regis', urgency: 'open' }],
+      openDraft: { id: 'd1', title: 'St Regis Rome' },
+    });
+    assert.match(withDraft, /Not a live booking/i);
+    assert.match(withDraft, /St Regis Rome/);
+    assert.doesNotMatch(withDraft, /I can help with/i);
+
+    const noDraft = formatStaffFactReply({
+      question: 'is booking created?',
+      as_of: '2026-11-23',
+      counts: {},
+      items: [],
+      openDraft: null,
+    });
+    assert.match(noDraft, /do not see an open draft/i);
   });
 });

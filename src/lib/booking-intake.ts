@@ -18,6 +18,10 @@ import {
   extractBookingPasteWithClaude,
 } from './claude-intake';
 import { applyIntakeCaptureToEntry, assessIntakeCapture } from './intake-confidence';
+import {
+  intakeReservationBlockReason,
+  isOperationalTravelNoise,
+} from './booking-message-detect';
 
 export {
   csvToIntakeBlocks,
@@ -199,8 +203,16 @@ export async function buildIntakeDraft(input: {
   let aiProviderName: 'openai' | 'anthropic' | undefined;
   let aiError: string | undefined;
   let aiSkipped: string | undefined;
+  const reservationBlock = intakeReservationBlockReason(
+    `${input.subject || ''}\n${redacted}`.trim(),
+  );
+  const notBookingConfirmation =
+    Boolean(reservationBlock) || isOperationalTravelNoise(`${input.subject || ''}\n${redacted}`);
+  // Never let AI invent Product/Route/PNR from change notices or reminders.
+  if (notBookingConfirmation && redacted.trim()) aiSkipped = 'not_booking_confirmation';
   // AI enrich for email/WA/instinct free-form (OpenAI or Claude from server key).
   const tryAi =
+    !notBookingConfirmation &&
     !input.skipAi &&
     aiIntakeEnabled() &&
     Boolean(redacted.trim()) &&
@@ -208,8 +220,8 @@ export async function buildIntakeDraft(input: {
       input.source === 'whatsapp' ||
       input.source === 'instinct' ||
       String(process.env.PADOVA_AI_INTAKE_ALL_SOURCES || '').trim() === '1');
-  if (input.skipAi && redacted.trim()) aiSkipped = 'cron_time_budget';
-  if (tryAi || (input.skipAi && redacted.trim())) {
+  if (input.skipAi && redacted.trim() && !aiSkipped) aiSkipped = 'cron_time_budget';
+  if ((tryAi || (input.skipAi && redacted.trim())) && !notBookingConfirmation) {
     let db: Awaited<ReturnType<typeof import('./db').database>> | null = null;
     try {
       const { database } = await import('./db');
@@ -248,20 +260,28 @@ export async function buildIntakeDraft(input: {
     }
   }
   const preview = parseQuickPaste(
-    workingText || 'Notes: Intake with no extractable Field: Value lines',
+    notBookingConfirmation
+      ? redacted || 'Notes: Not a new booking confirmation'
+      : workingText || 'Notes: Intake with no extractable Field: Value lines',
   );
   // Free-form hotel enquiry / purchase mail rarely has Field: Value — fill empty slots only.
-  const looseHints = inferLooseIntakeHints({
-    subject: input.subject,
-    text: redacted,
-    from_address: input.fromAddress,
-  });
-  const fields = mergeLooseIntakeHints(preview.fields as Record<string, unknown>, looseHints);
+  // Skip loose invent for change notices / reminders (prevents fake Product/Route/PNR).
+  const looseHints = notBookingConfirmation
+    ? {}
+    : inferLooseIntakeHints({
+        subject: input.subject,
+        text: redacted,
+        from_address: input.fromAddress,
+      });
+  const fields = notBookingConfirmation
+    ? (preview.fields as Record<string, unknown>)
+    : mergeLooseIntakeHints(preview.fields as Record<string, unknown>, looseHints);
   const issues = [
     ...preview.issues,
     ...preview.unknown.map((u) => `${u.label}: ${u.value}`),
     ...(extract_note ? [extract_note] : []),
     ...(aiError ? [`Claude extract note: ${aiError}`] : []),
+    ...(reservationBlock ? [reservationBlock] : []),
   ];
   if (!redacted.trim() && !filename)
     issues.push('Provide plain text or a text file; intake creates a draft only');
@@ -282,7 +302,7 @@ export async function buildIntakeDraft(input: {
             ? `${product} intake`
             : 'Booking intake draft'
           : filename
-            ? `Unread file — paste text instead`
+            ? `Unread file, paste text instead`
             : 'Booking intake draft');
 
   const provenance: IntakeProvenance = {

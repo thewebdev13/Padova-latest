@@ -67,7 +67,7 @@ function airportToken(raw: string): string {
 
 function splitRouteParts(raw: string): string[] {
   return raw
-    .split(/\s*(?:→|–|—|->|-|\bto\b)\s*/i)
+    .split(/\s*(?:→|–| - |->|-|\bto\b)\s*/i)
     .map((p) => p.trim())
     .filter(Boolean);
 }

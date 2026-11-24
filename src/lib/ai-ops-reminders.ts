@@ -150,7 +150,7 @@ export async function collectOpsReminders(db: SQL, actor: Actor): Promise<{
         kind: capture?.needs_owner_alert ? 'Intake needs review' : 'Open draft',
         title: String(d.title || d.id),
         detail: capture?.needs_owner_alert
-          ? `Missing: ${missing || 'review fields'} — human check before trusting AI`
+          ? `Missing: ${missing || 'review fields'}, human check before trusting AI`
           : 'Intake draft not yet saved as a live booking',
         urgency: capture?.needs_owner_alert ? 'missing_info' : 'open',
       });
@@ -171,7 +171,7 @@ export async function collectOpsReminders(db: SQL, actor: Actor): Promise<{
     ...top.map(
       (i) =>
         `- [${i.urgency}] ${i.title}${i.due_on ? ` (due ${i.due_on})` : ''}${
-          i.detail ? ` — ${i.detail}` : ''
+          i.detail ? `, ${i.detail}` : ''
         }`,
     ),
     items.length > top.length ? `…and ${items.length - top.length} more.` : '',

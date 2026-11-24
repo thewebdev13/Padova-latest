@@ -92,6 +92,41 @@ export function assessIntakeCapture(input: {
   };
 }
 
+const MISSING_FIELD_LABELS: Record<string, string> = {
+  product: 'Product',
+  travel_start: 'Travel date',
+  travel_end: 'Return date',
+  traveler: 'Traveler',
+  customer: 'Customer',
+  customer_or_traveler: 'Customer or traveler',
+  route: 'Route',
+  location: 'Location / hotel',
+  confirmation: 'Confirmation #',
+  pnr: 'PNR',
+  sale: 'Sale amount',
+};
+
+/** Staff-facing labels for intake missing keys (never show snake_case in UI). */
+export function formatIntakeMissingLabel(key: string): string {
+  const raw = String(key || '').trim();
+  if (!raw) return '';
+  if (MISSING_FIELD_LABELS[raw]) return MISSING_FIELD_LABELS[raw];
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function formatIntakeMissingSummary(missing: unknown): string {
+  if (!Array.isArray(missing) || !missing.length) return '';
+  const labels = missing
+    .map((m) => formatIntakeMissingLabel(String(m)))
+    .filter(Boolean);
+  if (!labels.length) return '';
+  if (labels.length === 1) return `Still need: ${labels[0]}`;
+  if (labels.length === 2) return `Still need: ${labels[0]} and ${labels[1]}`;
+  return `Still need: ${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`;
+}
+
 /** Short Owner WhatsApp text — never invents amounts. */
 export function formatIntakeOwnerAlert(input: {
   channel: string;
@@ -105,7 +140,7 @@ export function formatIntakeOwnerAlert(input: {
   reason?: string;
 }): string {
   const lines = [
-    'Padova intake alert (Owner only — not a customer reply)',
+    'Padova intake alert (Owner only, not a customer reply)',
     `Channel: ${input.channel}`,
     input.chat_or_mailbox ? `From: ${input.chat_or_mailbox}` : '',
     `Title: ${input.title}`,
@@ -152,14 +187,14 @@ export function formatWhatsAppIntakeStatusReply(input: {
       sizeIssue
         ? 'Padova received your file but it was too large to process in one message. Please resend a smaller PDF/photo, or paste the confirmation text.'
         : 'Padova received your message but could not file it automatically.',
-      'Staff will review. Please do not invent or resend money figures — Unknown stays Unknown until verified.',
+      'Staff will review. Please do not invent or resend money figures, Unknown stays Unknown until verified.',
     ].join('\n');
   }
   if (input.live && input.booking_code) {
     return [
       `Padova filed this in the system as booking ${input.booking_code}.`,
       input.ai_generated
-        ? 'Recorded as AI-assisted intake — staff will verify money and parties before treating amounts as final.'
+        ? 'Recorded as AI-assisted intake, staff will verify money and parties before treating amounts as final.'
         : 'Staff will verify money and parties before treating amounts as final.',
     ].join('\n');
   }
@@ -167,13 +202,13 @@ export function formatWhatsAppIntakeStatusReply(input: {
     return [
       'Padova filed this in the system as a live booking.',
       input.ai_generated
-        ? 'Recorded as AI-assisted intake — staff will verify money and parties.'
+        ? 'Recorded as AI-assisted intake, staff will verify money and parties.'
         : 'Staff will verify money and parties.',
     ].join('\n');
   }
   return [
     'Padova saved this as a draft for staff review (not final books yet).',
-    input.ai_generated ? 'AI assisted the extract — amounts stay Unknown until verified.' : '',
+    input.ai_generated ? 'AI assisted the extract, amounts stay Unknown until verified.' : '',
   ]
     .filter(Boolean)
     .join('\n');

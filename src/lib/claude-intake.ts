@@ -240,7 +240,7 @@ export async function extractBookingPasteWithClaude(
       model,
       provider,
       error: aborted
-        ? `AI timed out after ${AI_FETCH_TIMEOUT_MS / 1000}s — draft kept for human review`
+        ? `AI timed out after ${AI_FETCH_TIMEOUT_MS / 1000}s, draft kept for human review`
         : e instanceof Error
           ? e.message
           : 'AI request failed',

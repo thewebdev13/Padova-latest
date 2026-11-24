@@ -86,7 +86,7 @@ export function bookingCommissionsEmptyMessage(opts: {
 }): string | null {
   if (opts.hasRecordedReceivable || opts.hasReferral || opts.hasRefund) return null;
   if (opts.hasExpectedOnBooking)
-    return 'No recorded receivable or receipt yet — expected amounts above are not received. Use Add commission to post.';
+    return 'No recorded receivable or receipt yet, expected amounts above are not received. Use Add commission to post.';
   return 'No recorded commission receivables, referrals, or refunds yet.';
 }
 

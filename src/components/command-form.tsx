@@ -28,6 +28,15 @@ import {
   parseList,
   decimalUnits,
 } from '@/lib/entry-options';
+import {
+  cancelScopeFieldErrors,
+  isEmptyFieldValue,
+  mapErrorMessageToFields,
+  requiredFieldMessage,
+  type FieldErrorMap,
+} from '@/lib/form-field-errors';
+import { FieldError, FormAlert, ReqMark } from './form-feedback';
+import { useConfirmDialog } from './confirm-dialog';
 type R = Record<string, any>;
 const pretty = (v: string) => v.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 const money = (v: any) =>
@@ -197,7 +206,7 @@ const fields: Record<string, Field[]> = {
     }),
     F('restrictions', 'Usage restrictions', 'textarea', { full: true }),
     F('rebate_bps', 'Optional expected rebate (%)', 'percent'),
-    F('redemption_cents_numerator', 'Optional redemption quote — USD value', 'money'),
+    F('redemption_cents_numerator', 'Optional redemption quote (USD)', 'money'),
     F('redemption_points_denominator', 'Points represented by that quote', 'integer', {
       help: 'For example, $300 for 20,000 points. Reference value is not Padova cost or earned profit.',
     }),
@@ -315,7 +324,7 @@ const fields: Record<string, Field[]> = {
     }),
     F('portal_price', 'Portal cash price (USD)', 'money'),
     F('reference_price', 'Reference / online price (USD)', 'money'),
-    F('rate_cents_numerator', 'Actual redemption quote — USD value', 'money'),
+    F('rate_cents_numerator', 'Actual redemption quote (USD)', 'money'),
     F('rate_points_denominator', 'Actual points represented by the quote', 'integer'),
     F('restrictions', 'Usage restrictions / terms', 'textarea', { full: true }),
   ],
@@ -325,15 +334,21 @@ const fields: Record<string, Field[]> = {
       required: true,
     }),
     booking,
-    F('source_asset_id', 'Sending points account', 'select', { source: 'assets' }),
-    F('target_asset_id', 'Receiving points account', 'select', { source: 'assets' }),
+    F('source_asset_id', 'Sending points account', 'select', {
+      source: 'assets',
+      required: true,
+    }),
+    F('target_asset_id', 'Receiving points account', 'select', {
+      source: 'assets',
+      required: true,
+    }),
     F('funding_component_id', 'Original owned-points use', 'select', {
       source: 'fundingComponents',
     }),
-    F('quantity_sent', 'Whole points sent', 'integer'),
+    F('quantity_sent', 'Whole points sent', 'integer', { required: true }),
     F('quantity_expected', 'Whole points expected', 'integer', { required: true }),
-    F('ratio_numerator', 'Transfer ratio — received units', 'integer'),
-    F('ratio_denominator', 'Transfer ratio — sending units', 'integer'),
+    F('ratio_numerator', 'Transfer ratio (received units)', 'integer'),
+    F('ratio_denominator', 'Transfer ratio (sending units)', 'integer'),
     F('bonus_bps', 'Transfer bonus (%)', 'percent'),
     F('fees', 'Actual transfer fee (USD)', 'money'),
     F('due_on', 'Expected receipt date', 'date'),
@@ -496,7 +511,7 @@ const fields: Record<string, Field[]> = {
     }),
     F('roles', 'Roles', 'roles', {
       full: true,
-      help: 'One canonical person can have many roles: traveler, payer, seller, referrer.',
+      help: 'Pick every hat this contact wears. One contact can be traveler, payer, seller, and more.',
     }),
   ],
   relationship: [
@@ -664,20 +679,23 @@ const fields: Record<string, Field[]> = {
     F('kind', 'Funding type', 'choice', {
       options: FUNDING_KINDS,
       required: true,
-      help: 'Choose the value used to fund this booking. Select the specific card/account below; never enter a full card number.',
+      help: 'How Padova paid. Never enter a full card number.',
     }),
     assetField,
     F('face_amount', 'Face amount (USD) or points used', 'quantity', { required: true }),
-    F('cost', 'Cash/card cost (USD)', 'money', {
-      help: 'Ignored for owned assets: exact lot cost basis is calculated automatically.',
+    F('cost', 'Actual cost (USD)', 'money', {
+      help: 'For card/cash/bank enter what Padova paid. Owned assets use lot cost automatically.',
     }),
     F('confirm_cost', 'This completes the known Padova cost', 'checkbox', {
-      help: 'Uncheck if more costs/funding are still missing. Unknown profit remains pending until the cost is confirmed.',
+      full: true,
+      help: 'Uncheck if more costs are still missing. Profit stays pending until cost is confirmed.',
     }),
-    party('seller_id', 'Seller / source', false),
+    party('seller_id', 'Purchased From / payee', false),
     F('reference', 'Reference'),
     F('account_id', 'Reusable payment account', 'select', { source: 'paymentAccounts' }),
-    F('settled', 'Supplier already paid — post the linked payment automatically', 'checkbox'),
+    F('settled', 'Supplier already paid (also post the linked payment)', 'checkbox', {
+      full: true,
+    }),
     dateField,
   ],
   sell_asset: [
@@ -817,11 +835,12 @@ const fields: Record<string, Field[]> = {
     booking,
     F('travel_component_id', 'Only this flight / stay (blank means whole booking)', 'select', {
       source: 'travelComponents',
-      help: 'A component cancellation preserves the other active travel and the booking.',
+      help: 'Leave blank to cancel the whole booking. Do not also pick a traveler, choose one scope only.',
     }),
     party('traveler_id', 'Only this traveler (optional)', false),
     F('funding_component_id', 'Original funding component', 'select', {
       source: 'fundingComponents',
+      help: 'Required when a supplier refund is expected for owned points / cost.',
     }),
     F('supplier_expected', 'Supplier refund expected (USD or points units)', 'quantity', {
       required: true,
@@ -1050,7 +1069,7 @@ const titles: Record<string, string> = {
 };
 const actionHelp: Record<string, string> = {
   payment: 'Record money that actually moved. Allocate this one payment to the bookings it covers.',
-  fund: 'Record what this booking cost Padova and who supplied it. Seller payments settle this cost.',
+  fund: 'Record Padova’s acquisition cost and who was paid. Card/cash need Actual cost + Purchased From; vouchers/points use the asset lot.',
   fulfill: 'Record the cost, points or voucher used for this travel item.',
   revise: 'Update this booking. Existing costs and payments remain in its history.',
   charge:
@@ -1095,6 +1114,16 @@ export default function CommandForm(props: Parameters<typeof LegacyCommandForm>[
   if (props.config.kind === 'commission') return <CommissionBundleForm {...props} />;
   return <LegacyCommandForm {...props} />;
 }
+const DESTRUCTIVE_KINDS = new Set([
+  'cancel',
+  'expire_asset',
+  'reverse_fulfillment',
+  'reverse_referral',
+  'reverse_referral_payment',
+  'reverse_asset',
+  'correct_payment',
+]);
+
 function LegacyCommandForm({
   config,
   state,
@@ -1113,6 +1142,7 @@ function LegacyCommandForm({
   extraFields?: ReactNode;
 }) {
   const dialog = useRef<HTMLFormElement>(null);
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirmDialog();
   const [newContacts, setNewContacts] = useState<R[]>([]);
   const creationKey = useRef('');
   const createInline = (kind: 'customer' | 'traveler' | 'seller') => {
@@ -1135,6 +1165,8 @@ function LegacyCommandForm({
   const busyRef = useRef(false);
   closeRef.current = onClose;
   const [error, setError] = useState(''),
+    [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({}),
+    [attempted, setAttempted] = useState(false),
     [busy, setBusy] = useState(false),
     [travelerSearch, setTravelerSearch] = useState(''),
     [vals, setVals] = useState<R>(() => ({
@@ -1172,6 +1204,10 @@ function LegacyCommandForm({
       nationality: config.defaults.preferences?.nationality ?? '',
       redress: config.defaults.preferences?.redress ?? '',
       ...config.defaults,
+      // Cancel scope is exclusive: travel-component cancel must not also send traveler_id.
+      ...(config.kind === 'cancel' && config.defaults.travel_component_id
+        ? { traveler_id: '' }
+        : {}),
       ...(config.kind === 'revise_referral'
         ? {
             fixed_amount: (Number(config.defaults.fixed_amount ?? 0) / 100).toFixed(2),
@@ -1610,13 +1646,19 @@ function LegacyCommandForm({
         config.defaults[f.key]
       )
         return false;
-      if (
-        config.kind === 'fund' &&
-        f.key === 'cost' &&
-        selectedAsset &&
-        selectedAsset.ownership !== 'External'
-      )
-        return false;
+      if (config.kind === 'fund') {
+        const kind = String(vals.kind ?? '').trim();
+        const cashFund = ['Card', 'Cash', 'Bank', 'Seller-funded reservation'].includes(kind);
+        // Hide Travel asset until a non-cash funding type is chosen (keeps the row clean).
+        if (f.key === 'asset_id') return Boolean(kind) && !cashFund;
+        if (f.key === 'face_amount') return Boolean(kind) && !cashFund;
+        if (f.key === 'cost') {
+          if (!kind) return true;
+          if (cashFund) return true;
+          if (selectedAsset && selectedAsset.ownership !== 'External') return false;
+          return true;
+        }
+      }
       if (config.kind === 'receive_refund') {
         if (['method', 'account_id'].includes(f.key)) return vals.form === 'cash';
         if (
@@ -1686,6 +1728,54 @@ function LegacyCommandForm({
           label:
             f.key === 'departure_local' ? 'Departure time (optional)' : 'Arrival time (optional)',
         };
+      if (config.kind === 'expected_event') {
+        if (
+          ['source_asset_id', 'target_asset_id', 'quantity_sent'].includes(f.key) &&
+          vals.kind === 'Points transfer'
+        )
+          return { ...f, required: true };
+        if (
+          ['booking_id', 'funding_component_id'].includes(f.key) &&
+          vals.kind === 'Points rebate'
+        )
+          return { ...f, required: true };
+      }
+      if (config.kind === 'cancel' && f.key === 'traveler_id')
+        return {
+          ...f,
+          help: 'Whole-booking traveler cancel only. Do not use together with a flight/stay above, clear one.',
+        };
+      if (config.kind === 'fund') {
+        const cashFund = ['Card', 'Cash', 'Bank', 'Seller-funded reservation'].includes(
+          String(vals.kind ?? ''),
+        );
+        if (f.key === 'cost' && cashFund)
+          return {
+            ...f,
+            required: true,
+            label: 'Actual cost (USD)',
+            help: 'What Padova paid the supplier for this booking.',
+          };
+        if (f.key === 'face_amount' && !cashFund && selectedAsset) {
+          const points = assetUnit(selectedAsset) !== 'money';
+          return {
+            ...f,
+            label:
+              selectedAsset.unit === 'count'
+                ? 'Whole certificates used'
+                : points
+                  ? 'Whole points used'
+                  : 'Face amount (USD)',
+          };
+        }
+        if (f.key === 'seller_id')
+          return {
+            ...f,
+            label: cashFund
+              ? 'Purchased From / payee'
+              : 'Purchased From / payee (optional override)',
+          };
+      }
       return f;
     })
     .map((f) =>
@@ -1739,9 +1829,68 @@ function LegacyCommandForm({
     )
       setAllocs((rows) => rows.map((a) => ({ ...a, amount: value })));
     if (key === 'direction' && value !== vals.direction) setAllocs([]);
-    setVals((v) => ({
+    if (key === 'kind' && config.kind === 'fund') {
+      const cashFund = ['Card', 'Cash', 'Bank', 'Seller-funded reservation'].includes(
+        String(value ?? ''),
+      );
+      if (cashFund) {
+        setVals((prev) => ({ ...prev, kind: value, asset_id: '', face_amount: '' }));
+        setFieldErrors((prev) => {
+          if (!Object.keys(prev).length) return prev;
+          const next = { ...prev };
+          delete next.kind;
+          delete next.asset_id;
+          delete next.face_amount;
+          return next;
+        });
+        return;
+      }
+    }
+    setFieldErrors((prev) => {
+      if (key === 'kind' && config.kind === 'expected_event') return {};
+      if (!Object.keys(prev).length) return prev;
+      const next = { ...prev };
+      delete next[key];
+      if (['travel_component_id', 'traveler_id'].includes(key)) {
+        delete next.travel_component_id;
+        delete next.traveler_id;
+      }
+      // Clearing either transfer account side clears the “must differ” pair once they differ.
+      const pairKeys = [
+        ['source_asset_id', 'target_asset_id'],
+        ['sending_asset_id', 'receiving_asset_id'],
+      ] as const;
+      for (const [a, b] of pairKeys) {
+        if (key !== a && key !== b) continue;
+        const nextA = key === a ? value : vals[a];
+        const nextB = key === b ? value : vals[b];
+        if (nextA && nextB && nextA !== nextB) {
+          delete next[a];
+          delete next[b];
+        }
+      }
+      return next;
+    });
+    setVals((v) => {
+      const clearIneligibleSeller =
+        config.kind === 'payment' &&
+        key === 'direction' &&
+        value === 'supplier' &&
+        v.party_id &&
+        (() => {
+          const party = (state.parties ?? []).find((p: R) => p.id === v.party_id);
+          return party ? !eligibleParty(party, 'seller') : false;
+        })();
+      return {
       ...v,
       [key]: value,
+      ...(clearIneligibleSeller ? { party_id: '' } : {}),
+      ...(config.kind === 'cancel' && key === 'travel_component_id' && value
+        ? { traveler_id: '' }
+        : {}),
+      ...(config.kind === 'cancel' && key === 'traveler_id' && value
+        ? { travel_component_id: '' }
+        : {}),
       ...(config.kind === 'revise' &&
       v.product === 'Flight' &&
       key === 'travel_start' &&
@@ -1805,7 +1954,8 @@ function LegacyCommandForm({
       ...(key === 'travel_start' && (!v.travel_end || v.travel_end < value)
         ? { travel_end: value }
         : {}),
-    }));
+      };
+    });
   };
   const options = (f: Field) =>
     f.options
@@ -1966,10 +2116,92 @@ function LegacyCommandForm({
           vals.form === 'points' ||
           (config.kind === 'cancel' && component && refundQuantityUnit(component) !== 'money');
   };
+  const collectClientFieldErrors = (nextVals: R = vals): FieldErrorMap => {
+    const errors: FieldErrorMap = {};
+    for (const f of defs) {
+      if (!f.required || f.type === 'allocations' || f.type === 'travelers') continue;
+      if (isEmptyFieldValue(nextVals[f.key])) errors[f.key] = requiredFieldMessage(f.label);
+    }
+    if (
+      config.kind === 'expected_event' &&
+      nextVals.kind === 'Points transfer' &&
+      nextVals.source_asset_id &&
+      nextVals.target_asset_id &&
+      nextVals.source_asset_id === nextVals.target_asset_id
+    ) {
+      const msg = 'Sending and receiving accounts must be different';
+      errors.source_asset_id = msg;
+      errors.target_asset_id = msg;
+    }
+    if (
+      config.kind === 'transfer_asset' &&
+      nextVals.sending_asset_id &&
+      nextVals.receiving_asset_id &&
+      nextVals.sending_asset_id === nextVals.receiving_asset_id
+    ) {
+      const msg = 'Sending and receiving accounts must be different';
+      errors.sending_asset_id = msg;
+      errors.receiving_asset_id = msg;
+    }
+    if (
+      config.kind === 'expected_event' &&
+      nextVals.kind === 'Points transfer' &&
+      Boolean(nextVals.ratio_numerator) !== Boolean(nextVals.ratio_denominator)
+    ) {
+      const msg = 'Enter both parts of the transfer ratio';
+      if (!nextVals.ratio_numerator) errors.ratio_numerator = msg;
+      if (!nextVals.ratio_denominator) errors.ratio_denominator = msg;
+    }
+    if (config.kind === 'cancel') Object.assign(errors, cancelScopeFieldErrors(nextVals));
+    return errors;
+  };
+  const destructiveConfirm = async () => {
+    if (!DESTRUCTIVE_KINDS.has(config.kind)) return true;
+    if (config.kind === 'cancel') {
+      return askConfirm({
+        title: 'Cancel this booking?',
+        message:
+          'This records a cancellation and expected returns. It cannot be undone from this screen, continue only if you meant to cancel.',
+        confirmLabel: 'Yes, cancel booking',
+        cancelLabel: 'Keep booking',
+        tone: 'danger',
+      });
+    }
+    if (config.kind === 'expire_asset') {
+      return askConfirm({
+        title: 'Expire this asset?',
+        message: 'Expired points or credits stay in history. Continue only if the balance truly expired.',
+        confirmLabel: 'Yes, expire',
+        cancelLabel: 'Go back',
+        tone: 'danger',
+      });
+    }
+    if (config.kind.startsWith('reverse_') || config.kind === 'correct_payment') {
+      return askConfirm({
+        title: 'Confirm this reversal?',
+        message: 'This posts a reversing financial action with audit history. Continue only if you reviewed the amounts.',
+        confirmLabel: 'Yes, continue',
+        cancelLabel: 'Go back',
+        tone: 'danger',
+      });
+    }
+    return true;
+  };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    setAttempted(true);
+    const clientErrors = collectClientFieldErrors();
+    if (Object.keys(clientErrors).length) {
+      setFieldErrors(clientErrors);
+      setError('');
+      setBusy(false);
+      return;
+    }
+    const confirmed = await destructiveConfirm();
+    if (!confirmed) return;
     setBusy(true);
     setError('');
+    setFieldErrors({});
     try {
       const data: R = {};
       if (
@@ -2216,6 +2448,18 @@ function LegacyCommandForm({
           delete data[key];
         }
       }
+      if (config.kind === 'fund') {
+        const cashFund = ['Card', 'Cash', 'Bank', 'Seller-funded reservation'].includes(
+          String(data.kind ?? vals.kind ?? ''),
+        );
+        if (cashFund) {
+          delete data.asset_id;
+          if (data.cost === undefined) throw new Error('Enter the actual cost Padova paid');
+          data.face_amount = data.cost;
+        } else if (data.face_amount === undefined && data.cost !== undefined) {
+          data.face_amount = data.cost;
+        }
+      }
       if (config.kind === 'acquire_asset') {
         if (data.ownership === 'Customer') data.cost = 0;
         if (data.cost === undefined && data.purchase_percent !== undefined)
@@ -2300,6 +2544,12 @@ function LegacyCommandForm({
       if (['party', 'edit_party'].includes(config.kind)) {
         if (config.kind === 'party') data.kind = vals.kind;
         data.roles = parseList(vals.roles);
+        if (
+          config.defaults.entry_context === 'Suppliers' &&
+          !data.roles.includes('supplier')
+        ) {
+          data.roles = ['supplier', ...data.roles];
+        }
         data.details = {
           ...(config.defaults.details ?? {}),
           whatsapp: vals.whatsapp ?? config.defaults.details?.whatsapp ?? '',
@@ -2448,11 +2698,27 @@ function LegacyCommandForm({
       }
       await onSubmit(data);
     } catch (err) {
-      setError((err as Error).message);
+      const message = (err as Error).message || 'Unable to save';
+      const knownKeys = defs.map((f) => f.key);
+      const mapped = mapErrorMessageToFields(message, knownKeys);
+      setFieldErrors(mapped.fieldErrors);
+      setError(mapped.leftover || (Object.keys(mapped.fieldErrors).length ? '' : message));
     } finally {
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (!attempted || !dialog.current) return;
+    const firstField = dialog.current.querySelector<HTMLElement>('.form-field.has-error');
+    const banner = dialog.current.querySelector<HTMLElement>('.form-alert');
+    const target = firstField || (error ? banner : null);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const focusable = firstField?.querySelector<HTMLElement>(
+      'input, select, textarea, button, [tabindex]:not([tabindex="-1"])',
+    );
+    focusable?.focus?.({ preventScroll: true });
+  }, [attempted, fieldErrors, error]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const fn = (e: KeyboardEvent) => {
@@ -2636,15 +2902,25 @@ function LegacyCommandForm({
         )
         .map((f, i) => (
           <div
-            className={`form-field ${f.full ? 'full' : ''} ${f.type === 'checkbox' ? 'inline-checkbox-field' : ''}`}
+            className={`form-field ${f.full ? 'full' : ''} ${f.type === 'checkbox' ? 'inline-checkbox-field' : ''} ${
+              config.kind === 'fund' &&
+              f.key === 'kind' &&
+              !['Voucher', 'Airline credit', 'Hotel credit', 'Capital One credit', 'Gift card', 'Points'].includes(
+                String(vals.kind ?? ''),
+              )
+                ? 'fund-kind-alone'
+                : ''
+            } ${attempted && fieldErrors[f.key] ? 'has-error' : ''}`}
             key={f.key}
           >
+            {f.type !== 'checkbox' && (
             <label htmlFor={`f-${f.key}`}>
               {f.key === 'allocations' && vals.direction === 'commission'
                 ? 'Allocate to commission receivables'
                 : f.label}
-              {f.required ? ' *' : ''}
+              {f.required ? <ReqMark /> : ''}
             </label>
+            )}
             {config.kind === 'booking' && f.key === 'customer_id' && onCreateParty && (
               <button type="button" className="btn" onClick={() => createInline('customer')}>
                 Create customer without leaving booking
@@ -2755,13 +3031,23 @@ function LegacyCommandForm({
                   <button
                     type="button"
                     key={o.value}
-                    className={`btn ${f.type === 'multi_choice' ? (parseList(vals[f.key]).includes(o.value) ? 'selected' : '') : vals[f.key] === o.value ? 'selected' : ''}`}
+                    className={`btn small role-choice ${
+                      f.type === 'multi_choice'
+                        ? parseList(vals[f.key]).includes(o.value)
+                          ? 'selected'
+                          : ''
+                        : vals[f.key] === o.value
+                          ? 'selected'
+                          : ''
+                    }`}
                     aria-pressed={
                       f.type === 'multi_choice'
                         ? parseList(vals[f.key]).includes(o.value)
                         : vals[f.key] === o.value
                     }
-                    onClick={() =>
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       change(
                         f.key,
                         f.type === 'multi_choice'
@@ -2769,8 +3055,8 @@ function LegacyCommandForm({
                             ? parseList(vals[f.key]).filter((v) => v !== o.value)
                             : [...parseList(vals[f.key]), o.value]
                           : o.value,
-                      )
-                    }
+                      );
+                    }}
                   >
                     {(
                       {
@@ -2826,43 +3112,84 @@ function LegacyCommandForm({
                 onChange={(v) => change(f.key, v)}
               />
             ) : f.type === 'roles' ? (
-              <>
-                {config.defaults.entry_context === 'Suppliers' && (
-                  <fieldset>
-                    <legend>What do they supply?</legend>
-                    <div className="role-choices">
+              config.defaults.entry_context === 'Suppliers' ? (
+                <div className="roles-supplier-flow">
+                  <div className="roles-step">
+                    <p className="roles-step-title">1. Contact type</p>
+                    <p className="roles-step-copy">
+                      This contact is a <strong>Supplier</strong> — someone Padova buys travel from
+                      (airline, hotel, car rental, or similar).
+                    </p>
+                    <span className="role-choice selected role-locked">Supplier</span>
+                  </div>
+                  <div className="roles-step">
+                    <p className="roles-step-title">2. What do they provide?</p>
+                    <p className="roles-step-copy">
+                      Pick every type that fits. You can leave this blank if you are not sure yet.
+                    </p>
+                    <div className="role-choices" role="group" aria-label="Supply types">
                       {[
                         ['airline', 'Airline'],
                         ['property', 'Hotel'],
                         ['rental', 'Car rental'],
-                      ].map(([key, label]) => (
-                        <button
-                          type="button"
-                          key={key}
-                          className={`btn small ${parseList(vals.roles).includes(key) ? 'selected' : ''}`}
-                          aria-pressed={parseList(vals.roles).includes(key)}
-                          onClick={() =>
-                            change(
-                              'roles',
-                              parseList(vals.roles).includes(key)
-                                ? parseList(vals.roles).filter((r) => r !== key)
-                                : [...parseList(vals.roles), key, 'supplier'].filter(
-                                    (r, i, a) => a.indexOf(r) === i,
-                                  ),
-                            )
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
+                      ].map(([key, label]) => {
+                        const roles = parseList(vals.roles).map((r) => r.toLowerCase());
+                        const on = roles.includes(key);
+                        return (
+                          <button
+                            type="button"
+                            key={key}
+                            className={`btn small role-choice ${on ? 'selected' : ''}`}
+                            aria-pressed={on}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const current = parseList(vals.roles);
+                              const next = on
+                                ? current.filter((r) => r.toLowerCase() !== key)
+                                : [...current, key];
+                              if (!next.some((r) => r.toLowerCase() === 'supplier')) {
+                                next.push('supplier');
+                              }
+                              change('roles', [...new Set(next)]);
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
-                    <small>
-                      Supplier role is already selected. Add other roles below only when relevant.
-                    </small>
-                  </fieldset>
-                )}
-                <RolesInput value={vals[f.key]} onChange={(v) => change(f.key, v)} />
-              </>
+                  </div>
+                  <div className="roles-step">
+                    <p className="roles-step-title">3. Also use this contact as… (optional)</p>
+                    <p className="roles-step-copy">
+                      Only if the same company is also a customer, seller, partner, etc.
+                    </p>
+                    <RolesInput
+                      value={vals[f.key]}
+                      lockedRoles={['supplier']}
+                      omitRoles={['airline', 'property', 'rental']}
+                      showLockedChips={false}
+                      onChange={(v) => {
+                        const next = parseList(v);
+                        if (!next.some((r) => r.toLowerCase() === 'supplier')) {
+                          next.unshift('supplier');
+                        }
+                        change(f.key, next);
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <RolesInput
+                  value={vals[f.key]}
+                  onChange={(v) => change(f.key, v)}
+                  help={
+                    f.help ||
+                    'One contact can have several roles (traveler, payer, seller, referrer).'
+                  }
+                />
+              )
             ) : f.type === 'select' ? (
               <select
                 id={`f-${f.key}`}
@@ -2900,13 +3227,22 @@ function LegacyCommandForm({
                 onChange={(e) => change(f.key, e.target.value)}
               />
             ) : f.type === 'checkbox' ? (
-              <input
-                id={`f-${f.key}`}
-                style={{ width: 18 }}
-                type="checkbox"
-                checked={Boolean(vals[f.key])}
-                onChange={(e) => change(f.key, e.target.checked)}
-              />
+              <label className="check-card" htmlFor={`f-${f.key}`}>
+                <input
+                  id={`f-${f.key}`}
+                  type="checkbox"
+                  checked={Boolean(vals[f.key])}
+                  onChange={(e) => change(f.key, e.target.checked)}
+                />
+                <span className="check-card-body">
+                  <span className="check-card-title">
+                    {f.key === 'allocations' && vals.direction === 'commission'
+                      ? 'Allocate to commission receivables'
+                      : f.label}
+                  </span>
+                  {f.help ? <small>{f.help}</small> : null}
+                </span>
+              </label>
             ) : f.type === 'travelers' ? (
               <div>
                 <input
@@ -3138,11 +3474,17 @@ function LegacyCommandForm({
               ) &&
               allowed(f.source === 'parties' ? 'operations' : 'manage_settings') && (
                 <button
-                  className="btn small"
+                  className="btn small form-inline-add"
                   type="button"
                   onClick={() => {
                     creationKey.current = crypto.randomUUID();
                     const provider = ['supplier_id', 'airline_id', 'provider_id'].includes(f.key);
+                    const sellerCreate = [
+                      'seller_id',
+                      'change_seller_id',
+                      'acquisition_source_id',
+                      'source_id',
+                    ].includes(f.key);
                     const kind =
                       f.source === 'parties'
                         ? 'party'
@@ -3157,8 +3499,12 @@ function LegacyCommandForm({
                       defaults:
                         kind === 'party'
                           ? {
-                              kind: provider ? 'supplier' : 'person',
-                              roles: provider ? ['supplier'] : [],
+                              kind: provider ? 'supplier' : sellerCreate ? 'partner' : 'person',
+                              roles: provider
+                                ? ['supplier']
+                                : sellerCreate
+                                  ? ['seller']
+                                  : [],
                             }
                           : kind === 'program'
                             ? { category: 'Other' }
@@ -3204,7 +3550,13 @@ function LegacyCommandForm({
                   Use phone number for WhatsApp
                 </button>
               )}
-            {f.help && <small>{f.help}</small>}
+            {f.type !== 'checkbox' &&
+              !(f.type === 'roles' && config.defaults.entry_context === 'Suppliers') &&
+              f.help &&
+              !fieldErrors[f.key] && <small>{f.help}</small>}
+            {attempted && fieldErrors[f.key] ? (
+              <FieldError id={`err-${f.key}`}>{fieldErrors[f.key]}</FieldError>
+            ) : null}
           </div>
         ))}
     </>
@@ -3216,10 +3568,12 @@ function LegacyCommandForm({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
+      {confirmDialog}
       <form
         ref={dialog}
         className="modal"
         onSubmit={submit}
+        noValidate
         role="dialog"
         aria-modal="true"
         aria-labelledby="dialog-title"
@@ -3242,7 +3596,7 @@ function LegacyCommandForm({
                 pretty(config.kind)}
             </h2>
             {state.developmentData && (
-              <strong className="test-dialog-label">TEST / SYNTHETIC — PRACTICE ONLY</strong>
+              <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
             )}
             <p>
               {config.description ??
@@ -3317,11 +3671,7 @@ function LegacyCommandForm({
                 duplicate; use a distinct label when these are different people or organizations.
               </p>
             )}
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-            </div>
-          )}
+          <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
           <div className="form-grid">
             {config.kind === 'price_match_event' &&
               vals.final_rate !== '' &&
@@ -3340,7 +3690,7 @@ function LegacyCommandForm({
               <p className="full">
                 Original confirmed booking amount:{' '}
                 {inheritedRate === undefined
-                  ? 'Unknown — use More Details only when confirmed'
+                  ? 'Unknown. Use More Details only when confirmed'
                   : money(inheritedRate)}
                 {selectedBooking?.itinerary?.operational_entry?.source_profile_id
                   ? ` · Account: ${state.bookingSourceProfiles?.find((p: R) => p.id === (config.defaults.profile_id || selectedBooking.itinerary.operational_entry.source_profile_id))?.name || 'Saved booking profile'}`
@@ -3505,7 +3855,7 @@ function LegacyCommandForm({
                     )
                   }
                 />{' '}
-                Customer has paid — record receipt now
+                Customer has paid. Record receipt now
               </label>
               {initialPayment && (
                 <div className="form-grid">
