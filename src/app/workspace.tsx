@@ -21,6 +21,7 @@ import { travelsBetween, upcomingBookings, nextTravelDate } from '@/lib/travel-s
 import { assetUnit, formatQuantity, refundQuantityUnit } from '@/lib/asset-units';
 import { latestCreditRequests, sourceConfirmationLabel } from '@/lib/v1-entry';
 import AuthScreen from '@/components/auth-screen';
+import { FormAlert } from '@/components/form-feedback';
 import CommissionsPage from '@/components/commissions-page';
 import OperationalViews from '@/components/operational-views';
 import {
@@ -44,6 +45,7 @@ import {
   intakeChannelFilterKey,
   intakeSourceTableTag,
 } from '@/lib/intake-channel-label';
+import { formatIntakeMissingSummary } from '@/lib/intake-confidence';
 import {
   applyIntakeFieldOverrides,
   buildIntakeMappingPreview,
@@ -69,6 +71,7 @@ import UserAdministration, {
   PersonalRecoveryCodes,
 } from '@/components/user-administration';
 import { hasPermission, commandPermission, Permission } from '@/lib/permissions';
+import { eligibleParty } from '@/lib/directory-eligibility';
 import {
   LayoutDashboard,
   Plane,
@@ -96,7 +99,7 @@ import {
   Clock,
   Hotel,
   Car,
-  MoreHorizontal,
+  MoreVertical,
   Menu,
   X,
   LogOut,
@@ -312,7 +315,23 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       whatsapp?: string;
     } | null>(null),
     [draftChannelFilter, setDraftChannelFilter] = useState('All'),
-    [draftPage, setDraftPage] = useState(1);
+    [draftPage, setDraftPage] = useState(1),
+    [draftsOpen, setDraftsOpen] = useState(() => {
+      if (typeof window === 'undefined') return true;
+      try {
+        return window.localStorage.getItem('padova.transactions.draftsOpen') !== '0';
+      } catch {
+        return true;
+      }
+    });
+  const setDraftsOpenPersist = (open: boolean) => {
+    setDraftsOpen(open);
+    try {
+      window.localStorage.setItem('padova.transactions.draftsOpen', open ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  };
   const resetIntakeChannels = (clearText = false) => {
     setIntakeFile(null);
     setIntakePreview(null);
@@ -348,6 +367,33 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [intakeOpen, intakeBusy]);
+  // Draft card ⋮ menus: close on outside click / Escape (do not leave open).
+  useEffect(() => {
+    const closeDraftMenus = () => {
+      document.querySelectorAll('details.intake-draft-menu[open]').forEach((el) => {
+        (el as HTMLDetailsElement).open = false;
+      });
+    };
+    const onPointer = (e: PointerEvent) => {
+      const open = document.querySelector('details.intake-draft-menu[open]');
+      if (!open) return;
+      const target = e.target as Node | null;
+      if (target && open.contains(target)) return;
+      closeDraftMenus();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (!document.querySelector('details.intake-draft-menu[open]')) return;
+      e.preventDefault();
+      closeDraftMenus();
+    };
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
   // Keep unread preview from binary extract until staff pastes real text.
   useEffect(() => {
     if (!intakeOpen) return;
@@ -1180,7 +1226,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           {aiMade ? (
                             <Badge
                               tone="amber"
-                              title="AI-assisted intake — verify money and parties; not the same as staff-entered books"
+                              title="AI-assisted intake. Verify money and parties before treating as staff-entered books."
                             >
                               AI
                             </Badge>
@@ -1231,8 +1277,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 <td className="transaction-open-cell">
                   <button
                     type="button"
-                    className="transaction-open-link"
+                    className="transaction-open-icon"
                     aria-label={'Open ' + (kind === 'booking' ? r.code : r.asset)}
+                    title="Open"
                     onClick={(e) => {
                       e.stopPropagation();
                       openRecord(
@@ -1241,7 +1288,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       );
                     }}
                   >
-                    Open
+                    <MoreVertical size={16} aria-hidden />
                   </button>
                 </td>
               </tr>
@@ -1549,7 +1596,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </p>
               <p>{m.rationale}</p>
               <p>
-                Travel date: {m.facts.travel_on ?? 'Unknown — original text preserved'} · Cost:{' '}
+                Travel date: {m.facts.travel_on ?? 'Unknown, original text preserved'} · Cost:{' '}
                 {m.facts.source_cost_cents === null
                   ? 'Unknown'
                   : `${money(m.facts.source_cost_cents)} (unverified source claim)`}
@@ -2088,8 +2135,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           <strong>{primaryValue}</strong>
                           <small className="seller-metric-hint">
                             {recorded.primaryCents != null
-                              ? 'Recorded receivable — not cash until a receipt is allocated.'
-                              : 'Expected only — not received until Add commission posts a receivable.'}
+                              ? 'Recorded receivable. Not cash until a receipt is allocated.'
+                              : 'Expected only. Not received until Add commission posts a receivable.'}
                           </small>
                         </div>
                         <div className="seller-metric">
@@ -2101,8 +2148,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           <strong>{secondaryValue}</strong>
                           <small className="seller-metric-hint">
                             {recorded.secondaryCents != null
-                              ? 'Recorded receivable — separate from primary; cash after receipt.'
-                              : 'Expected only — separate from primary; use Add commission to post.'}
+                              ? 'Recorded receivable (separate from primary). Cash after receipt.'
+                              : 'Expected only (separate from primary). Use Add commission to post.'}
                           </small>
                         </div>
                         <div className="seller-metric">
@@ -2115,7 +2162,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 : '—'}
                           </strong>
                           <small className="seller-metric-hint">
-                            Padova pays out — not the same as who owes Padova.
+                            Padova pays out, not the same as who owes Padova.
                           </small>
                         </div>
                       </div>
@@ -2801,7 +2848,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 ? money(primaryExpected.amount)
                                 : 'Amount TBD'}
                             <small>
-                              Expected on booking — not a recorded receivable yet. Received: none.
+                              Expected on booking. Not a recorded receivable yet. Received: none.
                             </small>
                           </li>
                         )}
@@ -2815,7 +2862,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 ? money(secondaryExpected.amount)
                                 : 'Amount TBD'}
                             <small>
-                              Expected on booking — not a recorded receivable yet. Received: none.
+                              Expected on booking. Not a recorded receivable yet. Received: none.
                             </small>
                           </li>
                         )}
@@ -3200,6 +3247,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         p.roles.some((role: string) =>
           ['seller', 'supplier', 'source', 'partner'].includes(role),
         ) || p.kind === 'supplier';
+      /** Seller payment / Purchased From — not referral partners alone. */
+      const canPayAsSeller = eligibleParty(p, 'seller');
       const sourceRows = detail.sourceStatement ?? [];
       const members = s.relationships.filter((r: R) => r.group_id === p.id || r.person_id === p.id);
       const entries: R[] = (detail.statement ?? []).map((r: R) => ({
@@ -3267,12 +3316,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               <Plus size={14} />
               New booking
             </button>
-            {canPay && (p.roles.includes('customer') || !isSource) && (
+            {canPay && (p.roles.includes('customer') || !canPayAsSeller) && (
               <button className="btn" onClick={() => action('payment', { party_id: p.id })}>
                 Add payment
               </button>
             )}
-            {isSource && can('manage_funding') && (
+            {canPayAsSeller && can('manage_funding') && (
               <button
                 className="btn"
                 onClick={() => action('payment', { party_id: p.id, direction: 'supplier' })}
@@ -3808,10 +3857,10 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       return intakeChannelFilterKey(draft.intake_source) === draftChannelFilter;
     });
     view = (
-      <>
+      <div className="transactions-page">
         {heading(
           'Transactions',
-          'One row per booking or sale, newest booked or sold first. Payments stay inside each record.',
+          'Bookings and sales in one list. Open a row for payments and delivery.',
           <>
             {canAction('booking_draft') && (
               <button
@@ -3839,7 +3888,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         whatsapp: wa
                           ? wa.mode === 'pc_bridge_token_present'
                             ? 'WhatsApp PC bridge token set on server (read-only; never sends).'
-                            : 'WhatsApp: paste chat or PC bridge — token not set on this server yet.'
+                            : 'WhatsApp: paste chat or PC bridge, token not set on this server yet.'
                           : 'WhatsApp status unavailable.',
                       });
                     } catch {
@@ -3857,44 +3906,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {newButton('New booking', 'booking')}
           </>,
         )}
-        <div className="toolbar">
-          {['All', 'Flight', 'Hotel', 'Car', 'Other', 'Voucher / asset sales'].map((v) => (
-            <button
-              className={`btn ${filter === v ? 'primary' : ''}`}
-              key={v}
-              onClick={() => setFilter(v)}
-            >
-              {v}
-            </button>
-          ))}
-          <label>
-            Status{' '}
-            <select
-              aria-label="Booking status"
-              value={bookingStatus}
-              onChange={(e) => setBookingStatus(e.target.value)}
-            >
-              {['All', ...new Set<string>(bks.map((b) => b.reservation_status))].map((v) => (
-                <option key={v}>{v}</option>
-              ))}
-            </select>
-          </label>
-          {day && (
-            <button className="btn" onClick={() => setDay('')}>
-              {day}
-              <X size={12} />
-            </button>
-          )}
-        </div>
         {!!s.bookingDrafts?.length && (
           <div className="list-block intake-drafts-block">
-          <details className="card section-body intake-drafts" open>
+          <details
+            className="card section-body intake-drafts"
+            open={draftsOpen}
+            onToggle={(e) => {
+              const next = (e.currentTarget as HTMLDetailsElement).open;
+              if (next !== draftsOpen) setDraftsOpenPersist(next);
+            }}
+          >
             <summary>
-              Drafts & unposted historical records (
-              {draftChannelFilter === 'All'
-                ? filteredDrafts.length
-                : `${filteredDrafts.length} of ${s.bookingDrafts.length}`}
-              ) — separate from the transactions below
+              <span className="intake-drafts-summary-title">Drafts</span>
+              <span className="intake-drafts-summary-count">
+                {draftChannelFilter === 'All'
+                  ? filteredDrafts.length
+                  : `${filteredDrafts.length} of ${s.bookingDrafts.length}`}
+              </span>
+              <span className="intake-drafts-summary-note">Not live until staff continue</span>
             </summary>
             <div className="intake-draft-filters" role="group" aria-label="Filter drafts">
               {(
@@ -3974,47 +4003,80 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             </span>
                           )}
                           {canAction('booking_draft') && (
-                            <button
-                              type="button"
-                              className="btn small intake-draft-delete"
-                              disabled={busy}
-                              aria-label="Delete draft"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                const label = title || 'this draft';
-                                const ok = await askConfirm({
-                                  title: 'Delete draft?',
-                                  message: `Delete “${String(label).slice(0, 80)}”?`,
-                                  confirmLabel: 'Delete',
-                                  cancelLabel: 'Cancel',
-                                  tone: 'danger',
-                                });
-                                if (!ok) return;
-                                setBusy(true);
-                                try {
-                                  await command('booking_draft_delete', {
-                                    draft_id: draft.id,
+                            <details
+                              className="intake-draft-menu"
+                              onClick={(e) => e.stopPropagation()}
+                              onToggle={(e) => {
+                                const open = (e.currentTarget as HTMLDetailsElement).open;
+                                if (!open) return;
+                                document
+                                  .querySelectorAll('details.intake-draft-menu[open]')
+                                  .forEach((el) => {
+                                    if (el !== e.currentTarget)
+                                      (el as HTMLDetailsElement).open = false;
                                   });
-                                  setSelected(null);
-                                  setDetail(null);
-                                  await refresh();
-                                  setToast('Draft deleted.');
-                                } catch (err) {
-                                  setError((err as Error).message);
-                                } finally {
-                                  setBusy(false);
-                                }
                               }}
                             >
-                              <Trash2 size={13} aria-hidden />
-                            </button>
+                              <summary
+                                className="intake-draft-menu-trigger"
+                                aria-label="Draft actions"
+                              >
+                                <MoreVertical size={16} aria-hidden />
+                              </summary>
+                              <div className="intake-draft-menu-panel" role="menu">
+                                <button
+                                  type="button"
+                                  className="intake-draft-menu-item danger"
+                                  role="menuitem"
+                                  disabled={busy}
+                                  onClick={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const root = (e.currentTarget as HTMLElement).closest(
+                                      'details',
+                                    );
+                                    if (root) (root as HTMLDetailsElement).open = false;
+                                    const label = title || 'this draft';
+                                    const ok = await askConfirm({
+                                      title: 'Delete draft?',
+                                      message: `Delete “${String(label).slice(0, 80)}”?`,
+                                      confirmLabel: 'Delete',
+                                      cancelLabel: 'Cancel',
+                                      tone: 'danger',
+                                    });
+                                    if (!ok) return;
+                                    setBusy(true);
+                                    try {
+                                      await command('booking_draft_delete', {
+                                        draft_id: draft.id,
+                                      });
+                                      setSelected(null);
+                                      setDetail(null);
+                                      await refresh();
+                                      setToast('Draft deleted.');
+                                    } catch (err) {
+                                      setError((err as Error).message);
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 size={14} aria-hidden />
+                                  Delete draft
+                                </button>
+                              </div>
+                            </details>
                           )}
                         </div>
                         <button
                           type="button"
                           className="intake-draft-card-open"
                           onClick={async () => {
+                            document
+                              .querySelectorAll('details.intake-draft-menu[open]')
+                              .forEach((el) => {
+                                (el as HTMLDetailsElement).open = false;
+                              });
                             try {
                               if (
                                 draft.kind === 'voucher_sale' ||
@@ -4074,11 +4136,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               })}
                             </p>
                           )}
-                          {Array.isArray(draft.intake_missing) && draft.intake_missing.length > 0 && (
-                            <p className="intake-draft-missing">
-                              Missing: {draft.intake_missing.join(', ')}
-                            </p>
-                          )}
+                          {(() => {
+                            const missingLine = formatIntakeMissingSummary(draft.intake_missing);
+                            return missingLine ? (
+                              <p className="intake-draft-missing">{missingLine}</p>
+                            ) : null;
+                          })()}
                           <dl className="intake-draft-meta">
                             <div>
                               <dt>Customer</dt>
@@ -4132,29 +4195,62 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 );
               })()}
             </div>
+            {filteredDrafts.length > 0 &&
+              (() => {
+                const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
+                return (
+                  <div className="intake-draft-pager">
+                    <ListPager
+                      page={draftPager.page}
+                      totalPages={draftPager.totalPages}
+                      total={draftPager.total}
+                      from={draftPager.from}
+                      to={draftPager.to}
+                      onPage={(p) => {
+                        setDraftPage(p);
+                        document
+                          .querySelector('.intake-drafts-block')
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      label="drafts"
+                    />
+                  </div>
+                );
+              })()}
           </details>
-          {filteredDrafts.length > 0 &&
-            (() => {
-              const draftPager = pageSlice<R>(filteredDrafts, draftPage, 8);
-              return (
-                <ListPager
-                  page={draftPager.page}
-                  totalPages={draftPager.totalPages}
-                  total={draftPager.total}
-                  from={draftPager.from}
-                  to={draftPager.to}
-                  onPage={(p) => {
-                    setDraftPage(p);
-                    document
-                      .querySelector('.intake-drafts-block')
-                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }}
-                  label="drafts"
-                />
-              );
-            })()}
           </div>
         )}
+        <div className="toolbar transactions-toolbar">
+          <div className="transactions-filter-group" role="group" aria-label="Product filter">
+            {['All', 'Flight', 'Hotel', 'Car', 'Other', 'Voucher / asset sales'].map((v) => (
+              <button
+                className={`btn ${filter === v ? 'primary' : ''}`}
+                key={v}
+                onClick={() => setFilter(v)}
+              >
+                {v === 'Voucher / asset sales' ? 'Vouchers' : v}
+              </button>
+            ))}
+          </div>
+          <label className="transactions-status-filter">
+            Status
+            <select
+              aria-label="Booking status"
+              value={bookingStatus}
+              onChange={(e) => setBookingStatus(e.target.value)}
+            >
+              {['All', ...new Set<string>(bks.map((b) => b.reservation_status))].map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </label>
+          {day && (
+            <button className="btn" onClick={() => setDay('')}>
+              {day}
+              <X size={12} />
+            </button>
+          )}
+        </div>
         {(() => {
           const bookingPager = pageSlice(items, bookingPage, 20);
           return (
@@ -4174,7 +4270,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
           );
         })()}
-      </>
+      </div>
     );
   } else if (['People & Families', 'Companies', 'Suppliers', 'Sources & Brokers'].includes(page)) {
     const list = parties
@@ -5699,7 +5795,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               ) : (
                 <Empty>
                   {/^pdv[-\s]?\d+/i.test(query.trim()) && s.qaMode
-                    ? 'No matching records on QA. Production booking codes (PDV-…) usually live only on production — not in this QA database.'
+                    ? 'No matching records on QA. Production booking codes (PDV-…) usually live only on production, not in this QA database.'
                     : 'No matching records.'}
                 </Empty>
               )}
@@ -5710,7 +5806,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           {s.qaMode && !s.developmentData && (
             <div className="demo-banner qa-host-banner">
               <ShieldCheck size={13} />
-              <strong>QA — practice workspace</strong>
+              <strong>QA practice workspace</strong>
               <span>
                 Intake and UX testing only. 2026 production books and Batch A history allocations are
                 not in this database until Owner moves work to production.
@@ -5721,7 +5817,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <div className="demo-banner">
               <ShieldCheck size={13} />
               <strong>
-                {s.qaMode ? 'PRACTICE / QA — NOT REAL DATA' : 'TEST / SYNTHETIC — PRACTICE ONLY'}
+                {s.qaMode ? 'PRACTICE / QA (NOT REAL DATA)' : 'TEST / SYNTHETIC (PRACTICE ONLY)'}
               </strong>
               <span>
                 This is the local test workspace. Entries here do not go to the real US Padova
@@ -5730,18 +5826,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </div>
           )}
 
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-              <button
-                style={{ float: 'right' }}
-                onClick={() => setError('')}
-                aria-label="Dismiss error"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
+          <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
           {view}
           <div className="footer-note">
             <span>PADOVA TRAVEL · Private operating workspace</span>
@@ -5907,6 +5992,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         )}
                     </div>
                     <div className="intake-preview-scroll">
+                      {liveIntakePreview?.reservationBlock ? (
+                        <p className="intake-preview-unread intake-reservation-gate" role="alert">
+                          {liveIntakePreview.reservationBlock}
+                        </p>
+                      ) : null}
                       {liveIntakePreview?.unread ? (
                         <p className="intake-preview-unread" role="alert">
                           {liveIntakePreview.unreadMessage || UNREAD_FILE_MESSAGE}
@@ -6042,7 +6132,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       if (on) setIntakeAsWhatsApp(false);
                     }}
                   />
-                  Forwarded email (Shmuel@ or mindy@ only) — saves as email intake draft
+                  Forwarded email (Shmuel@ or mindy@ only). Saves as an email intake draft.
                 </label>
                 {intakeAsEmail && (
                   <div className="intake-email-fields">
@@ -6093,7 +6183,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       if (on) setIntakeAsEmail(false);
                     }}
                   />
-                  WhatsApp chat paste — saves as WhatsApp intake draft (read-only; never sends)
+                  WhatsApp chat paste. Saves as a WhatsApp intake draft (read-only; never sends).
                 </label>
                 {intakeAsWhatsApp && (
                   <div className="intake-email-fields">
@@ -6172,7 +6262,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       ? 'Reading file…'
                       : 'Working…'
                   : liveIntakePreview?.unread
-                    ? 'Could not read — paste text instead'
+                    ? 'Could not read. Paste text instead.'
                     : !intakeText.trim()
                       ? 'Paste text or Use sample to map fields'
                       : liveIntakePreview
@@ -6195,6 +6285,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     intakeBusy ||
                     (!intakeText.trim() && !intakeFile) ||
                     Boolean(liveIntakePreview?.unread) ||
+                    Boolean(liveIntakePreview?.reservationBlock) ||
                     !liveIntakePreview ||
                     liveIntakePreview.found === 0
                   }
@@ -6227,6 +6318,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
 
                         if (!liveIntakePreview || liveIntakePreview.unread)
                           throw new Error('Review the mapping before creating a draft');
+                        if (liveIntakePreview.reservationBlock)
+                          throw new Error(liveIntakePreview.reservationBlock);
                         if (!intakeText.trim() && !intakeFile)
                           throw new Error('Paste reservation text or drop a file first');
 

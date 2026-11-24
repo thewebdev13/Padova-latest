@@ -394,7 +394,7 @@ export async function importPartnershipBundle(db: Database, actor: Actor, bundle
             organization_id: organizationId,
             kind: 'reported_inquiry',
             occurred_on: r.observedOn,
-            reference: r.title + ' — ' + r.body,
+            reference: r.title + ', ' + r.body,
             source_url: item.sourceUrl ?? bundle.source.location,
             actor_id: actor.id,
           });

@@ -283,12 +283,28 @@
   color: #a84820 !important;
 }
 .error {
-  padding: 12px;
-  background: #fff1ec;
-  color: #982c1f;
-  border: 1px solid #f1c5b7;
-  border-radius: 6px;
-  margin: 12px 0;
+  margin: 12px 22px;
+  padding: 12px 14px;
+  border: 1px solid #efd0c8;
+  border-left: 3px solid #c45b4a;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fff8f6 0%, #fff4f1 100%);
+  color: #7a3530;
+  box-shadow: 0 1px 2px rgba(122, 53, 48, 0.06);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.fieldHasError .fieldControl input,
+.fieldHasError .fieldControl select,
+.fieldHasError .fieldControl textarea,
+.fieldHasError .fieldControl :global(.search-select-control),
+.fieldHasError .fieldControl :global(.search-select-control input) {
+  border-color: #d97a6c !important;
+  background-color: #fffbfa !important;
+  box-shadow: 0 0 0 3px rgba(196, 91, 74, 0.12);
+}
+.fieldHasError .fieldLabelText {
+  color: #9a4338;
 }
 .pager {
   margin-top: 16px;
@@ -339,68 +355,65 @@
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
-  background: rgba(18, 36, 30, 0.52);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(17, 32, 28, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 .modal {
-  width: min(640px, 100%);
-  max-height: min(90vh, 820px);
-  overflow: auto;
+  width: min(560px, 100%);
+  max-height: min(90vh, 780px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 0;
-  color: #1d3a31;
-  background: linear-gradient(180deg, #fbfcfb 0%, #fff 28%);
-  border: 1px solid #d5e0da;
-  border-radius: 18px;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.7) inset,
-    0 24px 64px rgba(18, 42, 34, 0.28);
+  color: #1c322a;
+  background: #fff;
+  border: 1px solid #d7e2dc;
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(12, 28, 22, 0.22);
 }
 .modalHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px 22px 16px;
-  border-bottom: 1px solid #e6eee9;
-  background: linear-gradient(180deg, #f4f8f5 0%, #eef4f0 100%);
+  flex: none;
+  padding: 18px 24px;
+  border-bottom: 1px solid #e8eee9;
+  background: #fff;
 }
 .modalHeaderCopy {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 .modalEyebrow {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #6a8478;
+  display: none;
 }
 .modal h2 {
   margin: 0;
-  font-size: 21px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: #194c3d;
+  color: #16382d;
   line-height: 1.25;
 }
 .modalLead {
-  margin: 4px 0 0 !important;
-  font-size: 13px !important;
-  line-height: 1.45;
-  color: #5c7163 !important;
+  margin: 0 !important;
+  font-size: 12.5px !important;
+  line-height: 1.4;
+  color: #6b8176 !important;
 }
 .modalClose {
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   padding: 0 !important;
-  border-radius: 10px !important;
-  border-color: #cfd9d3 !important;
+  border-radius: 8px !important;
+  border: 1px solid #d5dfd9 !important;
   background: #fff !important;
-  color: #4a5f56 !important;
-  font-size: 22px;
+  color: #51655c !important;
+  font-size: 20px;
   line-height: 1;
 }
 .modalClose:hover {
@@ -408,14 +421,23 @@
   color: #194c3d !important;
 }
 .modalForm {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
   gap: 0;
 }
 .modalFields {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px 12px;
-  padding: 18px 22px 8px;
+  column-gap: 16px;
+  row-gap: 18px;
+  align-items: start;
+  padding: 20px 24px 8px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  background: #fff;
 }
 .fieldBlock {
   grid-column: 1 / -1;
@@ -425,96 +447,127 @@
   grid-column: span 1;
 }
 .fieldSection {
-  margin: 4px 0 0 !important;
-  padding: 10px 0 2px;
+  margin: 2px 0 2px !important;
+  padding: 12px 0 0;
   font-size: 11px !important;
-  font-weight: 700;
+  font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6a8478 !important;
-  border-top: 1px solid #e6eee9;
+  color: #6b8176 !important;
+  border-top: 1px solid #e8eee9;
 }
-.fieldLabel,
-.fieldLabel label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  font-size: 12.5px;
-  color: #2f463c;
+.fieldStack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.fieldHead {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 .fieldLabelText {
+  font-size: 13px;
   font-weight: 600;
-  color: #1f3d33;
+  letter-spacing: -0.01em;
+  color: #1c322a;
+  line-height: 1.3;
 }
 .reqMark {
   margin-left: 3px;
   font-style: normal;
   font-weight: 700;
-  color: #a13d2e;
+  color: #b42318;
 }
 .fieldHint {
   display: block;
   margin: 0 !important;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: #6b7d74;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #6b8176;
   font-weight: 400;
+}
+/* Prefer placeholders over stacked helper lines for a cleaner form */
+.fieldHead:has(+ .fieldControl) .fieldHint {
+  max-width: 52ch;
+}
+.fieldControl {
+  min-width: 0;
+}
+.fieldControl :global(.search-select),
+.fieldControl :global(.search-select-control),
+.fieldControl :global(input),
+.fieldControl :global(select),
+.fieldControl :global(textarea) {
+  width: 100%;
 }
 .modal input,
 .modal select,
-.modal textarea {
+.modal textarea,
+.modal :global(.search-select-control input) {
   width: 100%;
   min-height: 40px;
-  padding: 10px 12px !important;
-  border-radius: 10px !important;
-  border-color: #cfd9d3 !important;
+  padding: 9px 12px !important;
+  border-radius: 8px !important;
+  border: 1px solid #cfd9d3 !important;
   background: #fff !important;
-  box-shadow: 0 1px 0 rgba(25, 76, 61, 0.03);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  color: #1c322a;
+  box-shadow: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.modal input::placeholder,
+.modal textarea::placeholder {
+  color: #8a9b93;
 }
 .modal textarea {
   resize: vertical;
-  min-height: 96px;
+  min-height: 88px;
+  line-height: 1.45;
 }
 .modal input:focus,
 .modal select:focus,
-.modal textarea:focus {
+.modal textarea:focus,
+.modal :global(.search-select-control input:focus) {
   outline: none;
   border-color: #2f6b4f !important;
-  box-shadow: 0 0 0 3px rgba(47, 107, 79, 0.16);
+  box-shadow: 0 0 0 3px rgba(47, 107, 79, 0.12);
 }
 .lookupField {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 .clearLookup {
   justify-self: start;
-  min-height: 32px !important;
-  padding: 4px 10px !important;
+  min-height: 28px !important;
+  padding: 2px 8px !important;
   font-size: 12px !important;
   color: #2f6b4f !important;
-  background: #eef5f1 !important;
-  border-color: transparent !important;
-  border-radius: 8px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .modalFooter {
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 8px 0 0;
-  padding: 14px 22px 18px;
-  border-top: 1px solid #e6eee9;
-  background: #f8faf9;
+  flex: none;
+  margin: 0;
+  padding: 14px 24px 18px;
+  border-top: 1px solid #e8eee9;
+  background: #fff;
 }
 .ghostBtn {
   min-height: 40px !important;
   padding: 0 16px !important;
-  border-radius: 10px !important;
+  border-radius: 8px !important;
   background: #fff !important;
   color: #3d5248 !important;
-  border-color: #cfd9d3 !important;
+  border: 1px solid #cfd9d3 !important;
+  font-weight: 550;
 }
 .ghostBtn:hover {
   border-color: #2f6b4f !important;
@@ -524,12 +577,22 @@
 .modalFooter .primary {
   min-height: 40px !important;
   padding: 0 18px !important;
-  border-radius: 10px !important;
+  border-radius: 8px !important;
   font-weight: 600;
+  box-shadow: none;
+}
+.modalFooter .primary:hover {
+  filter: brightness(1.05);
 }
 .modal p {
   font-size: 13px;
-  color: #5c7163;
+  color: #5f7368;
+}
+.modalAlertWrap {
+  padding: 0 24px;
+}
+.modalAlertWrap :global(.form-alert) {
+  margin: 4px 0 8px;
 }
 @media (max-width: 850px) {
   .metrics {
@@ -547,18 +610,25 @@
   }
   .modal {
     width: 100%;
+    border-radius: 12px;
   }
   .modalFields {
     grid-template-columns: 1fr;
-    padding: 14px 16px 6px;
+    padding: 16px;
+    row-gap: 16px;
+    column-gap: 0;
   }
   .fieldHalf {
     grid-column: 1 / -1;
   }
   .modalHeader,
-  .modalFooter {
+  .modalFooter,
+  .modalAlertWrap {
     padding-left: 16px;
     padding-right: 16px;
+  }
+  .modal h2 {
+    font-size: 18px;
   }
   .metrics > div {
     padding: 9px;

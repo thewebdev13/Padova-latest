@@ -22,7 +22,7 @@ export default function WorkspaceSectionError({
       <div>
         <p style={{ fontSize: 18, fontWeight: 650, marginBottom: 8 }}>This page couldn’t load</p>
         <p style={{ color: '#5b6b66', marginBottom: 16, maxWidth: 420 }}>
-          Reload to try again, or go back. Bad AI intake drafts stay under Drafts — delete those
+          Reload to try again, or go back. Bad AI intake drafts stay under Drafts, delete those
           only; live bookings are unchanged.
         </p>
         <p style={{ color: '#8a9692', fontSize: 12, marginBottom: 16 }}>

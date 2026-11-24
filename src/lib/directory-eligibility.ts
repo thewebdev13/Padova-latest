@@ -12,11 +12,24 @@ export const directoryRoles = [
   'contact',
 ] as const;
 export type DirectoryRole = (typeof directoryRoles)[number];
+
+/** Purchased From / seller payee — not referral partners (those use Commission Payable). */
+export function hasSellerAcquisitionRole(p: Row): boolean {
+  const roles = Array.isArray(p.roles) ? p.roles : [];
+  return (
+    roles.includes('seller') ||
+    roles.includes('source') ||
+    roles.includes('supplier') ||
+    p.kind === 'supplier'
+  );
+}
+
 export function eligibleParty(p: Row, role: DirectoryRole): boolean {
   if (role === 'contact') return eligibleProfileContact(p);
+  if (p.archived_at || p.details?.traveler_review_only) return false;
+  if (!Array.isArray(p.roles) && role !== 'seller') return false;
+  if (role === 'seller') return hasSellerAcquisitionRole(p);
   return (
-    !p.archived_at &&
-    !p.details?.traveler_review_only &&
     Array.isArray(p.roles) &&
     (p.roles.includes(role) ||
       (role === 'commission_payer' &&

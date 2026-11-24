@@ -1,4 +1,5 @@
 import { normalizePasteValue, parseQuickPaste, type PastePreview } from './quick-paste';
+import { intakeReservationBlockReason } from './booking-message-detect';
 
 /** Client-facing copy when PDF/image cannot be read (Site Feedback 3). */
 export const UNREAD_FILE_MESSAGE =
@@ -43,6 +44,8 @@ export type IntakeMappingPreview = {
   product: string;
   unread: boolean;
   unreadMessage?: string;
+  /** Non-null when text is not a verified new booking confirmation. */
+  reservationBlock?: string | null;
 };
 
 /** Canonical paste labels for each preview row (used when remapping). */
@@ -90,8 +93,8 @@ function partyHint(
   const wanted = normalizePasteValue(name);
   const hits = parties.filter((p) => normalizePasteValue(String(p.name || '')) === wanted);
   if (hits.length === 1) return 'existing person';
-  if (hits.length > 1) return 'multiple matches — confirm';
-  return 'new — confirm on save';
+  if (hits.length > 1) return 'multiple matches, confirm';
+  return 'new, confirm on save';
 }
 
 /** Every Field: Value line from paste (known + unknown) for remap dropdowns. */
@@ -324,7 +327,30 @@ export function buildIntakeMappingPreview(
     push('dates', datesLabel, null, undefined);
   }
 
-  const found = rows.filter((r) => r.status === 'found').length;
+  const reservationBlock = intakeReservationBlockReason(raw || '');
+  const found = reservationBlock
+    ? 0
+    : rows.filter((r) => r.status === 'found').length;
   const missing = rows.filter((r) => r.status === 'missing').length;
-  return { paste, rows, lines, found, missing, product, unread: false };
+  return {
+    paste,
+    rows: reservationBlock
+      ? rows.map((r) =>
+          r.status === 'found'
+            ? {
+                ...r,
+                sourceHint: r.sourceHint
+                  ? `${r.sourceHint} · verify (not a new booking confirm)`
+                  : 'verify (not a new booking confirm)',
+              }
+            : r,
+        )
+      : rows,
+    lines,
+    found,
+    missing,
+    product: reservationBlock ? '' : product,
+    unread: false,
+    reservationBlock: reservationBlock || null,
+  };
 }

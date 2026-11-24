@@ -1,6 +1,12 @@
 'use client';
 import { useState } from 'react';
 import { dateLabel } from '@/lib/display-date';
+import { FieldError, FormAlert, ReqMark, formFieldClass } from './form-feedback';
+import {
+  isEmptyFieldValue,
+  requiredFieldMessage,
+  type FieldErrorMap,
+} from '@/lib/form-field-errors';
 
 type R = Record<string, any>;
 const dollars = (cents: number | null) => (cents === null ? '' : (cents / 100).toFixed(2));
@@ -29,12 +35,51 @@ export default function HistoricalRecordEditor({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
+  const [attempted, setAttempted] = useState(false);
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [submitted, setSubmitted] = useState<R | null>(null);
-  const field = (name: string, value: unknown) => setValues((v: R) => ({ ...v, [name]: value }));
+  const field = (name: string, value: unknown) => {
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    setValues((v: R) => ({ ...v, [name]: value }));
+  };
+  const clearField = (name: string) =>
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   const submit = async () => {
-    setBusy(true);
+    setAttempted(true);
     setError('');
+    const next: FieldErrorMap = {};
+    if (isEmptyFieldValue(values.summary))
+      next.summary = requiredFieldMessage('Description');
+    if (values.date_certainty !== 'Unknown' && isEmptyFieldValue(values.booked_on))
+      next.booked_on = requiredFieldMessage('Booking / sale date');
+    if (isEmptyFieldValue(reason)) next.reason = requiredFieldMessage('Reason for correction');
+    try {
+      cents(sale);
+    } catch (e) {
+      next.sale = (e as Error).message;
+    }
+    try {
+      cents(cost);
+    } catch (e) {
+      next.cost = (e as Error).message;
+    }
+    if (Object.keys(next).length) {
+      setFieldErrors(next);
+      return;
+    }
+    setFieldErrors({});
+    setBusy(true);
     try {
       const data = submitted ?? {
         source_key: `historical-draft:${record.id}`,
@@ -70,6 +115,8 @@ export default function HistoricalRecordEditor({
               setCost(dollars(record.review.values.cost_cents));
               setReason('');
               setError('');
+              setFieldErrors({});
+              setAttempted(false);
               setSubmitted(null);
               setKey(crypto.randomUUID());
               setEditing(true);
@@ -89,6 +136,7 @@ export default function HistoricalRecordEditor({
           ) : null
         ) : (
           <form
+            noValidate
             onSubmit={(e) => {
               e.preventDefault();
               void submit();
@@ -96,13 +144,19 @@ export default function HistoricalRecordEditor({
           >
             <fieldset disabled={busy || !!submitted} style={{ border: 0, padding: 0 }}>
               <div className="form-grid">
-                <label className="form-field full">
+                <label
+                  className={formFieldClass(
+                    'form-field full',
+                    attempted && !!fieldErrors.summary,
+                  )}
+                >
                   Description
+                  <ReqMark />
                   <input
-                    required
                     value={values.summary}
                     onChange={(e) => field('summary', e.target.value)}
                   />
+                  {attempted ? <FieldError>{fieldErrors.summary}</FieldError> : null}
                 </label>
                 {!/^Voucher\s+ending/i.test(record.entry?.summary ?? '') && (
                   <>
@@ -144,49 +198,80 @@ export default function HistoricalRecordEditor({
                   </select>
                 </label>
                 {values.date_certainty !== 'Unknown' && (
-                  <label className="form-field">
+                  <label
+                    className={formFieldClass(
+                      'form-field',
+                      attempted && !!fieldErrors.booked_on,
+                    )}
+                  >
                     Booking / sale date
+                    <ReqMark />
                     <input
                       type="date"
-                      required
                       value={values.booked_on ?? ''}
                       onChange={(e) => field('booked_on', e.target.value || null)}
                       onInput={(e) => field('booked_on', e.currentTarget.value || null)}
                     />
+                    {attempted ? <FieldError>{fieldErrors.booked_on}</FieldError> : null}
                   </label>
                 )}
-                <label className="form-field">
+                <label
+                  className={formFieldClass('form-field', attempted && !!fieldErrors.sale)}
+                >
                   Customer price (USD)
                   <input
                     inputMode="decimal"
                     placeholder="Unknown"
                     value={sale}
-                    onChange={(e) => setSale(e.target.value)}
+                    onChange={(e) => {
+                      clearField('sale');
+                      setSale(e.target.value);
+                    }}
                   />
+                  {attempted ? <FieldError>{fieldErrors.sale}</FieldError> : null}
                 </label>
-                <label className="form-field">
+                <label
+                  className={formFieldClass('form-field', attempted && !!fieldErrors.cost)}
+                >
                   Original cost (USD)
                   <input
                     inputMode="decimal"
                     placeholder="Unknown"
                     value={cost}
-                    onChange={(e) => setCost(e.target.value)}
+                    onChange={(e) => {
+                      clearField('cost');
+                      setCost(e.target.value);
+                    }}
                   />
-                  <small>Leave blank if unknown.</small>
+                  {!fieldErrors.cost && <small>Leave blank if unknown.</small>}
+                  {attempted ? <FieldError>{fieldErrors.cost}</FieldError> : null}
                 </label>
                 <label className="form-field full">
                   What happened / additional information
                   <textarea value={values.notes} onChange={(e) => field('notes', e.target.value)} />
                 </label>
-                <label className="form-field full">
+                <label
+                  className={formFieldClass(
+                    'form-field full',
+                    attempted && !!fieldErrors.reason,
+                  )}
+                >
                   Reason for correction
-                  <input required value={reason} onChange={(e) => setReason(e.target.value)} />
+                  <ReqMark />
+                  <input
+                    value={reason}
+                    onChange={(e) => {
+                      clearField('reason');
+                      setReason(e.target.value);
+                    }}
+                  />
+                  {attempted ? <FieldError>{fieldErrors.reason}</FieldError> : null}
                 </label>
               </div>
             </fieldset>
-            {error && <p role="alert">{error}</p>}
+            <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
             {submitted && error && (
-              <p>
+              <p className="note" role="status">
                 Your submitted correction is retained. Retry checks the same save without adding a
                 duplicate.
               </p>

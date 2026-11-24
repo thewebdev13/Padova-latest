@@ -20,7 +20,7 @@ const SUBJECT_PREFIX = /^(?:(?:fw|fwd|re|aw|sv)\s*:\s*)+/i;
 
 /** “W Aspen — direct booking enquiry” / “Kona Village, A Rosewood Resort — …” */
 const DIRECT_ENQUIRY =
-  /^(.+?)\s*[—–\-|:]\s*direct\s+booking\s+(?:enquir|inquir)y\b/i;
+  /^(.+?)\s*[ - –\-|:]\s*direct\s+booking\s+(?:enquir|inquir)y\b/i;
 
 const PURCHASE_REF =
   /\b(?:purchase[, ]+)?(?:reference|ref(?:erence)?\.?|confirmation|conf\.?|booking\s+ref(?:erence)?)\s*[#:]?\s*([A-Z0-9][A-Z0-9-]{3,})\b/i;
@@ -176,7 +176,7 @@ export function inferLooseIntakeHints(input: {
     ) ||
     (() => {
       const range = combined.match(
-        /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\s*[-–—to]+\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(20\d{2})\b/i,
+        /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\s*[-– - to]+\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(20\d{2})\b/i,
       );
       if (!range) return undefined;
       const mm = MONTHS[range[1].toLowerCase()];
@@ -192,7 +192,7 @@ export function inferLooseIntakeHints(input: {
   if (end) hints.travel_end = end;
   else if (start) {
     const range = combined.match(
-      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\s*[-–—to]+\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(20\d{2})\b/i,
+      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\s*[-– - to]+\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(20\d{2})\b/i,
     );
     if (range) {
       const mm = MONTHS[range[1].toLowerCase()];

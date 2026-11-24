@@ -9,7 +9,7 @@ export function historicalRecordPresentation(
     (source: Record<string, any>) =>
       Object.entries(source.original_fields ?? {}).map(([name, raw]) => ({
         name: name
-          .replace(/^[A-Z]+\s*[—–-]\s*/, '')
+          .replace(/^[A-Z]+\s*[ - –-]\s*/, '')
           .trim()
           .toLowerCase(),
         value: historicalSourceValue(raw).trim(),

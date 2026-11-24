@@ -1,5 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { FieldError, FormAlert, ReqMark, formFieldClass } from './form-feedback';
+import {
+  isEmptyFieldValue,
+  mapErrorMessageToFields,
+  requiredFieldMessage,
+  type FieldErrorMap,
+} from '@/lib/form-field-errors';
+
 export default function AuthScreen({
   onLogin,
   synthetic = false,
@@ -11,6 +19,8 @@ export default function AuthScreen({
     [token, setToken] = useState(''),
     [codes, setCodes] = useState<string[]>([]),
     [error, setError] = useState(''),
+    [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({}),
+    [attempted, setAttempted] = useState(false),
     [message, setMessage] = useState(''),
     [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -26,12 +36,25 @@ export default function AuthScreen({
     window.addEventListener('hashchange', read);
     return () => window.removeEventListener('hashchange', read);
   }, []);
+  const clearField = (key: string) =>
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  const resetFeedback = () => {
+    setError('');
+    setFieldErrors({});
+    setAttempted(false);
+    setMessage('');
+  };
   if (codes.length)
     return (
       <div className="login">
         <div className="login-card">
           {synthetic && (
-            <strong className="test-dialog-label">TEST / SYNTHETIC — PRACTICE ONLY</strong>
+            <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
           )}
           <RecoveryCodes codes={codes} />
           <button
@@ -41,7 +64,7 @@ export default function AuthScreen({
               setMode('login');
             }}
           >
-            I saved my codes — continue to sign in
+            I saved my codes. Continue to sign in
           </button>
         </div>
       </div>
@@ -50,7 +73,7 @@ export default function AuthScreen({
     <div className="login">
       <div className="login-card">
         {synthetic && (
-          <strong className="test-dialog-label">TEST / SYNTHETIC — PRACTICE ONLY</strong>
+          <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
         )}
         <div className="eyebrow">PADOVA TRAVEL · INDIVIDUAL ACCESS</div>
         <h1>
@@ -69,29 +92,58 @@ export default function AuthScreen({
         </p>
         <form
           key={mode}
+          noValidate
           onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
+            setAttempted(true);
             setError('');
             setMessage('');
             const f = new FormData(e.currentTarget);
+            const email = String(f.get('email') ?? '');
+            const password = String(f.get('password') ?? '');
+            const confirm = String(f.get('confirm') ?? '');
+            const code = String(f.get('code') ?? '');
+            const next: FieldErrorMap = {};
+            if (mode !== 'reset' && isEmptyFieldValue(email))
+              next.email = requiredFieldMessage('Individual staff email');
+            if (mode === 'code' && isEmptyFieldValue(code))
+              next.code = requiredFieldMessage('Personal recovery code');
+            if (mode !== 'request' && isEmptyFieldValue(password))
+              next.password = requiredFieldMessage(
+                mode === 'reset' || mode === 'code' ? 'New password' : 'Password',
+              );
+            else if (
+              (mode === 'reset' || mode === 'code') &&
+              password &&
+              password.length < 14
+            )
+              next.password = 'Use at least 14 characters';
+            if ((mode === 'reset' || mode === 'code') && isEmptyFieldValue(confirm))
+              next.confirm = requiredFieldMessage('Confirm new password');
+            else if ((mode === 'reset' || mode === 'code') && password !== confirm)
+              next.confirm = 'Passwords do not match';
+            if (Object.keys(next).length) {
+              setFieldErrors(next);
+              setBusy(false);
+              return;
+            }
+            setFieldErrors({});
             try {
-              if ((mode === 'reset' || mode === 'code') && f.get('password') !== f.get('confirm'))
-                throw new Error('Passwords do not match');
               const endpoint = mode === 'login' ? '/api/auth' : '/api/auth/recovery';
               const data =
                 mode === 'login'
-                  ? { email: f.get('email'), password: f.get('password') }
+                  ? { email, password }
                   : mode === 'request'
-                    ? { action: 'request', email: f.get('email') }
+                    ? { action: 'request', email }
                     : mode === 'code'
                       ? {
                           action: 'backup_code',
-                          email: f.get('email'),
-                          code: f.get('code'),
-                          password: f.get('password'),
+                          email,
+                          code,
+                          password,
                         }
-                      : { action: 'reset', token, password: f.get('password') };
+                      : { action: 'reset', token, password };
               const r = await fetch(endpoint, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -110,69 +162,101 @@ export default function AuthScreen({
                 );
               }
             } catch (err) {
-              setError((err as Error).message);
+              const msg = (err as Error).message || 'Unable to continue';
+              const mapped = mapErrorMessageToFields(msg, [
+                'email',
+                'password',
+                'confirm',
+                'code',
+              ]);
+              if (/password|credential|invalid|incorrect/i.test(msg) && !mapped.fieldErrors.password)
+                mapped.fieldErrors.password = msg;
+              if (/email|user|account/i.test(msg) && !Object.keys(mapped.fieldErrors).length)
+                mapped.fieldErrors.email = msg;
+              setFieldErrors(mapped.fieldErrors);
+              setError(
+                mapped.leftover || (Object.keys(mapped.fieldErrors).length ? '' : msg),
+              );
             } finally {
               setBusy(false);
             }
           }}
         >
           {mode !== 'reset' && (
-            <div className="form-field">
-              <label htmlFor="email">Individual staff email</label>
-              <input id="email" name="email" type="email" required autoComplete="username" />
+            <div className={formFieldClass('form-field', attempted && !!fieldErrors.email)}>
+              <label htmlFor="email">
+                Individual staff email
+                <ReqMark />
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="username"
+                onChange={() => clearField('email')}
+              />
+              {attempted ? <FieldError>{fieldErrors.email}</FieldError> : null}
             </div>
           )}
           {mode === 'code' && (
-            <div className="form-field">
-              <label htmlFor="recovery-code">Personal single-use recovery code</label>
+            <div className={formFieldClass('form-field', attempted && !!fieldErrors.code)}>
+              <label htmlFor="recovery-code">
+                Personal single-use recovery code
+                <ReqMark />
+              </label>
               <input
                 id="recovery-code"
                 name="code"
                 type="password"
-                required
                 maxLength={80}
                 autoComplete="off"
+                onChange={() => clearField('code')}
               />
+              {attempted ? <FieldError>{fieldErrors.code}</FieldError> : null}
             </div>
           )}
           {mode !== 'request' && (
-            <div className="form-field">
+            <div className={formFieldClass('form-field', attempted && !!fieldErrors.password)}>
               <label htmlFor="password">
                 {mode === 'reset' || mode === 'code' ? 'New password' : 'Password'}
+                <ReqMark />
               </label>
               <input
                 id="password"
                 name="password"
                 type="password"
-                required
                 minLength={mode === 'reset' || mode === 'code' ? 14 : undefined}
                 maxLength={500}
                 autoComplete={
                   mode === 'reset' || mode === 'code' ? 'new-password' : 'current-password'
                 }
+                onChange={() => clearField('password')}
               />
-              {(mode === 'reset' || mode === 'code') && <small>Use at least 14 characters.</small>}
+              {(mode === 'reset' || mode === 'code') && !fieldErrors.password && (
+                <small>Use at least 14 characters.</small>
+              )}
+              {attempted ? <FieldError>{fieldErrors.password}</FieldError> : null}
             </div>
           )}
           {(mode === 'reset' || mode === 'code') && (
-            <div className="form-field">
-              <label htmlFor="confirm">Confirm new password</label>
+            <div className={formFieldClass('form-field', attempted && !!fieldErrors.confirm)}>
+              <label htmlFor="confirm">
+                Confirm new password
+                <ReqMark />
+              </label>
               <input
                 id="confirm"
                 name="confirm"
                 type="password"
-                required
                 minLength={14}
                 maxLength={500}
                 autoComplete="new-password"
+                onChange={() => clearField('confirm')}
               />
+              {attempted ? <FieldError>{fieldErrors.confirm}</FieldError> : null}
             </div>
           )}
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-            </div>
-          )}
+          <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
           {message && (
             <div className="note" role="status">
               {message}
@@ -193,8 +277,7 @@ export default function AuthScreen({
           style={{ marginTop: 18 }}
           onClick={() => {
             setMode(mode === 'login' ? 'request' : 'login');
-            setError('');
-            setMessage('');
+            resetFeedback();
           }}
         >
           {mode === 'login' ? 'Forgot your password?' : 'Back to sign in'}
@@ -205,8 +288,7 @@ export default function AuthScreen({
             style={{ marginTop: 10 }}
             onClick={() => {
               setMode('code');
-              setError('');
-              setMessage('');
+              resetFeedback();
             }}
           >
             Use a personal recovery code

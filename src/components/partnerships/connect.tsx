@@ -57,7 +57,12 @@ export default function Connection({ data }: { data: R }) {
         </p>
       </section>
       {data.error ? (
-        <p role="alert">{data.error}</p>
+        <div className="form-alert" role="alert">
+          <div className="form-alert-copy">
+            <strong className="form-alert-title">Needs a fix</strong>
+            <div className="form-alert-body">{data.error}</div>
+          </div>
+        </div>
       ) : (
         <>
           <p>
@@ -69,7 +74,14 @@ export default function Connection({ data }: { data: R }) {
           </p>
         </>
       )}
-      {message && <p role="alert">{message}</p>}
+      {message ? (
+        <div className="form-alert" role="alert">
+          <div className="form-alert-copy">
+            <strong className="form-alert-title">Needs a fix</strong>
+            <div className="form-alert-body">{message}</div>
+          </div>
+        </div>
+      ) : null}
       {data.consent && (
         <section>
           <h2>Approve access for {data.consent.client.name}</h2>

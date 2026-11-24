@@ -60,7 +60,7 @@ export async function extractAudioTranscript(
       text: '',
       extractable: false,
       method: 'none',
-      note: `Voice note “${filename}”: larger than 10 MB — ask sender to split or send text/PDF.`,
+      note: `Voice note “${filename}”: larger than 10 MB, ask sender to split or send text/PDF.`,
     };
   }
 

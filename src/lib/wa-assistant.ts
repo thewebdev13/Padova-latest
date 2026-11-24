@@ -45,15 +45,14 @@ export function isWaAssistantPhone(fromNumber: string | undefined | null): boole
 }
 
 /**
- * Bridge helper may claim assistant mode (token-auth). Phone allowlist optional.
- * body.assistant=true → staff SAVE-gate path; customers still never get chat text
- * (helper routes replies to staff phones only).
+ * Staff assistant only for allowlisted phones.
+ * Bridge may send assistant=true, but that never overrides the phone allowlist —
+ * otherwise every inbound chat became staff mode and replies crossed numbers.
  */
 export function isWaAssistantRequest(
   fromNumber: string | undefined | null,
-  body?: { assistant?: unknown },
+  _body?: { assistant?: unknown },
 ): boolean {
-  if (body?.assistant === true || body?.assistant === 'true' || body?.assistant === 1) return true;
   return isWaAssistantPhone(fromNumber);
 }
 
@@ -180,7 +179,7 @@ export function mergeAssistantFields(entry: R, fields: R, staffLine?: string): R
   for (const [k, v] of Object.entries(fields)) {
     if (v == null || String(v).trim() === '') continue;
     if (k === 'notes') {
-      next.notes = [String(next.notes || ''), String(v)].filter(Boolean).join('\n').slice(0, 8000);
+      next.notes = [String(next.notes || ''), String(v)].filter(Boolean).join('\n').slice(0, 5000);
     } else next[k] = v;
   }
   const transcript = Array.isArray((next.itinerary as R | undefined)?.wa_assistant_transcript)
@@ -227,11 +226,11 @@ export function stampAssistantDraftEntry(
     notes: [
       String(entry.notes || ''),
       'WhatsApp assistant session. Say SAVE when ready, or CANCEL to keep draft only.',
-      opts.raw_text ? `Inbound:\n${String(opts.raw_text).slice(0, 3000)}` : '',
+      opts.raw_text ? `Inbound:\n${String(opts.raw_text).slice(0, 2000)}` : '',
     ]
       .filter(Boolean)
       .join('\n\n')
-      .slice(0, 8000),
+      .slice(0, 5000),
   };
 }
 
@@ -240,29 +239,20 @@ export async function findOpenAssistantDraft(
   fromNumber: string,
 ): Promise<{ id: string; title: string; entry: R; created_at?: string } | null> {
   const n = digits(fromNumber);
-  // Prefer draft tied to this staff phone; else latest open assistant draft (multi-PC staff).
+  // Strict: only this staff phone's open draft. Never borrow another number's session
+  // (that caused cross-phone reply loops when several staff phones were allowlisted).
+  if (!n) return null;
   const rows = (
     await db.query(
       `SELECT id, title, entry, created_at::text AS created_at FROM booking_drafts
        WHERE entry->'itinerary'->>'wa_assistant' = 'true'
          AND COALESCE(entry->'itinerary'->>'wa_assistant_status','') IN ('awaiting_confirm','awaiting_answers')
          AND (
-           $1 = ''
-           OR entry->'itinerary'->>'wa_assistant_from' = $1
+           entry->'itinerary'->>'wa_assistant_from' = $1
            OR right(regexp_replace(COALESCE(entry->'itinerary'->>'wa_assistant_from',''), '\\D', '', 'g'), 10)
               = right($1, 10)
-           OR COALESCE(entry->'itinerary'->>'wa_assistant_from','') = ''
          )
-       ORDER BY
-         CASE
-           WHEN $1 <> '' AND (
-             entry->'itinerary'->>'wa_assistant_from' = $1
-             OR right(regexp_replace(COALESCE(entry->'itinerary'->>'wa_assistant_from',''), '\\D', '', 'g'), 10)
-                = right($1, 10)
-           ) THEN 0
-           ELSE 1
-         END,
-         created_at DESC
+       ORDER BY created_at DESC
        LIMIT 1`,
       [n],
     )
@@ -302,14 +292,25 @@ export async function confirmAssistantSave(
   itinerary.created_by = 'ai';
   entry.itinerary = itinerary;
   entry.ai_created = true;
+  // Hotel city/place often extracted as "route" — move to location before live promote.
+  const product = String(entry.product || '').trim();
+  if (product === 'Hotel') {
+    const place = String(entry.location || entry.route || '').trim();
+    if (place) entry.location = place;
+    delete entry.route;
+  }
+  // Keep booking notes within schema max (5000). Full WA transcript stays in itinerary.
+  const priorNotes = String(entry.notes || '').trim();
   entry.notes = [
-    String(entry.notes || ''),
+    priorNotes.slice(0, 4200),
     'Confirmed via WhatsApp assistant SAVE.',
-    `Transcript:\n${transcript.join('\n---\n')}`.slice(0, 6000),
+    transcript.length
+      ? `WA assistant turns kept: ${transcript.length} (full transcript in itinerary).`
+      : '',
   ]
     .filter(Boolean)
     .join('\n\n')
-    .slice(0, 8000);
+    .slice(0, 5000);
 
   const promote = await maybePromoteIntakeToLiveBooking(db, actor, {
     draft_id: draft.id,
@@ -358,7 +359,7 @@ export async function confirmAssistantSave(
     entry,
     reply: polishHumanChat(
       [
-        `Could not go live yet${promote.reason ? ` (${promote.reason})` : ''}. Draft is still here.`,
+        `Could not go live yet. ${humanizePromoteReason(promote.reason)} Draft is still here.`,
         ask.length
           ? `Still need:\n${ask.map((q) => `- ${q.replace(/\s*\(reply:.*?\)\s*$/i, '')}`).join('\n')}`
           : '',
@@ -368,6 +369,36 @@ export async function confirmAssistantSave(
         .join('\n'),
     ),
   };
+}
+
+/** Staff-readable promote failure (never dump raw Zod JSON into WhatsApp). */
+export function humanizePromoteReason(reason: string | undefined): string {
+  const raw = String(reason || '').trim();
+  if (!raw) return '';
+  if (/too_big|expected string to have <=5000/i.test(raw) || /"path".*"notes"/i.test(raw)) {
+    return 'Notes were too long for a live booking. I trimmed them, say SAVE again.';
+  }
+  if (/route is incompatible with Hotel/i.test(raw)) {
+    return 'Hotel place was in the wrong field. I fixed that — say SAVE again.';
+  }
+  if (/is incompatible with/i.test(raw)) {
+    return 'One field did not match the booking type. I adjusted it — say SAVE again, or open the draft in Padova.';
+  }
+  if (/ai_intake_disabled|auto_live_disabled/i.test(raw)) {
+    return 'Auto live is off. Open the draft in Padova and Save Booking there.';
+  }
+  if (/product_unknown/i.test(raw)) return 'Booking type is still blank.';
+  if (/travel_dates_unknown/i.test(raw)) return 'Travel dates are still blank.';
+  if (/identity_or_confirmation_unknown/i.test(raw)) {
+    return 'Customer or confirmation is still unclear.';
+  }
+  if (/not_booking_confirmation/i.test(raw)) {
+    return 'That file does not look like a reservation confirmation.';
+  }
+  if (raw.length > 160 || raw.startsWith('[') || raw.startsWith('{')) {
+    return 'Padova rejected the live save. Open the draft in Bookings and finish there if needed.';
+  }
+  return raw.endsWith('.') ? raw : `${raw}.`;
 }
 
 export function isAssistantFollowUpText(text: string): boolean {

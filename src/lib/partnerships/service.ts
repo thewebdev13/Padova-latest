@@ -648,7 +648,7 @@ export async function executePartnership(
           organization_id: data.organization_id,
           review_id: data.id,
           actor_id: actor.id,
-          reason: command.reason + ' — ' + data.resolution,
+          reason: command.reason + ', ' + data.resolution,
           version: Number(latest?.version ?? 0) + 1,
         });
         await audit(

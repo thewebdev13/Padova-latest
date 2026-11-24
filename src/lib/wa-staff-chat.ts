@@ -108,7 +108,13 @@ export function classifyStaffChatIntent(text: string): StaffChatIntent {
   )
     return 'report';
   if (
-    /\b(pending|missing|unpaid|overdue|reminder|status|overview|desk|pulse|backlog|needs?\s*review|open\s*drafts?|how\s*many|anything\s*(open|left|missing|pending)|catch\s*me\s*up)\b/.test(
+    /\b(is|was|did|has|have)\b/.test(t) &&
+    /\b(booking|draft|reservation)\b/.test(t) &&
+    /\b(created|create|made|saved|done|ready|posted|live|filed)\b/.test(t)
+  )
+    return 'ops';
+  if (
+    /\b(pending|missing|unpaid|overdue|reminder|status|overview|desk|pulse|backlog|needs?\s*review|open\s*drafts?|how\s*many|anything\s*(open|left|missing|pending)|catch\s*me\s*up|create\s*(a\s*)?booking|booking\s*created|draft\s*created)\b/.test(
       t,
     )
   )
@@ -318,6 +324,118 @@ export function formatStaffGuideReply(question: string): string {
 /** Default first-touch greeting with clean choices. */
 export function formatStaffGreeting(memory?: StaffChatMemory): string {
   return formatStaffOpeningReply('hi', memory).text;
+}
+
+/**
+ * Answer a staff question from DB reminder facts (no invented money).
+ * Prefer this over a generic menu whenever we have desk data.
+ */
+export function formatStaffFactReply(input: {
+  question: string;
+  as_of: string;
+  counts: Record<string, number>;
+  items: { kind: string; title: string; detail?: string; urgency: string }[];
+  openDraft?: { id: string; title: string } | null;
+}): string {
+  const q = String(input.question || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.…]+$/g, '');
+  const counts = input.counts || {};
+  const items = input.items || [];
+  const drafts = counts['Open draft'] || 0;
+  const intakeReview = counts['Intake needs review'] || 0;
+  const unpaid = counts['Customer unpaid'] || 0;
+  const missingSale = counts['Missing sale price'] || 0;
+  const openDraft = input.openDraft;
+
+  const askingCreated =
+    /\b(is|was|did|has|have)\b/.test(q) &&
+    /\b(booking|draft|reservation|it)\b/.test(q) &&
+    /\b(created|create|made|saved|done|ready|posted|live|filed)\b/.test(q);
+  if (askingCreated) {
+    if (openDraft) {
+      return polishHumanChat(
+        [
+          'Not a live booking yet.',
+          `Open draft waiting: ${openDraft.title || openDraft.id}.`,
+          `Drafts: ${padovaPageUrl('Bookings')}`,
+          'Reply SAVE here after you review, or finish Save Booking in Padova.',
+        ].join('\n'),
+      );
+    }
+    const draftItems = items.filter((i) => /draft|intake/i.test(i.kind)).slice(0, 5);
+    if (draftItems.length) {
+      return polishHumanChat(
+        [
+          'No draft tied to this chat, but Padova still has open drafts:',
+          ...draftItems.map((i) => `- ${i.title}`),
+          `Open: ${padovaPageUrl('Bookings')}`,
+        ].join('\n'),
+      );
+    }
+    return polishHumanChat(
+      [
+        'I do not see an open draft from this chat, and the desk list has no open drafts right now.',
+        'Send the reservation PDF/screenshot and I will create a draft first.',
+      ].join('\n'),
+    );
+  }
+
+  if (/\b(how many|count|number of)\b/.test(q) && /\bdrafts?\b/.test(q)) {
+    return polishHumanChat(
+      `As of ${input.as_of}: ${drafts} open draft${drafts === 1 ? '' : 's'}${
+        intakeReview ? `, ${intakeReview} needing review` : ''
+      }. ${padovaPageUrl('Bookings')}`,
+    );
+  }
+
+  if (/\b(unpaid|balance|owes?|receivable)\b/.test(q)) {
+    const list = items.filter((i) => i.kind === 'Customer unpaid').slice(0, 6);
+    if (!list.length) {
+      return polishHumanChat(
+        `As of ${input.as_of}: no unpaid customer balances in the reminder list.`,
+      );
+    }
+    return polishHumanChat(
+      [
+        `Unpaid (${unpaid}) as of ${input.as_of}:`,
+        ...list.map((i) => `- ${i.title}${i.detail ? ` · ${i.detail}` : ''}`),
+        `Payments: ${padovaPageUrl('Payments')}`,
+      ].join('\n'),
+    );
+  }
+
+  if (/\b(missing sale|sale price|unknown sale)\b/.test(q)) {
+    const list = items.filter((i) => i.kind === 'Missing sale price').slice(0, 6);
+    if (!list.length) {
+      return polishHumanChat(`As of ${input.as_of}: no bookings flagged for missing sale price.`);
+    }
+    return polishHumanChat(
+      [
+        `Missing sale (${missingSale}):`,
+        ...list.map((i) => `- ${i.title}`),
+        `Attention: ${padovaPageUrl('Attention')}`,
+      ].join('\n'),
+    );
+  }
+
+  if (/\b(drafts?|pending|missing|desk|status|overview|what('?s| is) (open|left)|anything)\b/.test(q)) {
+    return formatStaffOpsBriefing({
+      as_of: input.as_of,
+      counts,
+      items,
+      full: /\b(report|full|list|summary)\b/.test(q),
+    });
+  }
+
+  // Default: real desk snapshot, not an empty menu.
+  return formatStaffOpsBriefing({
+    as_of: input.as_of,
+    counts,
+    items,
+    full: false,
+  });
 }
 
 export function formatStaffOpsBriefing(input: {

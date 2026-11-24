@@ -2,6 +2,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import SearchableSelect from './searchable-select';
+import { FieldError, FormAlert } from './form-feedback';
 
 type R = Record<string, any>;
 
@@ -50,6 +51,8 @@ export default function CommissionBundleForm({
 }) {
   const dialog = useRef<HTMLFormElement>(null);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [bookingId, setBookingId] = useState(String(config.defaults?.booking_id || ''));
@@ -98,7 +101,16 @@ export default function CommissionBundleForm({
     label: `${r.name}${r.location ? ` · ${r.location}` : ''}`,
   }));
 
+  const clearFieldError = (key: string) =>
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
   const updatePayer = (index: number, patch: Partial<PayerRow>) => {
+    for (const key of Object.keys(patch)) clearFieldError(`payer_${index}_${key}`);
     setPayers((rows) =>
       rows.map((row, i) => {
         if (i !== index) {
@@ -129,22 +141,57 @@ export default function CommissionBundleForm({
     }
   })();
 
+  useEffect(() => {
+    if (!attempted || !dialog.current) return;
+    const first = dialog.current.querySelector<HTMLElement>('.form-field.has-error, .commission-field.has-error');
+    first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [attempted, fieldErrors]);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    setAttempted(true);
     setError('');
-    setBusy(true);
-    try {
-      if (!bookingId) throw new Error('Choose the booking');
-      if (!date) throw new Error('Effective date defaults to today — enter a date');
-      const built = payers.map((p, i) => {
-        if (!p.payer_id) throw new Error(`Choose payer ${i + 1}`);
+    const nextErrors: Record<string, string> = {};
+    if (!bookingId) nextErrors.booking_id = 'Choose the booking';
+    if (!date) nextErrors.date = 'Enter the effective date';
+    payers.forEach((p, i) => {
+      if (!p.payer_id) nextErrors[`payer_${i}_payer_id`] = `Choose payer ${i + 1}`;
+      try {
         const gross = parseUsd(p.gross);
         if (gross == null || gross <= 0)
-          throw new Error(`Enter gross commission for payer ${i + 1}`);
-        if (!p.due_on) throw new Error(`Enter expected by date for payer ${i + 1}`);
+          nextErrors[`payer_${i}_gross`] = `Enter gross commission for payer ${i + 1}`;
+        else {
+          const retained = parseUsd(p.retained) ?? 0;
+          if (retained > gross)
+            nextErrors[`payer_${i}_retained`] = 'Collector retention exceeds commission';
+        }
+      } catch {
+        nextErrors[`payer_${i}_gross`] = 'Enter an exact dollar amount';
+      }
+      if (!p.due_on) nextErrors[`payer_${i}_due_on`] = `Enter expected by date for payer ${i + 1}`;
+    });
+    if (payOutActive) {
+      if (!referral.reason.trim())
+        nextErrors.referral_reason = 'Enter the reason / agreement source';
+      try {
+        const amt = parseUsd(referral.fixed_amount);
+        if (amt == null || amt <= 0)
+          nextErrors.referral_amount = 'Enter amount Padova owes';
+      } catch {
+        nextErrors.referral_amount = 'Enter an exact dollar amount';
+      }
+    }
+    if (Object.keys(nextErrors).length) {
+      setFieldErrors(nextErrors);
+      return;
+    }
+    setFieldErrors({});
+    setBusy(true);
+    try {
+      const built = payers.map((p) => {
+        const gross = parseUsd(p.gross)!;
         const retained = parseUsd(p.retained) ?? 0;
-        if (retained > gross) throw new Error('Collector retention exceeds commission');
         return {
           payer_id: p.payer_id,
           collector_id: p.collector_id || null,
@@ -160,9 +207,7 @@ export default function CommissionBundleForm({
         payers: built,
       };
       if (payOutActive) {
-        if (!referral.reason.trim()) throw new Error('Enter the reason / agreement source');
-        const amt = parseUsd(referral.fixed_amount);
-        if (amt == null || amt <= 0) throw new Error('Enter amount Padova owes');
+        const amt = parseUsd(referral.fixed_amount)!;
         payload.referral = {
           referrer_id: referral.referrer_id,
           basis: 'fixed',
@@ -213,6 +258,7 @@ export default function CommissionBundleForm({
         className="modal commission-bundle"
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
+        noValidate
         role="dialog"
         aria-modal="true"
         aria-labelledby="commission-bundle-title"
@@ -221,7 +267,7 @@ export default function CommissionBundleForm({
           <div>
             <h2 id="commission-bundle-title">Add commission</h2>
             <p>
-              Who owes Padova (receivable). Affiliate payout is separate — set Referring
+              Who owes Padova (receivable). Affiliate payout is separate, set Referring
               organization on the booking when possible.
             </p>
           </div>
@@ -231,7 +277,9 @@ export default function CommissionBundleForm({
         </div>
 
         <div className="modal-body commission-bundle-body">
-          <label className="commission-field">
+          <label
+            className={`commission-field form-field ${attempted && fieldErrors.booking_id ? 'has-error' : ''}`}
+          >
             <span>
               Booking <abbr title="required">*</abbr>
             </span>
@@ -240,16 +288,19 @@ export default function CommissionBundleForm({
               label="Booking"
               value={bookingId}
               options={bookingOptions}
-              onChange={setBookingId}
-              required
+              onChange={(id) => {
+                clearFieldError('booking_id');
+                setBookingId(id);
+              }}
             />
+            {attempted ? <FieldError>{fieldErrors.booking_id}</FieldError> : null}
           </label>
 
           <p className="commission-model-hint">
             <strong>IATA partner</strong> = agency that keeps supplier commission and owes Padova
             ~90% of profit (mark the checkbox). <strong>Secondary</strong> = another party that also
             owes Padova on this booking (add another payer, leave IATA unchecked).{' '}
-            <strong>Referring org</strong> = Padova owes them — prefer booking affiliate field, not
+            <strong>Referring org</strong> = Padova owes them, prefer booking affiliate field, not
             a second payout here.
           </p>
 
@@ -283,11 +334,13 @@ export default function CommissionBundleForm({
                       updatePayer(index, { is_iata_partner: e.target.checked })
                     }
                   />
-                  <span>IATA partner (owes Padova the partner split — usually ~90%)</span>
+                  <span>IATA partner (owes Padova the partner split, usually ~90%)</span>
                 </label>
 
                 <div className="commission-payer-row commission-payer-row--inline">
-                  <label className="commission-field commission-field--payer">
+                  <label
+                    className={`commission-field commission-field--payer form-field ${attempted && fieldErrors[`payer_${index}_payer_id`] ? 'has-error' : ''}`}
+                  >
                     <span>
                       Commission payer <abbr title="required">*</abbr>
                     </span>
@@ -305,10 +358,14 @@ export default function CommissionBundleForm({
                         if (id === '__add__') void addPayerParty(index);
                         else updatePayer(index, { payer_id: id });
                       }}
-                      required
                     />
+                    {attempted ? (
+                      <FieldError>{fieldErrors[`payer_${index}_payer_id`]}</FieldError>
+                    ) : null}
                   </label>
-                  <label className="commission-field commission-field--gross">
+                  <label
+                    className={`commission-field commission-field--gross form-field ${attempted && fieldErrors[`payer_${index}_gross`] ? 'has-error' : ''}`}
+                  >
                     <span>
                       Gross commission <abbr title="required">*</abbr>
                     </span>
@@ -318,24 +375,30 @@ export default function CommissionBundleForm({
                         type="number"
                         step="0.01"
                         min="0"
-                        required
                         inputMode="decimal"
                         value={p.gross}
                         onChange={(e) => updatePayer(index, { gross: e.target.value })}
                         aria-label={`Gross commission payer ${index + 1}`}
                       />
                     </div>
+                    {attempted ? (
+                      <FieldError>{fieldErrors[`payer_${index}_gross`]}</FieldError>
+                    ) : null}
                   </label>
-                  <label className="commission-field commission-field--due">
+                  <label
+                    className={`commission-field commission-field--due form-field ${attempted && fieldErrors[`payer_${index}_due_on`] ? 'has-error' : ''}`}
+                  >
                     <span>
                       Expected by <abbr title="required">*</abbr>
                     </span>
                     <input
                       type="date"
-                      required
                       value={p.due_on}
                       onChange={(e) => updatePayer(index, { due_on: e.target.value })}
                     />
+                    {attempted ? (
+                      <FieldError>{fieldErrors[`payer_${index}_due_on`]}</FieldError>
+                    ) : null}
                   </label>
                 </div>
               </article>
@@ -357,7 +420,7 @@ export default function CommissionBundleForm({
 
           {existingReferral ? (
             <p className="commission-note">
-              This booking already has a referring-org payable. Record who owes Padova here only —
+              This booking already has a referring-org payable. Record who owes Padova here only  - 
               do not post a second referrer payout.
             </p>
           ) : (
@@ -380,7 +443,9 @@ export default function CommissionBundleForm({
                   onChange={(id) => setReferral((r) => ({ ...r, referrer_id: id }))}
                 />
               </label>
-              <label className="commission-field">
+              <label
+                className={`commission-field form-field ${attempted && fieldErrors.referral_amount ? 'has-error' : ''}`}
+              >
                 <span>Amount Padova owes</span>
                 <div className="commission-money-input">
                   <span aria-hidden>$</span>
@@ -390,16 +455,21 @@ export default function CommissionBundleForm({
                     min="0"
                     inputMode="decimal"
                     value={referral.fixed_amount}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      clearFieldError('referral_amount');
                       setReferral((r) => ({
                         ...r,
                         basis: 'fixed',
                         fixed_amount: e.target.value,
-                      }))
-                    }
+                      }));
+                    }}
                   />
                 </div>
-                <small>Saved as a Commission payable on the same booking.</small>
+                {attempted && fieldErrors.referral_amount ? (
+                  <FieldError>{fieldErrors.referral_amount}</FieldError>
+                ) : (
+                  <small>Saved as a Commission payable on the same booking.</small>
+                )}
               </label>
             </section>
           )}
@@ -479,11 +549,9 @@ export default function CommissionBundleForm({
             </div>
           </details>
 
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
+          {Object.keys(fieldErrors).length === 0 ? (
+            <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
+          ) : null}
         </div>
 
         <div className="modal-footer commission-bundle-foot">

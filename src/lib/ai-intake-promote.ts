@@ -8,7 +8,11 @@ import {
   aiIntakeEnabled,
   aiProvider,
 } from './claude-intake';
-import { isPadovaInternalNoise } from './booking-message-detect';
+import {
+  isPadovaInternalNoise,
+  isScheduleChangeNotice,
+  intakeReservationBlockReason,
+} from './booking-message-detect';
 import { businessDate } from './business-date';
 
 type R = Record<string, unknown>;
@@ -72,7 +76,7 @@ async function resolveOrCreateParty(
   const found = await findExactParty(db, name, role);
   if (found === 'ambiguous') {
     return {
-      blocked: `Multiple ${role} records named “${name}” — choose in the app before live save.`,
+      blocked: `Multiple ${role} records named “${name}”, choose in the app before live save.`,
     };
   }
   if (found) return found;
@@ -153,7 +157,17 @@ export async function maybePromoteIntakeToLiveBooking(
       reason: 'internal_digest_skipped',
       draft_id,
       summary:
-        'This looks like a Padova desk reminder/alert — not a reservation. Draft kept; will not create a live booking.',
+        'This looks like a Padova desk reminder/alert, not a reservation. Draft kept; will not create a live booking.',
+    };
+  }
+  if (isScheduleChangeNotice(rawProbe) || intakeReservationBlockReason(rawProbe)) {
+    return {
+      live: false,
+      reason: 'not_booking_confirmation',
+      draft_id,
+      summary:
+        intakeReservationBlockReason(rawProbe) ||
+        'This looks like a flight change / info notice, not a new booking. Draft kept; will not create a live booking.',
     };
   }
   const product = String(entry.product || '').trim();
@@ -162,7 +176,7 @@ export async function maybePromoteIntakeToLiveBooking(
       live: false,
       reason: 'product_unknown',
       draft_id,
-      summary: 'Draft saved. Product still Unknown — open draft to finish live booking.',
+      summary: 'Draft saved. Product still Unknown, open draft to finish live booking.',
     };
   }
 
@@ -173,7 +187,7 @@ export async function maybePromoteIntakeToLiveBooking(
       reason: 'travel_dates_unknown',
       draft_id,
       summary:
-        'Draft saved with AI fields. Travel dates still Unknown — open draft to set dates then Save Booking.',
+        'Draft saved with AI fields. Travel dates still Unknown, open draft to set dates then Save Booking.',
     };
   }
 
@@ -207,7 +221,7 @@ export async function maybePromoteIntakeToLiveBooking(
       reason: 'identity_or_confirmation_unknown',
       draft_id,
       summary:
-        'Draft saved. Need traveler/customer name or confirmation/PNR before a live booking — open draft to finish.',
+        'Draft saved. Need traveler/customer name or confirmation/PNR before a live booking, open draft to finish.',
     };
   }
 
@@ -250,24 +264,37 @@ export async function maybePromoteIntakeToLiveBooking(
   const saleCents = parseUsdToCents(entry.sale);
   const sale_known = saleCents !== undefined;
 
+  // Hotel place often lands in `route` from AI/WA paste — form field is location.
+  // Never post Flight-only `route` on a Hotel (assertBookingProductData rejects it).
+  const placeOrRoute = String(entry.location || entry.route || '').trim();
+  if (product === 'Hotel') {
+    if (placeOrRoute && !String(entry.location || '').trim()) entry.location = placeOrRoute;
+    delete entry.route;
+  }
+
   const booked_on = await businessDate(db);
   const primaryRef = String(entry.primary_reference || '').trim();
   const summary =
     String(entry.reservation_summary || '').trim() ||
-    [product, entry.route, primaryRef, input.title].filter(Boolean).join(' · ').slice(0, 500) ||
+    [product, product === 'Hotel' ? entry.location : entry.route, primaryRef, input.title]
+      .filter(Boolean)
+      .join(' · ')
+      .slice(0, 500) ||
     'AI intake booking';
 
+  // Schema max 5000 — PDF/WA intake can otherwise blow notes and block SAVE.
   const notes = [
     String(entry.notes || '').trim(),
     aiDisclaimerLine(aiProvider()),
     sale_known ? '' : 'Customer price: Unknown (Needs Review).',
     customerName === 'Unknown' ? 'Customer identity: Unknown (Needs Review).' : '',
     (input.issues || []).length
-      ? `Intake issues:\n- ${(input.issues || []).slice(0, 12).join('\n- ')}`
+      ? `Intake issues:\n- ${(input.issues || []).slice(0, 8).join('\n- ')}`
       : '',
   ]
     .filter(Boolean)
-    .join('\n\n');
+    .join('\n\n')
+    .slice(0, 5000);
 
   const refType =
     product === 'Hotel'
@@ -305,28 +332,34 @@ export async function maybePromoteIntakeToLiveBooking(
             details: {
               end_date_known: travel_end !== travel_start || product !== 'Flight',
               confirmations: primaryRef ? [primaryRef] : [],
-              route: entry.route ? String(entry.route) : undefined,
               reservation_summary: summary,
               summary_generated: true,
               reservation_summary_generated: !entry.summary_override,
-              flight_numbers: entry.flight_numbers
-                ? String(entry.flight_numbers)
-                    .split(/[,;\s]+/)
-                    .filter(Boolean)
-                : undefined,
-              ticket_numbers: entry.ticket_numbers
-                ? String(entry.ticket_numbers)
-                    .split(/[,;\s]+/)
-                    .filter(Boolean)
-                : undefined,
-              cabin: entry.cabin ? String(entry.cabin) : undefined,
-              room_type: entry.room_type ? String(entry.room_type) : undefined,
               traveler_ids,
+              ...(product === 'Flight'
+                ? {
+                    route: entry.route ? String(entry.route) : undefined,
+                    flight_numbers: entry.flight_numbers
+                      ? String(entry.flight_numbers)
+                          .split(/[,;\s]+/)
+                          .filter(Boolean)
+                      : undefined,
+                    ticket_numbers: entry.ticket_numbers
+                      ? String(entry.ticket_numbers)
+                          .split(/[,;\s]+/)
+                          .filter(Boolean)
+                      : undefined,
+                    cabin: entry.cabin ? String(entry.cabin) : undefined,
+                  }
+                : {}),
+              ...(product === 'Hotel'
+                ? {
+                    hotel_address: String(entry.location || placeOrRoute || '').trim() || undefined,
+                    room_type: entry.room_type ? String(entry.room_type) : undefined,
+                  }
+                : {}),
               ...(product === 'Other' && entry.description
                 ? { description: String(entry.description) }
-                : {}),
-              ...(product === 'Hotel' && entry.location
-                ? { hotel_address: String(entry.location) }
                 : {}),
             },
           },
@@ -387,8 +420,8 @@ export async function maybePromoteIntakeToLiveBooking(
       needs_review: true,
       summary: [
         `AI created live booking${code ? ` ${code}` : ''}: ${summary}`,
-        sale_known ? '' : 'Customer price Unknown — Needs Review.',
-        customerName === 'Unknown' ? 'Customer Unknown — Needs Review.' : '',
+        sale_known ? '' : 'Customer price Unknown, Needs Review.',
+        customerName === 'Unknown' ? 'Customer Unknown, Needs Review.' : '',
         aiDisclaimerLine(aiProvider()),
       ]
         .filter(Boolean)
@@ -400,7 +433,7 @@ export async function maybePromoteIntakeToLiveBooking(
       draft_id,
       reason: e instanceof Error ? e.message : 'live_booking_failed',
       summary:
-        'Draft saved. Live booking not created automatically — open the draft and Save Booking after review.',
+        'Draft saved. Live booking not created automatically, open the draft and Save Booking after review.',
     };
   }
 }

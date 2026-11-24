@@ -182,7 +182,7 @@ export function parseQuickPaste(raw: string): PastePreview {
     const status = parsePaymentStatus(fields[key]);
     if (!status)
       issues.push(
-        `${label}: unsupported status “${fields[key]}” — unresolved; no payment is proposed`,
+        `${label}: unsupported status “${fields[key]}”, unresolved; no payment is proposed`,
       );
     if (status === 'Partial' && !fields[amount])
       issues.push(`${label}: Partial requires an actual amount paid/received`);
