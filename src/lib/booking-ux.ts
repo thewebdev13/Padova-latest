@@ -52,6 +52,12 @@ const KNOWN_AIRPORT_CODES = new Set([
   'ZRH',
   'MNL',
   'BKK',
+  'BCN',
+  'ATL',
+  'SFO',
+  'SEA',
+  'YYZ',
+  'YUL',
 ]);
 
 /** Prefer leading IATA when a label like "JFK New York" was pasted. */
@@ -72,6 +78,17 @@ function splitRouteParts(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** ORIGIN-DEST-ORIGIN (e.g. TLV-BCN-TLV) means round trip From ORIGIN To DEST — not same airport both sides. */
+function roundTripEndpoints(parts: string[]): { origin: string; destination: string } | null {
+  if (parts.length < 3) return null;
+  const first = airportToken(parts[0]);
+  const last = airportToken(parts[parts.length - 1]);
+  if (!first || !last || first.toUpperCase() !== last.toUpperCase()) return null;
+  const mid = airportToken(parts[1]);
+  if (!mid || mid.toUpperCase() === first.toUpperCase()) return null;
+  return { origin: first, destination: mid };
+}
+
 export function flightEndpoints(values: Record<string, any>) {
   const originRaw = String(values.origin ?? '').trim();
   const destRaw = String(values.destination ?? '').trim();
@@ -82,6 +99,8 @@ export function flightEndpoints(values: Record<string, any>) {
   if (originSet && !destSet) {
     const fromOrigin = splitRouteParts(originRaw);
     if (fromOrigin.length >= 2) {
+      const round = roundTripEndpoints(fromOrigin);
+      if (round) return { ...round, roundTripHint: true as const };
       return {
         origin: airportToken(fromOrigin[0]),
         destination: airportToken(fromOrigin[fromOrigin.length - 1]),
@@ -89,16 +108,25 @@ export function flightEndpoints(values: Record<string, any>) {
     }
   }
 
+  const raw = String(values.route ?? '').trim();
+  const routeParts = splitRouteParts(raw);
+  // Same airport in From+To is often a bad ORIGIN-DEST-ORIGIN paste — prefer route when present.
   if (originSet && destSet) {
+    const same =
+      airportToken(originRaw).toUpperCase() === airportToken(destRaw).toUpperCase() &&
+      airportToken(originRaw) !== '';
+    const round = same ? roundTripEndpoints(routeParts) : null;
+    if (round) return { ...round, roundTripHint: true as const };
     return {
       origin: airportToken(originRaw),
       destination: airportToken(destRaw),
     };
   }
-  const raw = String(values.route ?? '').trim();
   // Accept CODE-CODE, arrows, and prose "JFK New York to TLV" / "JFK to Tel Aviv".
-  const parts = splitRouteParts(raw);
+  const parts = routeParts;
   if (parts.length >= 2) {
+    const round = roundTripEndpoints(parts);
+    if (round) return { ...round, roundTripHint: true as const };
     return {
       origin: airportToken(parts[0]),
       destination: airportToken(parts[parts.length - 1]),

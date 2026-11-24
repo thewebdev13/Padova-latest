@@ -176,14 +176,14 @@ function OptionalSummary({
   filled = 0,
 }: {
   title: string;
-  hint: string;
+  hint?: string;
   filled?: number;
 }) {
   return (
     <summary>
       <span>
         <strong>{title}</strong>
-        <small>{hint}</small>
+        {hint ? <small>{hint}</small> : null}
       </span>
       <span className="optional-tag">{filled ? `${filled} filled` : 'Optional'}</span>
     </summary>
@@ -403,11 +403,11 @@ export default function BookingEntry(props: Props) {
       setBusy(false);
     }
   };
-  const travelerInput = useRef<HTMLTextAreaElement>(null);
+  const travelerInput = useRef<HTMLInputElement>(null);
   const [travelerResults, setTravelerResults] = useState<R[]>([]);
   const [travelerSearching, setTravelerSearching] = useState(false);
   const [travelerSearchFailed, setTravelerSearchFailed] = useState(false);
-  const travelerCreation = useRef<{ name: string; key: string } | null>(null);
+  const travelerCreation = useRef<{ name: string; key: string; pending?: boolean } | null>(null);
   useEffect(() => {
     if (travelerNames(traveler).length > 1) {
       const timer = setTimeout(() => void reviewTravelers(traveler), 180);
@@ -693,15 +693,11 @@ export default function BookingEntry(props: Props) {
                       email: extras?.email || '',
                       details,
                     };
-                    setBusy(true);
-                    try {
-                      const result = await onInlineCommand('party', data, commandKey);
-                      const row = { ...data, ...result };
-                      setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), row] }));
-                      return row;
-                    } finally {
-                      setBusy(false);
-                    }
+                    // Do not lock the whole booking form — party create is local + fast.
+                    const result = await onInlineCommand('party', data, commandKey);
+                    const row = { ...data, ...result };
+                    setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), row] }));
+                    return row;
                   }
                 : undefined
             }
@@ -753,8 +749,8 @@ export default function BookingEntry(props: Props) {
           />
         )}
       </>
-      <div className="inline-actions">
-        {source === 'bookingSourceProfiles' && onInlineCommand && (
+      {source === 'bookingSourceProfiles' && onInlineCommand && !value ? (
+        <div className="inline-actions">
           <button
             type="button"
             className="btn small"
@@ -772,19 +768,14 @@ export default function BookingEntry(props: Props) {
           >
             + New profile
           </button>
-        )}
-        {!!value && (
-          <button type="button" className="btn small" onClick={() => set('')}>
-            Clear
-          </button>
-        )}
-      </div>
+        </div>
+      ) : null}
     </Field>
   );
   const addTraveler = async (editDetails = false) => {
     const name = traveler.trim();
-    if (!name || busy || travelerSearching || travelerSearchFailed) return;
-    setBusy(true);
+    if (!name || travelerSearching || travelerSearchFailed || travelerCreation.current?.pending)
+      return;
     setError('');
     try {
       const exact = [...travelerResults, ...rows('parties')]
@@ -805,8 +796,10 @@ export default function BookingEntry(props: Props) {
       }
       if (exact.length > 1) throw Error('Choose which existing traveler to use.');
       if (!onInlineCommand) throw new Error('Inline traveler creation unavailable');
-      if (travelerCreation.current?.name !== name)
-        travelerCreation.current = { name, key: crypto.randomUUID() };
+      const existingTravelerCreate = travelerCreation.current;
+      if (!existingTravelerCreate || existingTravelerCreate.name !== name)
+        travelerCreation.current = { name, key: crypto.randomUUID(), pending: true };
+      else existingTravelerCreate.pending = true;
       const data = { name, kind: 'person', roles: ['traveler'] };
       const result = await onInlineCommand('party', data, travelerCreation.current!.key);
       setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), { ...data, ...result }] }));
@@ -817,8 +810,7 @@ export default function BookingEntry(props: Props) {
       if (editDetails) setTravelerDetailsId(result.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create traveler');
-    } finally {
-      setBusy(false);
+      if (travelerCreation.current) travelerCreation.current.pending = false;
     }
   };
   const method = rows('bookingSourceMethods').find((m) => m.id === v.source_method_id);
@@ -1073,13 +1065,6 @@ export default function BookingEntry(props: Props) {
       if (p[key] !== undefined)
         next[key] = ['sale', 'tax_amount'].includes(key) ? amount(key) : p[key];
     if (next.product === 'Hotel' && p.route && !next.location) next.location = p.route;
-    if (next.product === 'Flight' && p.route) {
-      const endpoints = flightEndpoints({ route: p.route });
-      next.origin = endpoints.origin;
-      next.destination = endpoints.destination;
-      if (endpoints.origin && endpoints.destination)
-        next.route = `${endpoints.origin}-${endpoints.destination}`;
-    }
     if (p.customer)
       next.intake_customer_label =
         /^(unknown|n\/a|not applicable)$/i.test(p.customer) ? '' : p.customer;
@@ -1091,16 +1076,33 @@ export default function BookingEntry(props: Props) {
         /^(unknown|n\/a|not applicable)$/i.test(p.traveler) ? '' : p.traveler;
     if (p.trip_type) {
       const trip = normalizePasteValue(p.trip_type);
-      next.trip_type =
-        trip === 'round trip'
-          ? 'Round Trip'
-          : trip === 'one way'
-            ? 'One Way'
-            : ['multi-city', 'multi city'].includes(trip)
-              ? 'Multi-City'
-              : '';
-      if (!next.trip_type)
-        issues.push('Trip Type unclear, pick One Way, Round Trip, or Multi-City');
+      if (!/^(unknown|n\/a|not applicable|)$/i.test(trip)) {
+        next.trip_type =
+          trip === 'round trip'
+            ? 'Round Trip'
+            : trip === 'one way'
+              ? 'One Way'
+              : ['multi-city', 'multi city'].includes(trip)
+                ? 'Multi-City'
+                : '';
+        if (!next.trip_type)
+          issues.push('Trip Type unclear, pick One Way, Round Trip, or Multi-City');
+      }
+    }
+    // Route last so ORIGIN-DEST-ORIGIN can set Round Trip even if Trip Type was Unknown/One Way.
+    if (next.product === 'Flight' && p.route) {
+      const endpoints = flightEndpoints({ route: p.route });
+      next.origin = endpoints.origin;
+      next.destination = endpoints.destination;
+      if (endpoints.origin && endpoints.destination)
+        next.route = `${endpoints.origin}-${endpoints.destination}`;
+      if (
+        'roundTripHint' in endpoints &&
+        endpoints.roundTripHint &&
+        (!next.trip_type || next.trip_type === 'One Way')
+      ) {
+        next.trip_type = 'Round Trip';
+      }
     }
     if (p.reservation_summary) next.summary_override = true;
     if (p.sale !== undefined && !can('edit_customer_charges')) {
@@ -1327,6 +1329,10 @@ export default function BookingEntry(props: Props) {
         ...(p.points_quantity ? { quantity: p.points_quantity.replaceAll(',', '') } : {}),
         quoted_rate: p.quoted_rate,
         rate_unit: p.rate_unit || 'cents per point',
+        account_email: p.account_email || undefined,
+        notes: p.account_email
+          ? `Account email used: ${p.account_email}`
+          : undefined,
         program_id: bought?.supplied === 'Points / Miles' ? program?.id : undefined,
         seller_id: p.seller ? await ensureParty(p.seller, 'seller') : '',
         cost: amount('seller_cost') ?? '',
@@ -1645,7 +1651,13 @@ export default function BookingEntry(props: Props) {
             account_id: c.account_id || null,
             date: c.date || v.booked_on,
             reference: c.reference ?? '',
-            notes: c.notes ?? '',
+            notes: (() => {
+              const base = String(c.notes ?? '').trim();
+              const email = String(c.account_email ?? '').trim();
+              if (!email) return base;
+              const tag = `Account email used: ${email}`;
+              return base.includes(tag) ? base : [base, tag].filter(Boolean).join(' · ');
+            })(),
             card_nickname: c.card_nickname || undefined,
             last_four: c.last_four || undefined,
             quoted_rate: c.quoted_rate || undefined,
@@ -1867,25 +1879,31 @@ export default function BookingEntry(props: Props) {
         aria-modal="true"
         aria-labelledby="booking-entry-title"
       >
-        <div className="modal-head">
-          <div>
-            <h2 id="booking-entry-title">
-              {props.config.defaults.draft_id ? 'Continue Draft' : 'New Booking'}
-            </h2>
-            {state.developmentData && (
-              <strong className="test-dialog-label">TEST / SYNTHETIC (PRACTICE ONLY)</strong>
-            )}
-            <p>Enter each fact once. Money can stay Unknown until known.</p>
+        <div className="modal-head booking-entry-head">
+          <div className="booking-entry-head-copy">
+            <div className="booking-entry-eyebrow">Padova Travel · Booking entry</div>
+            <div className="booking-entry-title-row">
+              <h2 id="booking-entry-title">
+                {props.config.defaults.draft_id ? 'Continue Draft' : 'New Booking'}
+              </h2>
+              {state.developmentData && (
+                <span className="booking-entry-env-chip" title="QA / synthetic practice data">
+                  Practice only
+                </span>
+              )}
+            </div>
           </div>
-          <button type="button" onClick={closeBooking} disabled={busy} aria-label="Close dialog">
-            ×
+          <button
+            type="button"
+            className="booking-entry-close"
+            onClick={closeBooking}
+            disabled={busy}
+            aria-label="Close dialog"
+          >
+            <span aria-hidden="true">×</span>
           </button>
         </div>
         <div className="modal-body">
-          <p className="booking-essentials-hint" role="note">
-            <strong>Need to save:</strong> Customer · Product · Travel dates · Booked Through.
-            Money, PNR, and affiliate can stay empty or Unknown, use <em>Save Draft</em> anytime.
-          </p>
           {error && !/select a customer/i.test(error) ? (
             <div
               ref={errorBannerRef}
@@ -2232,50 +2250,39 @@ export default function BookingEntry(props: Props) {
                   </small>
                 ) : null}
               </div>
-              {can('manage_commissions') && (
-                <details
-                  className="optional-block"
-                  open={Boolean(v.referring_organization_id) || undefined}
-                >
-                  <OptionalSummary
-                    title="Referring organization (affiliate)"
-                    hint="Padova owes this org. IATA / secondary commissions stay under Add commission after Save."
-                    filled={v.referring_organization_id ? 1 : 0}
+              <details
+                className="optional-block full"
+                open={!!v.referring_organization_id}
+              >
+                <OptionalSummary title="Referring organization (affiliate)" />
+                {can('manage_commissions') ? (
+                  <SearchableSelect
+                    id="entry-referring_organization_id"
+                    label="Referring organization (affiliate)"
+                    value={v.referring_organization_id ?? ''}
+                    placeholder="Select organization…"
+                    options={[
+                      {
+                        value: '',
+                        label: 'None',
+                      },
+                      ...(state.referralOrganizations ?? []).map((r: R) => ({
+                        value: r.id,
+                        label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
+                          r.terms?.calculation === 'fixed'
+                            ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
+                            : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
+                        }`,
+                      })),
+                    ]}
+                    onChange={(id) => change('referring_organization_id', id || '')}
+                    emptyLabel="No matching organization"
+                    hideCount
                   />
-                  <Field label="Referring organization (affiliate)" full>
-                    <SearchableSelect
-                      id="entry-referring_organization_id"
-                      label="Referring organization (affiliate)"
-                      value={v.referring_organization_id ?? ''}
-                      options={[
-                        {
-                          value: '',
-                          label: 'None (no affiliate on this booking)',
-                        },
-                        ...(state.referralOrganizations ?? []).map((r: R) => ({
-                          value: r.id,
-                          label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
-                            r.terms?.calculation === 'fixed'
-                              ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
-                              : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
-                          }`,
-                        })),
-                      ]}
-                      onChange={(id) => change('referring_organization_id', id || '')}
-                      emptyLabel="No matching organization, pick None or set up Partnerships"
-                      hideCount
-                    />
-                    <small>
-                      Creates the org payable only (manual quarterly). Who owes Padova is separate.
-                      {!state.partnershipsEnabled
-                        ? ' Partnerships CRM is not installed in this database.'
-                        : !(state.referralOrganizations ?? []).length
-                          ? ' No org ready yet. In Partnerships: (1) Edit org → Existing referral account, (2) Record agreement status=accepted with % or fixed terms + Effective start ≤ today. Then reopen New Booking.'
-                          : ''}
-                    </small>
-                  </Field>
-                </details>
-              )}
+                ) : (
+                  <small className="note">Commission permission required to set affiliate.</small>
+                )}
+              </details>
               <Field label="Travelers" full>
                 <div className="traveler-chips">
                   {v.traveler_ids.map((id: string) => {
@@ -2326,95 +2333,75 @@ export default function BookingEntry(props: Props) {
                     </button>
                   ))}
                 </div>
-                <textarea
-                  ref={travelerInput}
-                  rows={1}
-                  aria-label="Travelers: search, type or paste names"
-                  placeholder="Search a traveler, type a name, or paste names separated by commas or lines"
-                  value={traveler}
-                  onChange={(e) => {
-                    setTraveler(e.target.value);
-                    setBatchReview([]);
-                    setTravelerResults([]);
-                    setTravelerSearching(
-                      !!e.target.value.trim() && travelerNames(e.target.value).length === 1,
-                    );
-                    batchLookup.current++;
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      if (travelerNames(traveler).length > 1) void reviewTravelers();
-                      else if (
-                        !matches.length ||
-                        matches.filter(
-                          (p) => p.name.toLowerCase() === traveler.trim().toLowerCase(),
-                        ).length === 1
-                      )
-                        void addTraveler();
+                <div className="traveler-add-row">
+                  <input
+                    ref={travelerInput}
+                    type="text"
+                    aria-label="Traveler legal name"
+                    placeholder="Legal name"
+                    value={traveler}
+                    onChange={(e) => {
+                      setTraveler(e.target.value);
+                      setBatchReview([]);
+                      setTravelerResults([]);
+                      setTravelerSearching(
+                        !!e.target.value.trim() && travelerNames(e.target.value).length === 1,
+                      );
+                      batchLookup.current++;
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (travelerNames(traveler).length > 1) void reviewTravelers();
+                        else void addTraveler();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn small"
+                    disabled={
+                      busy ||
+                      !traveler.trim() ||
+                      travelerSearching ||
+                      travelerSearchFailed ||
+                      travelerNames(traveler).length !== 1
                     }
-                  }}
-                />
+                    onClick={() => void addTraveler()}
+                  >
+                    {travelerSearching ? '…' : 'Add'}
+                  </button>
+                </div>
                 {traveler.trim() && travelerNames(traveler).length === 1 && (
                   <>
-                    {showTravelerMatches && (
+                    {showTravelerMatches && matches.length > 0 && (
                       <div className="search-select-results" style={travelerMenuStyle}>
-                      {matches.map((p) => (
-                        <button
-                          type="button"
-                          className="btn small"
-                          key={p.id}
+                        {matches.map((p) => (
+                          <button
+                            type="button"
+                            className="btn small"
+                            key={p.id}
                             onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), p] }));
-                            change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
-                            setTraveler('');
-                            travelerInput.current?.focus();
-                          }}
-                        >
-                          {p.name}
-                          {matches.filter((m) => m.name === p.name).length > 1
-                            ? ` · ${p.id.slice(-6)}`
-                            : ''}
-                        </button>
-                      ))}
-                    </div>
-                    )}
-                    {matches.length > 0 && (
-                      <p role="status">
-                        Similar names exist. Use an existing person above or create a separate
-                        traveler.
-                      </p>
+                            onClick={() => {
+                              setExtra((old) => ({
+                                ...old,
+                                parties: [...(old.parties ?? []), p],
+                              }));
+                              change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
+                              setTraveler('');
+                              travelerInput.current?.focus();
+                            }}
+                          >
+                            {p.name}
+                            {matches.filter((m) => m.name === p.name).length > 1
+                              ? ` · ${p.id.slice(-6)}`
+                              : ''}
+                          </button>
+                        ))}
+                      </div>
                     )}
                     {travelerSearchFailed && (
-                      <p role="alert">
-                        Traveler lookup unavailable. Re-enter the search to retry before creating a
-                        new traveler.
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      className="btn small"
-                      disabled={busy || travelerSearching || travelerSearchFailed}
-                      onClick={() => void addTraveler()}
-                    >
-                      {travelerSearching
-                        ? 'Checking existing travelers…'
-                        : matches.filter(
-                              (p) => p.name.toLowerCase() === traveler.trim().toLowerCase(),
-                            ).length === 1
-                          ? `Use existing traveler “${traveler.trim()}”`
-                          : `Create “${traveler.trim()}” as ${matches.length ? 'a separate' : 'new'} traveler`}
-                    </button>
-                    {onInlineCommand && (
-                      <button
-                        type="button"
-                        className="btn small"
-                        disabled={busy || travelerSearching || travelerSearchFailed}
-                        onClick={() => void addTraveler(true)}
-                      >
-                        Select / create & add full details
-                      </button>
+                      <p role="alert">Lookup failed — try again before adding.</p>
                     )}
                   </>
                 )}
@@ -2469,31 +2456,27 @@ export default function BookingEntry(props: Props) {
                   )}
                 </div>
               )}
-              {onInlineCommand && (
+              {onInlineCommand && !!v.traveler_ids.length && (
                 <details className="optional-block">
-                  <OptionalSummary
-                    title="Traveler travel docs (optional)"
-                    hint="Passport / ticket details, skip unless needed now"
-                    filled={v.traveler_ids.length ? 1 : 0}
+                  <OptionalSummary title="Travel docs" />
+                  <BookingTicketing
+                    cache={ticketingCache.current}
+                    people={v.traveler_ids
+                      .map((id: string) => rows('parties').find((p: R) => p.id === id))
+                      .filter(Boolean)}
+                    date={
+                      v.product === 'Flight' && v.trip_type === 'Multi-City'
+                        ? (v.segments?.[0]?.date ?? '')
+                        : (v.travel_start ?? '')
+                    }
+                    state={state}
+                    command={onInlineCommand}
+                    onFull={setTravelerDetailsId}
+                    onDirty={(id, dirty) => {
+                      if (dirty) ticketingDirty.current.add(id);
+                      else ticketingDirty.current.delete(id);
+                    }}
                   />
-                <BookingTicketing
-                  cache={ticketingCache.current}
-                  people={v.traveler_ids
-                    .map((id: string) => rows('parties').find((p: R) => p.id === id))
-                    .filter(Boolean)}
-                  date={
-                    v.product === 'Flight' && v.trip_type === 'Multi-City'
-                      ? (v.segments?.[0]?.date ?? '')
-                      : (v.travel_start ?? '')
-                  }
-                  state={state}
-                  command={onInlineCommand}
-                  onFull={setTravelerDetailsId}
-                  onDirty={(id, dirty) => {
-                    if (dirty) ticketingDirty.current.add(id);
-                    else ticketingDirty.current.delete(id);
-                  }}
-                />
                 </details>
               )}
             </section>
@@ -2501,19 +2484,33 @@ export default function BookingEntry(props: Props) {
               <h3 className="form-section-title">
                 <span>2</span> Travel<small>What was booked and when</small>
               </h3>
-              {select('product', 'Product', products, changeProduct, v.product ?? '', true)}
-              {v.product !== 'Other' &&
-                entity(
-                  'provider_id',
-                  v.product === 'Flight'
-                    ? 'Travel provider (airline)'
-                    : v.product === 'Hotel'
-                      ? 'Travel provider (property)'
-                      : 'Travel provider (rental)',
-                  'parties',
-                  'party',
-                  { kind: 'company', roles: [providerRole(v.product)] },
-                )}
+              {v.product === 'Flight' ? (
+                <div className="travel-basics full">
+                  {select('product', 'Product', products, changeProduct, v.product ?? '', true)}
+                  {entity(
+                    'provider_id',
+                    'Travel provider (airline)',
+                    'parties',
+                    'party',
+                    { kind: 'company', roles: [providerRole(v.product)] },
+                  )}
+                  {select('trip_type', 'Trip Type', ['One Way', 'Round Trip', 'Multi-City'])}
+                </div>
+              ) : (
+                <>
+                  {select('product', 'Product', products, changeProduct, v.product ?? '', true)}
+                  {v.product !== 'Other' &&
+                    entity(
+                      'provider_id',
+                      v.product === 'Hotel'
+                        ? 'Travel provider (property)'
+                        : 'Travel provider (rental)',
+                      'parties',
+                      'party',
+                      { kind: 'company', roles: [providerRole(v.product)] },
+                    )}
+                </>
+              )}
               {v.product === 'Flight' && v.trip_type !== 'Multi-City' && (
                 <div className="flight-route full">
                   <AirportInput
@@ -2556,77 +2553,84 @@ export default function BookingEntry(props: Props) {
                 flightEndpoints(v).origin.trim().toUpperCase() ===
                   flightEndpoints(v).destination.trim().toUpperCase() && (
                   <p className="note full" role="alert">
-                    From and To are the same airport. Check the route before saving.
+                    From and To are the same airport. For a round trip use Trip Type Round Trip and
+                    set To to the destination city (example TLV–BCN), not TLV–TLV.
                   </p>
                 )}
-              {v.product === 'Flight' &&
-                select('trip_type', 'Trip Type', ['One Way', 'Round Trip', 'Multi-City'])}
               {v.product === 'Flight' && v.trip_type === 'Multi-City' && (
                 <div className="full segment-editor">
-                  {(v.segments ?? [{}, {}]).map((s: R, i: number) => (
-                    <div className="segment-row" key={i}>
-                      {['origin', 'destination', 'date', 'flight_number'].map((key) =>
-                        ['origin', 'destination'].includes(key) ? (
-                          <AirportInput
-                            key={key}
-                            id={`segment-${i}-${key}`}
-                            label={`Segment ${i + 1} ${key === 'origin' ? 'From' : 'To'}`}
-                            value={s[key] ?? ''}
-                            onChange={(value) =>
-                              change(
-                                'segments',
-                                (v.segments ?? [{}, {}]).map((r: R, j: number) =>
-                                  i === j ? { ...r, [key]: value } : r,
-                                ),
-                              )
-                            }
-                          />
-                        ) : (
-                          <input
-                            key={key}
-                            type={key === 'date' ? 'date' : 'text'}
-                            aria-label={`Segment ${i + 1} ${key}`}
-                            placeholder={key.replace('_', ' ')}
-                            value={s[key] ?? ''}
-                            onInput={(e) => {
-                              if (key === 'date')
-                                change(
-                                  'segments',
-                                  (v.segments ?? [{}, {}]).map((r: R, j: number) =>
-                                    i === j ? { ...r, date: e.currentTarget.value } : r,
-                                  ),
-                                );
-                            }}
-                            onChange={(e) =>
-                              change(
-                                'segments',
-                                (v.segments ?? [{}, {}]).map((r: R, j: number) =>
-                                  i === j ? { ...r, [key]: e.target.value } : r,
-                                ),
-                              )
-                            }
-                          />
+                  {(v.segments ?? [{}, {}]).map((s: R, i: number) => {
+                    const patch = (key: string, value: string) =>
+                      change(
+                        'segments',
+                        (v.segments ?? [{}, {}]).map((r: R, j: number) =>
+                          i === j ? { ...r, [key]: value } : r,
                         ),
-                      )}
-                      {s.origin &&
-                        s.origin.trim().toUpperCase() === s.destination?.trim().toUpperCase() && (
-                          <small role="alert">From and To are the same airport.</small>
-                        )}
-                      <button
-                        type="button"
-                        className="btn small"
-                        disabled={(v.segments?.length ?? 2) <= 2}
-                        onClick={() =>
-                          change(
-                            'segments',
-                            v.segments.filter((_: R, j: number) => i !== j),
-                          )
-                        }
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
+                      );
+                    return (
+                      <div className="segment-card" key={i}>
+                        <div className="segment-card-head">
+                          <strong>Segment {i + 1}</strong>
+                          <button
+                            type="button"
+                            className="btn small segment-remove"
+                            disabled={(v.segments?.length ?? 2) <= 2}
+                            aria-label={`Remove segment ${i + 1}`}
+                            onClick={() =>
+                              change(
+                                'segments',
+                                v.segments.filter((_: R, j: number) => i !== j),
+                              )
+                            }
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <div className="segment-row">
+                          <AirportInput
+                            id={`segment-${i}-origin`}
+                            label="From"
+                            value={s.origin ?? ''}
+                            onChange={(value) => patch('origin', value)}
+                          />
+                          <AirportInput
+                            id={`segment-${i}-destination`}
+                            label="To"
+                            value={s.destination ?? ''}
+                            onChange={(value) => patch('destination', value)}
+                          />
+                          <div className="form-field">
+                            <label htmlFor={`segment-${i}-date`}>Date</label>
+                            <input
+                              id={`segment-${i}-date`}
+                              type="date"
+                              aria-label={`Segment ${i + 1} date`}
+                              value={s.date ?? ''}
+                              onChange={(e) => patch('date', e.target.value)}
+                            />
+                          </div>
+                          <div className="form-field">
+                            <label htmlFor={`segment-${i}-flight`}>Flight #</label>
+                            <input
+                              id={`segment-${i}-flight`}
+                              type="text"
+                              aria-label={`Segment ${i + 1} flight number`}
+                              placeholder="Optional"
+                              value={s.flight_number ?? ''}
+                              onChange={(e) => patch('flight_number', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        {s.origin &&
+                          s.origin.trim().toUpperCase() ===
+                            s.destination?.trim().toUpperCase() && (
+                            <small className="segment-warn" role="alert">
+                              From and To are the same airport.
+                            </small>
+                          )}
+                      </div>
+                    );
+                  })}
                   <button
                     type="button"
                     className="btn small"
@@ -2926,10 +2930,38 @@ export default function BookingEntry(props: Props) {
                 </Field>
               )}
               {v.product === 'Flight' ? (
-                <PnrInput
-                  value={v.primary_reference ?? ''}
-                  onChange={(value) => change('primary_reference', value)}
-                />
+                <>
+                  <PnrInput
+                    value={v.primary_reference ?? ''}
+                    onChange={(value) => change('primary_reference', value)}
+                  />
+                  <Field label="Cabin">
+                    <SearchableSelect
+                      id="entry-cabin"
+                      label="Cabin"
+                      value={v.cabin ?? ''}
+                      hideCount
+                      placeholder="Select cabin…"
+                      options={[
+                        ...['Economy', 'Premium economy', 'Business', 'First'].map((s) => ({
+                          value: s,
+                          label: s,
+                        })),
+                        ...(v.cabin &&
+                        !['Economy', 'Premium economy', 'Business', 'First'].includes(v.cabin)
+                          ? [{ value: v.cabin, label: v.cabin }]
+                          : []),
+                      ]}
+                      onChange={(value) => change('cabin', value)}
+                      onAdd={(query) => {
+                        const name = query.trim();
+                        if (name) change('cabin', name);
+                      }}
+                      addLabel={(q) => (q ? `Add “${q}”` : 'Add cabin')}
+                      emptyLabel="Type a cabin name to add"
+                    />
+                  </Field>
+                </>
               ) : (
                 text(
                   'primary_reference',
@@ -2943,7 +2975,7 @@ export default function BookingEntry(props: Props) {
                   title="More Travel Details"
                   hint={
                     v.product === 'Flight'
-                      ? 'Flight numbers, cabin, tickets, other airlines’ PNRs and booking date'
+                      ? 'Flight numbers, tickets, other airlines’ PNRs and booking date'
                       : v.product === 'Hotel'
                         ? 'Room type and booking date'
                         : v.product === 'Car'
@@ -2953,7 +2985,6 @@ export default function BookingEntry(props: Props) {
                   filled={
                     [
                       v.flight_numbers,
-                      v.cabin,
                       v.ticket_numbers,
                       v.room_type,
                       v.pickup_time,
@@ -3021,12 +3052,6 @@ export default function BookingEntry(props: Props) {
                         </button>
                       </details>
                       {v.trip_type !== 'Multi-City' && text('flight_numbers', 'Flight number(s)')}
-                      {select('cabin', 'Cabin', [
-                        'Economy',
-                        'Premium economy',
-                        'Business',
-                        'First',
-                      ])}
                       {text('ticket_numbers', 'Ticket number(s)')}
                       {text('additional_airlines', 'Additional airlines')}
                       {select('ticketing_status', 'Ticketing status', [
@@ -3146,45 +3171,42 @@ export default function BookingEntry(props: Props) {
                         ? (c.payment_status ?? 'Unpaid')
                         : settlement.status;
                     return (
-                      <fieldset
-                        key={i}
-                        style={{
-                          padding: 6,
-                          marginBottom: 4,
-                          border: '1px solid #d8e2db',
-                          borderRadius: 8,
-                        }}
-                      >
-                        <legend>{`Payment ${i + 1}`}</legend>
-                        <div className="form-grid">
-                          {select(
-                            `type-${i}`,
-                            'Payment type',
-                            componentTypes,
-                            (x) =>
-                              setComponents((old) =>
-                                old.map((r, j) =>
-                                  j === i
-                                    ? {
-                                        type: x,
-                                        date: v.booked_on,
-                                        unit: 'money',
-                                        payment_status: 'Unpaid',
-                                      }
-                                    : r,
-                                ),
-                              ),
-                            c.type,
-                          )}
+                      <section className="booking-payment-card" key={i}>
+                        <div className="booking-payment-card-head">
+                          <strong>{`Payment ${i + 1}`}</strong>
                           <button
                             type="button"
                             className="btn small"
-                            style={{ position: 'absolute', right: 8, top: -12 }}
-                            onClick={() => setComponents((old) => old.filter((_, j) => j !== i))}
+                            onClick={() =>
+                              setComponents((old) => old.filter((_, j) => j !== i))
+                            }
                           >
                             Remove
                           </button>
-                          {['Outside seller', 'Other'].includes(c.type) && (
+                        </div>
+                        <div className="form-grid">
+                          <div className="full">
+                            {select(
+                              `type-${i}`,
+                              'Payment type',
+                              componentTypes,
+                              (x) =>
+                                setComponents((old) =>
+                                  old.map((r, j) =>
+                                    j === i
+                                      ? {
+                                          type: x,
+                                          date: v.booked_on,
+                                          unit: 'money',
+                                          payment_status: 'Unpaid',
+                                        }
+                                      : r,
+                                  ),
+                                ),
+                              c.type,
+                            )}
+                          </div>
+                              {['Outside seller', 'Other'].includes(c.type) && (
                             <>
                               {entity(
                                 `seller-${i}`,
@@ -3196,7 +3218,7 @@ export default function BookingEntry(props: Props) {
                                 c.seller_id,
                               )}
                               <details
-                                className="full"
+                                className="full optional-section"
                                 hidden={
                                   bpSource && c.type === 'Outside seller' && !c.bp_custom_supply
                                 }
@@ -3213,35 +3235,31 @@ export default function BookingEntry(props: Props) {
                                   title="Points, vouchers or other value"
                                   hint="Choose what the seller supplied"
                                 />
-                                {select(
-                                  `supplied-${i}`,
-                                  'What seller supplied',
-                                  suppliedTypes,
-                                  (x) => {
-                                    patch(i, 'supplied', x);
-                                    patch(
-                                      i,
-                                      'unit',
-                                      x === 'Points / Miles'
-                                        ? 'points'
-                                        : x === 'Certificate / Award'
-                                          ? 'count'
-                                          : 'money',
-                                    );
-                                  },
-                                  c.supplied ?? suppliedTypes[0],
-                                )}
+                                <div className="form-grid">
+                                  {select(
+                                    `supplied-${i}`,
+                                    'What seller supplied',
+                                    suppliedTypes,
+                                    (x) => {
+                                      patch(i, 'supplied', x);
+                                      patch(
+                                        i,
+                                        'unit',
+                                        x === 'Points / Miles'
+                                          ? 'points'
+                                          : x === 'Certificate / Award'
+                                            ? 'count'
+                                            : 'money',
+                                      );
+                                    },
+                                    c.supplied ?? suppliedTypes[0],
+                                  )}
+                                </div>
                               </details>
                             </>
                           )}
-                          {bpSource &&
-                            c.type === 'Outside seller' &&
-                            c.supplied === 'Points / Miles' && (
+                          {c.type === 'Outside seller' && c.supplied === 'Points / Miles' && (
                               <div className="full form-grid">
-                                <p className="full">
-                                  Membership Rewards · seller-owned Business Platinum. The seller
-                                  keeps their rebate; Padova records only the agreed seller cost.
-                                </p>
                                 <label className="full">
                                   <input
                                     type="checkbox"
@@ -3256,12 +3274,13 @@ export default function BookingEntry(props: Props) {
                                                 use_bp_economics: checked,
                                                 supplied: 'Points / Miles',
                                                 unit: 'points',
+                                                bp_rebate_percent: x.bp_rebate_percent ?? 35,
                                                 ...(checked
                                                   ? {
                                                       quantity:
                                                         bpNet(
                                                           x.bp_gross_points,
-                                                          x.bp_rebate_percent,
+                                                          x.bp_rebate_percent ?? 35,
                                                         )?.toString() ?? '',
                                                     }
                                                   : {}),
@@ -3271,38 +3290,50 @@ export default function BookingEntry(props: Props) {
                                       );
                                     }}
                                   />{' '}
-                                  Calculate agreed net points from gross redemption
+                                  Amex Biz Plat (gross − rebate %)
                                 </label>
                                 {c.use_bp_economics && (
                                   <>
-                                    <Field label="Gross Amex Travel points">
+                                    <Field label="Gross points bought">
                                       <input
                                         aria-label={`BP gross points ${i + 1}`}
                                         type="number"
                                         step="1"
                                         value={c.bp_gross_points ?? ''}
-                                        onChange={(e) =>
-                                          patch(i, 'bp_gross_points', e.target.value)
-                                        }
+                                        onChange={(e) => {
+                                          patch(i, 'bp_gross_points', e.target.value);
+                                          const net = bpNet(
+                                            e.target.value,
+                                            c.bp_rebate_percent ?? 35,
+                                          );
+                                          if (net != null) patch(i, 'quantity', String(net));
+                                        }}
                                       />
                                     </Field>
-                                    <Field label="Eligible seller rebate %">
+                                    <Field label="Seller rebate %">
                                       <input
                                         aria-label={`BP seller rebate percent ${i + 1}`}
                                         type="number"
                                         value={c.bp_rebate_percent ?? 35}
-                                        onChange={(e) =>
-                                          patch(i, 'bp_rebate_percent', e.target.value)
-                                        }
+                                        onChange={(e) => {
+                                          patch(i, 'bp_rebate_percent', e.target.value);
+                                          const net = bpNet(c.bp_gross_points, e.target.value);
+                                          if (net != null) patch(i, 'quantity', String(net));
+                                        }}
                                       />
                                     </Field>
-                                    <output className="full">
-                                      Economic net:{' '}
-                                      {bpNet(
-                                        c.bp_gross_points,
-                                        c.bp_rebate_percent,
-                                      )?.toLocaleString() ?? 'Unknown'}{' '}
-                                      points. The agreed rate below applies to these net points.
+                                    <output className="full" aria-live="polite">
+                                      Bought{' '}
+                                      {Number(c.bp_gross_points || 0).toLocaleString() || '—'} −{' '}
+                                      {c.bp_rebate_percent ?? 35}% ={' '}
+                                      <strong>
+                                        {bpNet(
+                                          c.bp_gross_points,
+                                          c.bp_rebate_percent ?? 35,
+                                        )?.toLocaleString() ?? 'Unknown'}
+                                      </strong>{' '}
+                                      net points (quantity below). Cost per point applies to this
+                                      net.
                                     </output>
                                   </>
                                 )}
@@ -3378,18 +3409,18 @@ export default function BookingEntry(props: Props) {
                                   />
                                 </Field>
                                 {c.supplied === 'Points / Miles' && (
-                                  <details open>
-                                    <summary>Agreed rate (optional)</summary>
-                                    <Field label="Agreed rate">
+                                  <div className="full form-grid points-rate-block">
+                                    <Field label="Cost per point (optional)">
                                       <input
                                         aria-label={`Point rate ${i + 1}`}
                                         value={c.quoted_rate ?? ''}
                                         onChange={(e) => patch(i, 'quoted_rate', e.target.value)}
+                                        placeholder="1.30"
                                       />
                                     </Field>
                                     {select(
                                       `point-rate-unit-${i}`,
-                                      'Rate unit',
+                                      'Per-point unit',
                                       [
                                         'USD per point',
                                         'USD per 1,000 points',
@@ -3399,11 +3430,12 @@ export default function BookingEntry(props: Props) {
                                       (x) => patch(i, 'rate_unit', x),
                                       c.rate_unit || 'cents per point',
                                     )}
-                                    <output>
+                                    <output className="full">
+                                      Padova cost from points:{' '}
                                       {(() => {
                                         if (c.rate_unit === 'Fixed supplier price')
                                           return amount === undefined
-                                            ? 'Enter fixed Padova Cost'
+                                            ? 'Enter fixed Padova Cost below'
                                             : `Fixed cost ${dollars(amount)}`;
                                         try {
                                           return dollars(
@@ -3414,20 +3446,83 @@ export default function BookingEntry(props: Props) {
                                             ),
                                           );
                                         } catch {
-                                          return 'Enter exact quantity and rate, or use fixed Padova Cost';
+                                          return 'Enter quantity + rate, or use Fixed supplier price';
                                         }
                                       })()}
                                     </output>
-                                  </details>
+                                    <Field label="Points purchase note" full>
+                                      <input
+                                        aria-label={`Points purchase note ${i + 1}`}
+                                        value={c.notes ?? ''}
+                                        onChange={(e) => patch(i, 'notes', e.target.value)}
+                                        placeholder="Bought 100k − 35% = 65k"
+                                      />
+                                    </Field>
+                                    <Field label="Account email used (points login)">
+                                      <input
+                                        aria-label={`Points account email ${i + 1}`}
+                                        type="email"
+                                        value={c.account_email ?? ''}
+                                        onChange={(e) => patch(i, 'account_email', e.target.value)}
+                                        placeholder="Account email"
+                                      />
+                                    </Field>
+                                    <Field label="Taxes / fees on this booking (USD)">
+                                      <input
+                                        aria-label="Taxes amount from points payment"
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={v.tax_amount ?? ''}
+                                        onChange={(e) => change('tax_amount', e.target.value)}
+                                      />
+                                    </Field>
+                                    {select(
+                                      'tax_bearer',
+                                      'Who paid the taxes?',
+                                      [
+                                        'Unknown',
+                                        ...(can('manage_funding') ? ['Padova'] : []),
+                                        'Customer',
+                                        'Seller',
+                                        'Included in Seller Price',
+                                      ],
+                                      undefined,
+                                      v.tax_bearer || 'Unknown',
+                                    )}
+                                    {v.tax_bearer === 'Padova' &&
+                                      can('manage_funding') &&
+                                      entity(
+                                        'tax_account_id',
+                                        'Credit card used for taxes',
+                                        'paymentAccounts',
+                                        'payment_account',
+                                        { kind: 'Card' },
+                                        undefined,
+                                        v.tax_account_id,
+                                        (a) => accountSupports(a, 'Card') || a.kind === 'Card',
+                                      )}
+                                  </div>
                                 )}
                               </>
                             )}
                           {['Outside seller', 'Other'].includes(c.type) && (
-                            <output>
-                              Total Purchase Cost:{' '}
-                              {amount === undefined ? 'Unknown' : dollars(amount)} · Recorded paid:{' '}
-                              {dollars(paid)} · Balance owed:{' '}
-                              {amount === undefined ? 'Unknown' : dollars(amount - paid)}
+                            <output className="full booking-cost-summary" aria-live="polite">
+                              <span>
+                                Total Purchase Cost:{' '}
+                                <strong>
+                                  {amount === undefined ? 'Unknown' : dollars(amount)}
+                                </strong>
+                              </span>
+                              <span>
+                                Recorded paid: <strong>{dollars(paid)}</strong>
+                              </span>
+                              <span>
+                                Balance owed:{' '}
+                                <strong>
+                                  {amount === undefined ? 'Unknown' : dollars(amount - paid)}
+                                </strong>
+                              </span>
                             </output>
                           )}
                           {c.type === 'Customer card' && (
@@ -3532,40 +3627,63 @@ export default function BookingEntry(props: Props) {
                               </Field>
                             </>
                           ) : (
-                            <Field
-                              label={
-                                c.type === 'Customer card'
-                                  ? 'Customer direct card amount (USD)'
-                                  : 'Cost to Padova (USD)'
-                              }
+                            <div
+                              className={`full booking-cost-paid-row${
+                                c.type === 'Customer card' ? ' booking-cost-paid-row--single' : ''
+                              }`}
                             >
-                              {calculatedRate && amount !== undefined ? (
-                                <output>
-                                  {dollars(amount)} · calculated from quantity × agreed rate
-                                </output>
-                              ) : (
-                                <input
-                                  aria-label={`${c.type === 'Customer card' ? 'Customer paid provider' : 'Cost to Padova'} (USD), payment ${i + 1}`}
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={
-                                    calculatedRate && amount !== undefined
-                                      ? (amount / 100).toFixed(2)
-                                      : (c.cost ?? '')
-                                  }
-                                  onChange={(e) => {
-                                    patch(i, 'cost', e.target.value);
-                                    if (c.quoted_rate)
-                                      patch(i, 'rate_unit', 'Fixed supplier price');
-                                  }}
-                                />
-                              )}
-                            </Field>
-                          )}
-                          {c.type !== 'Customer card' && c.type !== 'Owned value' && (
-                            <>
-                              {c.type !== 'Padova payment' && (
+                              <Field
+                                label={
+                                  c.type === 'Customer card'
+                                    ? 'Customer direct card amount (USD)'
+                                    : 'Cost to Padova (USD)'
+                                }
+                              >
+                                {calculatedRate && amount !== undefined ? (
+                                  <output>
+                                    {dollars(amount)} · calculated from quantity × agreed rate
+                                  </output>
+                                ) : (
+                                  <input
+                                    aria-label={`${c.type === 'Customer card' ? 'Customer paid provider' : 'Cost to Padova'} (USD), payment ${i + 1}`}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={
+                                      calculatedRate && amount !== undefined
+                                        ? (amount / 100).toFixed(2)
+                                        : (c.cost ?? '')
+                                    }
+                                    onChange={(e) => {
+                                      patch(i, 'cost', e.target.value);
+                                      if (c.quoted_rate)
+                                        patch(i, 'rate_unit', 'Fixed supplier price');
+                                    }}
+                                  />
+                                )}
+                              </Field>
+                              {c.type === 'Padova payment' ? (
+                                <>
+                                  {select(
+                                    `method-${i}`,
+                                    'Payment Method',
+                                    PAYMENT_METHODS,
+                                    (x) => patch(i, 'method', x),
+                                    c.method,
+                                  )}
+                                  {c.method ? (
+                                    <Field label="Payment confirmation #">
+                                      <input
+                                        aria-label={`Payment confirmation ${i + 1}`}
+                                        value={c.reference ?? ''}
+                                        onChange={(e) => patch(i, 'reference', e.target.value)}
+                                        placeholder="Bank / card / transfer confirmation"
+                                      />
+                                    </Field>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              {c.type !== 'Customer card' && c.type !== 'Padova payment' && (
                                 <Field label="Amount Paid (USD)">
                                   <input
                                     aria-label={`Seller amount paid ${i + 1}`}
@@ -3580,13 +3698,6 @@ export default function BookingEntry(props: Props) {
                                     }
                                     onChange={(e) => patch(i, 'paid', e.target.value)}
                                   />
-                                  <output>
-                                    {settlement.payment_known
-                                      ? sellerStatus || 'Confirm actual amount paid'
-                                      : 'Payment not recorded'}{' '}
-                                    · Recorded balance owed:{' '}
-                                    {amount === undefined ? 'Unknown' : dollars(amount - paid)}
-                                  </output>
                                   {amount !== undefined && amount > 0 && (
                                     <button
                                       type="button"
@@ -3598,43 +3709,84 @@ export default function BookingEntry(props: Props) {
                                   )}
                                 </Field>
                               )}
-                              {(c.type === 'Padova payment' ||
-                                c.payment_status !== 'Unpaid' ||
-                                paid > 0) && (
-                                <>
-                                  {select(
-                                    `method-${i}`,
-                                    'Payment Method',
-                                    PAYMENT_METHODS,
-                                    (x) => patch(i, 'method', x),
-                                    c.method,
-                                  )}
-                                  {c.method &&
-                                    c.method !== 'Cash' &&
-                                    (c.method === 'Card' ||
-                                      rows('paymentAccounts').some((a) =>
-                                        accountSupports(a, c.method),
-                                      )) &&
-                                    entity(
-                                      `account-${i}`,
-                                      'Card / account used',
-                                      'paymentAccounts',
-                                      'payment_account',
-                                      { kind: c.method === 'Card' ? 'Card' : 'Bank' },
-                                      (x) => patch(i, 'account_id', x),
-                                      c.account_id,
-                                      (a) => accountSupports(a, c.method),
+                            </div>
+                          )}
+                          {c.type !== 'Customer card' &&
+                            c.type !== 'Owned value' &&
+                            c.type !== 'Padova payment' && (
+                              <output className="full booking-cost-status" aria-live="polite">
+                                {settlement.payment_known
+                                  ? sellerStatus || 'Confirm actual amount paid'
+                                  : 'Payment not recorded'}{' '}
+                                · Recorded balance owed:{' '}
+                                {amount === undefined ? 'Unknown' : dollars(amount - paid)}
+                              </output>
+                            )}
+                          {c.type !== 'Customer card' && c.type !== 'Owned value' && (
+                            <>
+                              {c.type === 'Padova payment' &&
+                                c.method &&
+                                c.method !== 'Cash' &&
+                                (c.method === 'Card' ||
+                                  rows('paymentAccounts').some((a) =>
+                                    accountSupports(a, c.method),
+                                  )) &&
+                                entity(
+                                  `account-${i}`,
+                                  'Card / account used',
+                                  'paymentAccounts',
+                                  'payment_account',
+                                  { kind: c.method === 'Card' ? 'Card' : 'Bank' },
+                                  (x) => patch(i, 'account_id', x),
+                                  c.account_id,
+                                  (a) => accountSupports(a, c.method),
+                                )}
+                              {c.type !== 'Padova payment' &&
+                                (c.payment_status !== 'Unpaid' || paid > 0) && (
+                                  <>
+                                    {select(
+                                      `method-${i}`,
+                                      'Payment Method',
+                                      PAYMENT_METHODS,
+                                      (x) => patch(i, 'method', x),
+                                      c.method,
                                     )}
-                                </>
-                              )}
+                                    {c.method &&
+                                      c.method !== 'Cash' &&
+                                      (c.method === 'Card' ||
+                                        rows('paymentAccounts').some((a) =>
+                                          accountSupports(a, c.method),
+                                        )) &&
+                                      entity(
+                                        `account-${i}`,
+                                        'Card / account used',
+                                        'paymentAccounts',
+                                        'payment_account',
+                                        { kind: c.method === 'Card' ? 'Card' : 'Bank' },
+                                        (x) => patch(i, 'account_id', x),
+                                        c.account_id,
+                                        (a) => accountSupports(a, c.method),
+                                      )}
+                                    {c.method ? (
+                                      <Field label="Payment confirmation #">
+                                        <input
+                                          aria-label={`Payment confirmation ${i + 1}`}
+                                          value={c.reference ?? ''}
+                                          onChange={(e) => patch(i, 'reference', e.target.value)}
+                                          placeholder="Seller / bank / card confirmation"
+                                        />
+                                      </Field>
+                                    ) : null}
+                                  </>
+                                )}
                             </>
                           )}
                           {c.type !== 'Customer card' && (
-                            <details className="full">
+                            <details className="full optional-section">
                               <OptionalSummary
                                 title="More Cost Details"
-                                hint="Payment date, reference, account holder and exceptions"
-                                filled={[c.reference, c.notes, c.owner_id].filter(Boolean).length}
+                                hint="Payment date, account holder and exceptions"
+                                filled={[c.notes, c.owner_id, c.holder_id].filter(Boolean).length}
                               />
                               <div className="form-grid">
                                 {bpSource && c.type === 'Outside seller' && (
@@ -3732,37 +3884,24 @@ export default function BookingEntry(props: Props) {
                                     (x) => patch(i, 'unit', x),
                                     c.unit,
                                   )}
-                                {['reference', 'notes'].map((key) => (
-                                  <Field
-                                    key={key}
-                                    label={
-                                      key === 'quoted_rate'
-                                        ? 'Agreed point rate'
-                                        : key === 'notes'
-                                          ? 'Component notes'
-                                          : 'Payment / value reference'
-                                    }
-                                  >
+                                {c.supplied !== 'Points / Miles' && !c.method ? (
+                                  <Field label="Payment / value reference">
                                     <input
-                                      aria-label={`${key} ${i + 1}`}
-                                      value={c[key] ?? ''}
-                                      onChange={(e) => patch(i, key, e.target.value)}
+                                      aria-label={`reference ${i + 1}`}
+                                      value={c.reference ?? ''}
+                                      onChange={(e) => patch(i, 'reference', e.target.value)}
                                     />
                                   </Field>
-                                ))}
-                                {c.supplied === 'Points / Miles' &&
-                                  select(
-                                    `rate-${i}`,
-                                    'Rate unit',
-                                    [
-                                      'USD per point',
-                                      'USD per 1,000 points',
-                                      'cents per point',
-                                      'Fixed supplier price',
-                                    ],
-                                    (x) => patch(i, 'rate_unit', x),
-                                    c.rate_unit,
-                                  )}
+                                ) : null}
+                                {c.supplied !== 'Points / Miles' ? (
+                                  <Field label="Component notes">
+                                    <input
+                                      aria-label={`notes ${i + 1}`}
+                                      value={c.notes ?? ''}
+                                      onChange={(e) => patch(i, 'notes', e.target.value)}
+                                    />
+                                  </Field>
+                                ) : null}
                                 <Field label="Payment / acquisition date">
                                   <input
                                     aria-label={`Component date ${i + 1}`}
@@ -3850,26 +3989,49 @@ export default function BookingEntry(props: Props) {
                             </details>
                           )}
                         </div>
-                      </fieldset>
+                      </section>
                     );
                   })}
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() =>
-                      setComponents((old) => [
-                        ...old,
-                        {
-                          type: 'Padova payment',
-                          unit: 'money',
-                          date: v.booked_on,
-                          payment_status: 'Unpaid',
-                        },
-                      ])
-                    }
-                  >
-                    {components.length ? '+ Add another payment' : '+ Add payment / value'}
-                  </button>
+                  <div className="full" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() =>
+                        setComponents((old) => [
+                          ...old,
+                          {
+                            type: 'Padova payment',
+                            unit: 'money',
+                            date: v.booked_on,
+                            payment_status: 'Unpaid',
+                          },
+                        ])
+                      }
+                    >
+                      {components.length ? '+ Add another payment' : '+ Add payment / value'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() =>
+                        setComponents((old) => [
+                          ...old,
+                          {
+                            type: 'Outside seller',
+                            supplied: 'Points / Miles',
+                            unit: 'points',
+                            rate_unit: 'cents per point',
+                            date: v.booked_on,
+                            payment_status: 'Unpaid',
+                            use_bp_economics: !!bpSource,
+                            bp_rebate_percent: bpSource ? 35 : undefined,
+                          },
+                        ])
+                      }
+                    >
+                      + Points / miles purchase
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <p className="full">Cost details can be completed by an authorized colleague.</p>
@@ -4012,23 +4174,39 @@ export default function BookingEntry(props: Props) {
                     <>
                       {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
                       {text('discount_percent', 'Discount %', 'number')}
-                      <output>
-                        Customer Price:{' '}
-                        {calculatedSale === undefined
-                          ? dollars(0)
-                          : dollars(calculatedSale)}{' '}
-                        · Savings:{' '}
-                        {calculatedSale === undefined || usd(v.comparable_price) === undefined
-                          ? dollars(0)
-                          : dollars(usd(v.comparable_price)! - calculatedSale)}
+                      <output className="full booking-price-summary" aria-live="polite">
+                        <span>
+                          Customer Price:{' '}
+                          <strong>
+                            {calculatedSale === undefined
+                              ? dollars(0)
+                              : dollars(calculatedSale)}
+                          </strong>
+                        </span>
+                        <span>
+                          Savings:{' '}
+                          <strong>
+                            {calculatedSale === undefined || usd(v.comparable_price) === undefined
+                              ? dollars(0)
+                              : dollars(usd(v.comparable_price)! - calculatedSale)}
+                          </strong>
+                        </span>
                       </output>
-                      <Field label="Override calculated price">
-                        <input
-                          type="checkbox"
-                          checked={!!v.price_override}
-                          onChange={(e) => change('price_override', e.target.checked)}
-                        />
-                      </Field>
+                      <div className="form-field full inline-checkbox-field">
+                        <label className="check-card">
+                          <input
+                            type="checkbox"
+                            checked={!!v.price_override}
+                            onChange={(e) => change('price_override', e.target.checked)}
+                          />
+                          <span className="check-card-body">
+                            <span className="check-card-title">Override calculated price</span>
+                            <small>
+                              Enter a manual Customer Sale Price instead of the percent-off amount.
+                            </small>
+                          </span>
+                        </label>
+                      </div>
                     </>
                   )}
                   {(!percentPricing || v.price_override) &&
@@ -4072,14 +4250,19 @@ export default function BookingEntry(props: Props) {
                         filled={v.comparable_price ? 1 : 0}
                       />
                       {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={!!v.record_comparable}
-                          onChange={(e) => change('record_comparable', e.target.checked)}
-                        />
-                        Keep this comparison
-                      </label>
+                      <div className="form-field full inline-checkbox-field">
+                        <label className="check-card">
+                          <input
+                            type="checkbox"
+                            checked={!!v.record_comparable}
+                            onChange={(e) => change('record_comparable', e.target.checked)}
+                          />
+                          <span className="check-card-body">
+                            <span className="check-card-title">Keep this comparison</span>
+                            <small>Store the online reference price with this booking.</small>
+                          </span>
+                        </label>
+                      </div>
                     </details>
                   )}
                   <details open={!!v.additional_charge || !!v.additional_charge_note}>

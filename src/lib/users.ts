@@ -408,9 +408,18 @@ export async function requestRecovery(
     message:
       'If an account exists for that email, we sent a password reset link. Check your inbox (and spam). The link expires in 30 minutes.',
   };
+  const qaSurface =
+    process.env.PADOVA_QA === '1' ||
+    /qa\.padovatravel\.com/i.test(String(process.env.PADOVA_PUBLIC_APP_URL || '')) ||
+    /qa\.padovatravel\.com/i.test(String(process.env.VERCEL_PROJECT_PRODUCTION_URL || ''));
   type Issued = { staff_id: string; email: string; token: string; expires_at: string };
+  let rateLimited = false;
   const issued = await db.transaction(async (tx): Promise<Issued | null> => {
-    if (!(await attempt(tx, `recovery:${data.email}`, 3))) return null;
+    // QA allows more retries while mail delivery is being verified.
+    if (!(await attempt(tx, `recovery:${data.email}`, qaSurface ? 12 : 3))) {
+      rateLimited = true;
+      return null;
+    }
     const user = (
       await tx.query(
         'SELECT id, email, auth_version FROM staff WHERE lower(email)=$1 AND active=true FOR UPDATE',
@@ -439,49 +448,68 @@ export async function requestRecovery(
       expires_at: String(row.expires_at),
     };
   });
-  if (issued) {
-    try {
-      const { passwordResetLink, publicAppOrigin, sendPasswordResetEmail } =
-        await import('./password-reset-mail');
-      const origin = publicAppOrigin(opts?.publicOrigin);
-      const resetUrl = passwordResetLink(origin, issued.token);
-      const sent = await sendPasswordResetEmail({
-        to: issued.email,
-        resetUrl,
-        expiresMinutes: 30,
-      });
-      if (!sent) {
-        console.warn(
-          '[password-reset] no mail provider accepted the message (configure PADOVA_RESEND_API_KEY or Gmail send scope)',
-        );
-        // QA only: surface the link so staff can finish the flow while Gmail re-consent / Resend is pending.
-        // Production keeps the generic message (no enumeration / no link leak).
-        if (process.env.PADOVA_QA === '1') {
-          return {
-            message: `${generic.message} (QA: email delivery not configured — use this link once: ${resetUrl})`,
-            qa_reset_url: resetUrl,
-          };
-        }
-      } else {
-        await db.transaction(async (tx) => {
-          await securityEvent(tx, null, 'recovery_link_emailed', issued.staff_id, {
-            delivery: 'self_serve',
-          });
-        });
-      }
-    } catch (err) {
-      console.error(
-        `[password-reset] email failed: ${err instanceof Error ? err.message : err}`,
+  if (rateLimited && qaSurface) {
+    return {
+      message:
+        'QA: too many password-reset requests for this email in a short window. Wait about 15 minutes, then try again.',
+      qa_mail: 'rate_limited',
+    };
+  }
+  if (!issued) {
+    // Anti-enumeration in production; on QA surface that no active staff matched.
+    if (qaSurface) {
+      return { ...generic, qa_mail: 'no_staff_account' };
+    }
+    return generic;
+  }
+  try {
+    const { passwordResetLink, publicAppOrigin, sendPasswordResetEmail } =
+      await import('./password-reset-mail');
+    const origin = publicAppOrigin(opts?.publicOrigin);
+    const resetUrl = passwordResetLink(origin, issued.token);
+    const sent = await sendPasswordResetEmail({
+      to: issued.email,
+      resetUrl,
+      expiresMinutes: 30,
+    });
+    if (!sent) {
+      console.warn(
+        '[password-reset] no mail provider accepted the message (configure PADOVA_RESEND_API_KEY or Gmail send scope)',
       );
-      if (process.env.PADOVA_QA === '1') {
-        const { passwordResetLink, publicAppOrigin } = await import('./password-reset-mail');
-        const origin = publicAppOrigin(opts?.publicOrigin);
-        const resetUrl = passwordResetLink(origin, issued.token);
+      // QA only: surface the link so staff can finish the flow while Gmail re-consent / Resend is pending.
+      // Production keeps the generic message (no enumeration / no link leak).
+      if (qaSurface) {
         return {
-          message: `${generic.message} (QA: email send failed — use this link once: ${resetUrl})`,
+          message: `${generic.message} (QA: email not sent — open this link once: ${resetUrl})`,
           qa_reset_url: resetUrl,
+          qa_mail: 'no_provider',
+          qa_mail_hint:
+            'No Resend key and Gmail refresh token missing for PADOVA_PASSWORD_RESET_MAILBOX (usually bookings@). Re-consent OAuth with gmail.send.',
         };
       }
+    } else {
+      await db.transaction(async (tx) => {
+        await securityEvent(tx, null, 'recovery_link_emailed', issued.staff_id, {
+          delivery: 'self_serve',
+        });
+      });
+      if (qaSurface) {
+        return { ...generic, qa_mail: 'sent' };
+      }
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[password-reset] email failed: ${reason}`);
+    if (qaSurface) {
+      const { passwordResetLink, publicAppOrigin } = await import('./password-reset-mail');
+      const origin = publicAppOrigin(opts?.publicOrigin);
+      const resetUrl = passwordResetLink(origin, issued.token);
+      return {
+        message: `${generic.message} (QA: email send failed — open this link once: ${resetUrl})`,
+        qa_reset_url: resetUrl,
+        qa_mail: 'send_failed',
+        qa_mail_error: reason.slice(0, 240),
+      };
     }
   }
   return generic;

@@ -101,12 +101,8 @@ function LookupField({ field }: { field: Field }) {
         value={value}
         onChange={setValue}
         onSearch={setQuery}
+        allowClear
       />
-      {value ? (
-        <button type="button" className={styles.clearLookup} onClick={() => setValue('')}>
-          Clear selection
-        </button>
-      ) : null}
     </div>
   );
 }

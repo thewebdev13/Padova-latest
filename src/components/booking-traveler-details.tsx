@@ -98,9 +98,16 @@ export default function BookingTravelerDetails({
       ...contact,
       details: { ...person.details, whatsapp: contact.whatsapp },
     };
+    const displayName =
+      String(contact.name || '').trim() ||
+      [record.privateData?.legal_first, record.privateData?.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim() ||
+      person.name;
     const payload = {
       party_id: personId,
-      name: contact.name,
+      name: displayName,
       email: contact.email,
       phone: contact.phone,
       roles: person.roles,
@@ -108,14 +115,14 @@ export default function BookingTravelerDetails({
       reason: 'Update traveler contact details from booking',
     };
     await onCommand('edit_party', payload, commandKey(contactKey, payload));
-    savedContact.current = { ...contact };
-    onPersonSaved(updated);
+    savedContact.current = { ...contact, name: displayName };
+    onPersonSaved({ ...updated, name: displayName });
   };
   const fields: ReactNode = (
     <fieldset className="traveler-contact-fields form-grid">
-      <legend>Contact details · saved for future bookings</legend>
+      <legend>Contact · optional display name for lists</legend>
       {[
-        ['name', 'Display name'],
+        ['name', 'Display name (optional)'],
         ['email', 'Email (optional)'],
         ['phone', 'Phone (optional)'],
         ['whatsapp', 'WhatsApp (optional)'],
@@ -127,9 +134,9 @@ export default function BookingTravelerDetails({
             type={
               key === 'email' ? 'email' : key === 'phone' || key === 'whatsapp' ? 'tel' : 'text'
             }
-            required={key === 'name'}
             value={contact[key] ?? ''}
             onChange={(e) => setContact((old) => ({ ...old, [key]: e.target.value }))}
+            placeholder={key === 'name' ? 'Leave blank to use legal name' : undefined}
           />
         </div>
       ))}
@@ -155,8 +162,8 @@ export default function BookingTravelerDetails({
         {contactBusy ? 'Saving…' : 'Save contact only & return'}
       </button>
       <small className="full">
-        Travel details below are optional. Legal names are required only when you save travel
-        details.
+        Legal first / last name (above) are the primary traveler identity. Display name is only for
+        chips and search if different.
       </small>
       {error && (
         <p role="alert" className="full">
@@ -170,8 +177,9 @@ export default function BookingTravelerDetails({
       config={{
         kind: canPrivate ? 'traveler' : 'edit_party',
         title: `Traveler details · ${person.name}`,
-        description:
-          'Saved on this traveler’s profile for future bookings. Your booking stays open.',
+        description: canPrivate
+          ? 'Enter legal name first for travel docs. Display name is optional. Your booking stays open.'
+          : 'Saved on this traveler’s profile for future bookings. Your booking stays open.',
         submit_label: 'Save traveler details',
         defaults: canPrivate
           ? {

@@ -3620,7 +3620,7 @@ function LegacyCommandForm({
               · {selectedBooking.travel_start || 'Travel date unknown'}
             </p>
           )}
-          {extraFields}
+          {config.kind === 'traveler' ? null : extraFields}
           {config.kind === 'booking_source_profile' && config.defaults.source_method_id && (
             <p className="note">
               Booked through:{' '}
@@ -3730,7 +3730,8 @@ function LegacyCommandForm({
                   {renderFields(defs.filter((f) => optionalKeys.has(f.key) && !f.required))}
                 </div>
               </details>
-            )}{' '}
+            )}
+            {config.kind === 'traveler' ? extraFields : null}
           </div>
           {[
             'booking',

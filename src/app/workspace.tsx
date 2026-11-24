@@ -2781,36 +2781,75 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           {(s.expectedEvents ?? []).some((e: R) => e.booking_id === b.id) && (
             <div className="detail-section">
               <Card title="Points rewards & transfers">
-                <div className="section-body">
-                  <p>
+                <div className="section-body expected-events-panel">
+                  <p className="expected-events-intro">
                     Expected points are tracked separately. Inventory and profit change only on an
                     actual issuer posting.
                   </p>
-                  {(s.expectedEvents ?? [])
-                    .filter((e: R) => e.booking_id === b.id)
-                    .map((e: R) => (
-                      <div className="note" key={e.id}>
-                        <strong>
-                          {e.kind} · {e.status}
-                        </strong>
-                        <p>
-                          {e.quantity_expected !== undefined &&
-                            `${Number(e.quantity_expected).toLocaleString()} expected points · `}
-                          {e.quantity_actual !== null &&
-                            e.quantity_actual !== undefined &&
-                            `${Number(e.quantity_actual).toLocaleString()} actually received points · `}
-                          {e.reference}
-                        </p>
-                        {can('manage_assets') && !['Denied', 'Reversed'].includes(e.status) && (
-                          <button
-                            className="btn small"
-                            onClick={() => action('update_expected_event', { event_id: e.id })}
-                          >
-                            Record issuer result
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                  <div className="expected-events-list">
+                    {(s.expectedEvents ?? [])
+                      .filter((e: R) => e.booking_id === b.id)
+                      .map((e: R) => {
+                        const status = String(e.status || 'Pending');
+                        const statusClass = status.toLowerCase().replace(/\s+/g, '-');
+                        const expectedQty =
+                          e.quantity_expected !== null && e.quantity_expected !== undefined
+                            ? Number(e.quantity_expected).toLocaleString()
+                            : null;
+                        const actualQty =
+                          e.quantity_actual !== null && e.quantity_actual !== undefined
+                            ? Number(e.quantity_actual).toLocaleString()
+                            : null;
+                        return (
+                          <article className="expected-event-card" key={e.id}>
+                            <div className="expected-event-card-main">
+                              <div className="expected-event-identity">
+                                <div className="expected-event-title-row">
+                                  <strong>{e.kind}</strong>
+                                  <span
+                                    className={`expected-event-status is-${statusClass}`}
+                                  >
+                                    {status}
+                                  </span>
+                                </div>
+                                {e.reference ? (
+                                  <span className="expected-event-ref">{e.reference}</span>
+                                ) : null}
+                              </div>
+                              <div className="expected-event-metrics">
+                                <div className="expected-event-metric">
+                                  <span className="detail-label">Expected</span>
+                                  <strong>
+                                    {expectedQty ?? 'Unknown'}
+                                    <small>points</small>
+                                  </strong>
+                                </div>
+                                <div className="expected-event-metric">
+                                  <span className="detail-label">Received</span>
+                                  <strong className={actualQty ? '' : 'is-empty'}>
+                                    {actualQty ?? '—'}
+                                    {actualQty ? <small>points</small> : null}
+                                  </strong>
+                                </div>
+                              </div>
+                            </div>
+                            {can('manage_assets') &&
+                              !['Denied', 'Reversed'].includes(status) && (
+                                <div className="expected-event-card-actions">
+                                  <button
+                                    className="btn small"
+                                    onClick={() =>
+                                      action('update_expected_event', { event_id: e.id })
+                                    }
+                                  >
+                                    Record issuer result
+                                  </button>
+                                </div>
+                              )}
+                          </article>
+                        );
+                      })}
+                  </div>
                 </div>
               </Card>
             </div>
@@ -4831,37 +4870,79 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           <div className="detail-section list-block">
             <Card
               title="Pending transfers & rewards"
+              count={expectedPager.total}
               action={newButton('Track expected event', 'expected_event')}
             >
-              <div className="section-body">
-                <p>
+              <div className="section-body expected-events-panel">
+                <p className="expected-events-intro">
                   Expected value does not change inventory or profit. Post only the actual issuer
                   receipt.
                 </p>
-                {expectedPager.items.map((e: R) => (
-                  <div className="note expected-event-row" key={e.id}>
-                    <strong>
-                      {e.kind} · {e.status}
-                    </strong>
-                    {e.quantity_expected && (
-                      <p>
-                        {Number(e.quantity_expected).toLocaleString()} expected points ·{' '}
-                        {e.reference}
-                      </p>
-                    )}
-                    {e.quantity_actual !== null && e.quantity_actual !== undefined && (
-                      <p>{Number(e.quantity_actual).toLocaleString()} actually received points</p>
-                    )}
-                    {!['Denied', 'Reversed'].includes(e.status) && (
-                      <button
-                        className="btn small"
-                        onClick={() => action('update_expected_event', { event_id: e.id })}
-                      >
-                        Record issuer result
-                      </button>
-                    )}
+                {expectedPager.items.length === 0 ? (
+                  <Empty>No pending transfers or rewards to show.</Empty>
+                ) : (
+                  <div className="expected-events-list">
+                    {expectedPager.items.map((e: R) => {
+                      const status = String(e.status || 'Pending');
+                      const statusClass = status.toLowerCase().replace(/\s+/g, '-');
+                      const expectedQty =
+                        e.quantity_expected !== null && e.quantity_expected !== undefined
+                          ? Number(e.quantity_expected).toLocaleString()
+                          : null;
+                      const actualQty =
+                        e.quantity_actual !== null && e.quantity_actual !== undefined
+                          ? Number(e.quantity_actual).toLocaleString()
+                          : null;
+                      return (
+                        <article className="expected-event-card" key={e.id}>
+                          <div className="expected-event-card-main">
+                            <div className="expected-event-identity">
+                              <div className="expected-event-title-row">
+                                <strong>{e.kind}</strong>
+                                <span
+                                  className={`expected-event-status is-${statusClass}`}
+                                >
+                                  {status}
+                                </span>
+                              </div>
+                              {e.reference ? (
+                                <span className="expected-event-ref">{e.reference}</span>
+                              ) : null}
+                            </div>
+                            <div className="expected-event-metrics">
+                              <div className="expected-event-metric">
+                                <span className="detail-label">Expected</span>
+                                <strong>
+                                  {expectedQty ?? 'Unknown'}
+                                  <small>points</small>
+                                </strong>
+                              </div>
+                              <div className="expected-event-metric">
+                                <span className="detail-label">Received</span>
+                                <strong className={actualQty ? '' : 'is-empty'}>
+                                  {actualQty ?? '—'}
+                                  {actualQty ? <small>points</small> : null}
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+                          {!['Denied', 'Reversed'].includes(status) && (
+                            <div className="expected-event-card-actions">
+                              <button
+                                className="btn small"
+                                onClick={() =>
+                                  action('update_expected_event', { event_id: e.id })
+                                }
+                              >
+                                Record issuer result
+                              </button>
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
                   </div>
-                ))}
+                )}
               </div>
             </Card>
             <ListPager
@@ -6467,13 +6548,13 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           state={s}
           onClose={() => setModal(null)}
           onCreateParty={async (data: R, key: string) => {
-            const result = await command('party', data, key);
-            await refresh();
-            return result;
+            // Party create merges into booking local state — skip full /api/state wait.
+            return command('party', data, key);
           }}
           onInlineCommand={async (kind: string, data: R, key: string) => {
             const result = await command(kind, data, key);
-            await refresh();
+            // Inline party create is merged by BookingEntry; other commands still need refresh.
+            if (kind !== 'party') await refresh();
             return result;
           }}
           onSubmit={async (data: R) => {

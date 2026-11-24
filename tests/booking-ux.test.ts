@@ -74,6 +74,22 @@ test('From/To updates replace legacy route and feed the existing automatic summa
     flightEndpoints({ origin: 'JFK NEW YORK TO TLV', destination: '' }),
     { origin: 'JFK', destination: 'TLV' },
   );
+  // Round-trip coded as ORIGIN-DEST-ORIGIN must become From ORIGIN / To DEST.
+  assert.deepEqual(flightEndpoints({ route: 'TLV-BCN-TLV' }), {
+    origin: 'TLV',
+    destination: 'BCN',
+    roundTripHint: true,
+  });
+  assert.deepEqual(flightEndpoints({ route: 'JFK-ATL-JFK' }), {
+    origin: 'JFK',
+    destination: 'ATL',
+    roundTripHint: true,
+  });
+  // Bad paste left From=To=TLV but route still has ORIGIN-DEST-ORIGIN.
+  assert.deepEqual(
+    flightEndpoints({ origin: 'TLV', destination: 'TLV', route: 'TLV-BCN-TLV' }),
+    { origin: 'TLV', destination: 'BCN', roundTripHint: true },
+  );
   const changed = flightEndpointChange(v, 'destination', 'HKG');
   assert.equal(changed.route, 'EWR-HKG');
   assert.match(derivedTravel(changed).summary, /EWR-HKG/);
