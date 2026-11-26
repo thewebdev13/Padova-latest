@@ -5,7 +5,17 @@ import { financialDatabase, testOwner, financialEmployee } from './helpers';
 import { execute } from '../src/lib/finance';
 import { detail } from '../src/lib/queries';
 import { ageAtTravel, ticketingValues } from '../src/lib/traveler-ticketing';
-import { calendarEntries, calendarLanes, tripTitle } from '../src/lib/travel-presentation';
+import {
+  bookingShortName,
+  calendarBookingSharePath,
+  calendarEntries,
+  calendarEntryMatchesSearch,
+  calendarEntryVisibleWithCancelled,
+  calendarLanes,
+  tripTitle,
+} from '../src/lib/travel-presentation';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 test('ticketing patch reuses permanent identity, retains rich profile, detects stale changes, and replays once', async () => {
   const db = await financialDatabase();
   try {
@@ -128,4 +138,75 @@ test('calendar spans source components, keeps cancellations and never invents pa
   assert.equal(lanes[0].end, 5);
   assert.equal(calendarEntries(bookings, parts, 'Car').length, 1);
   assert.equal(tripTitle({ summary: 'Hotel · Miami · 2026-11-04 – 2026-11-07' }), 'Hotel · Miami');
+});
+
+test('Plan one short booking name — product · place; blank route does not invent', () => {
+  assert.equal(
+    bookingShortName({ product: 'Flight', itinerary: { route: 'JFK–MIA' } }),
+    'Flight · JFK–MIA',
+  );
+  assert.equal(
+    bookingShortName({ product: 'Hotel', location: 'Miami Beach' }),
+    'Hotel · Miami Beach',
+  );
+  assert.equal(
+    bookingShortName({ product: 'Flight', summary: 'Flight · 2026-12-01' }),
+    'Flight',
+  );
+  assert.equal(bookingShortName({}), 'Booking');
+  const src = readFileSync(join(process.cwd(), 'src/app/workspace.tsx'), 'utf8');
+  assert.match(src, /Traveling today[\s\S]*bookingShortName\(tripView\(b\)\)/);
+  assert.match(src, /Upcoming bookings[\s\S]*bookingShortName\(tripView\(b\)\)/);
+  assert.match(src, /label: `\$\{b\.code\} · \$\{bookingShortName\(tripView\(b\)\)\}`/);
+});
+
+test('Calendar Copy link uses shareable booking path; blank id never invents', () => {
+  assert.equal(calendarBookingSharePath(null), null);
+  assert.equal(calendarBookingSharePath(''), null);
+  assert.equal(calendarBookingSharePath('   '), null);
+  assert.equal(calendarBookingSharePath('bk-1'), '/w/transactions#booking=bk-1');
+  const cal = readFileSync(join(process.cwd(), 'src/components/travel-calendar.tsx'), 'utf8');
+  assert.match(cal, /copyLink/);
+  assert.match(cal, /onContextMenu/);
+  assert.match(cal, /Right-click to copy shareable link/);
+  const src = readFileSync(join(process.cwd(), 'src/app/workspace.tsx'), 'utf8');
+  assert.match(
+    src,
+    /TravelCalendar[\s\S]*copyLink=\{async \(id\) => \{[\s\S]*calendarBookingSharePath/,
+  );
+});
+
+test('Calendar search: booking # · customer · trip; blank query matches all ≠ invent', () => {
+  const entry = {
+    code: 'PDV-100',
+    customer: 'Ada Lovelace',
+    travelers: 'Ada · Bob',
+    product: 'Flight',
+    summary: 'JFK–TLV',
+    booking_id: 'b-abc',
+  };
+  assert.equal(calendarEntryMatchesSearch(entry, ''), true);
+  assert.equal(calendarEntryMatchesSearch(entry, null), true);
+  assert.equal(calendarEntryMatchesSearch(entry, 'pdv-100'), true);
+  assert.equal(calendarEntryMatchesSearch(entry, 'ADA'), true);
+  assert.equal(calendarEntryMatchesSearch(entry, 'jfk'), true);
+  assert.equal(calendarEntryMatchesSearch(entry, 'b-abc'), true);
+  assert.equal(calendarEntryMatchesSearch(entry, 'hotel'), false);
+  assert.equal(calendarEntryMatchesSearch({ code: null, customer: null }, 'x'), false);
+  const cal = readFileSync(join(process.cwd(), 'src/components/travel-calendar.tsx'), 'utf8');
+  assert.match(cal, /calendarEntryMatchesSearch/);
+  assert.match(cal, /calendar-search/);
+  assert.match(cal, /Search booking #, customer or trip/);
+});
+
+test('Calendar hide cancelled: default shows marked trips; toggle omits cancelled ≠ invent', () => {
+  assert.equal(calendarEntryVisibleWithCancelled({ cancelled: true }, false), true);
+  assert.equal(calendarEntryVisibleWithCancelled({ cancelled: false }, false), true);
+  assert.equal(calendarEntryVisibleWithCancelled({ cancelled: true }, true), false);
+  assert.equal(calendarEntryVisibleWithCancelled({ cancelled: false }, true), true);
+  assert.equal(calendarEntryVisibleWithCancelled({}, true), true);
+  const cal = readFileSync(join(process.cwd(), 'src/components/travel-calendar.tsx'), 'utf8');
+  assert.match(cal, /calendarEntryVisibleWithCancelled/);
+  assert.match(cal, /Hide cancelled/);
+  assert.match(cal, /hideCancelled/);
 });

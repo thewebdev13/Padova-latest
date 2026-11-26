@@ -1,16 +1,117 @@
 'use client';
 import TravelCalendar from '@/components/travel-calendar';
-import { tripTitle } from '@/lib/travel-presentation';
+import { bookingShortName, calendarBookingSharePath, tripTitle } from '@/lib/travel-presentation';
 import QAReports from '@/components/qa-reports';
 import Partnerships from '@/components/partnerships/workspace';
 import TravelerSourceReview from '@/components/traveler-source-review';
 import SourceAccount from '@/components/source-account';
-import { bookingSearchTerms } from '@/lib/booking-search';
-import { draftKind } from '@/lib/draft-kind';
+import {
+  bookingMatchesSearch,
+  bookingSearchTerms,
+  saleMatchesSearch,
+} from '@/lib/booking-search';
+import { draftKind, draftMatchesSearch } from '@/lib/draft-kind';
 import { transactionList, transactionIndicators } from '@/lib/transaction-list';
-import { dateLabel } from '@/lib/display-date';
+import { dateLabel, dateTimeLabel } from '@/lib/display-date';
+import { auditMatchesSearch } from '@/lib/audit-channel';
+import { countLabel } from '@/lib/count-label';
+import { travelDatesDisplay } from '@/lib/travel-dates-display';
+import {
+  paymentAllocationStatus,
+  paymentMatchesAllocationFilter,
+  paymentMatchesSearch,
+  paymentUnallocatedCents,
+  paymentUnallocatedColumnLabel,
+} from '@/lib/expected-commissions';
+import {
+  buildApplyHeldCreditDefaults,
+  heldCustomerCreditCents,
+  pickBookingForHeldCreditApply,
+} from '@/lib/customer-wallet';
+import { buildPayReferralPaymentDefaults } from '@/lib/referrer-payout-defaults';
+import { authorizedPayersEmptyHint } from '@/lib/booking-payers';
+import {
+  customerTaxesDisplay,
+  standingDealNeedsTaxesHint,
+  standingDealUnknownAmountHint,
+} from '@/lib/booking-customer-taxes';
+import {
+  buildInvoicePreview,
+  canApproveInvoice,
+  canMarkInvoiceSent,
+  canSendInvoiceEmail,
+  canVoidInvoice,
+  formatInvoicePaymentReceiptLines,
+  formatInvoicePreviewPlainText,
+  formatInvoiceWhatsAppOwnerCopy,
+  invoiceStatusLabel,
+  pickInvoicePaymentReceipt,
+  type InvoicePreview,
+} from '@/lib/invoice-preview';
+import {
+  buildCustomerStatementPreview,
+  formatCustomerStatementPlainText,
+  type CustomerStatementPreview,
+} from '@/lib/customer-statement';
+import { customerOwesListLabel, partyCustomerOwes } from '@/lib/customer-owes';
+import {
+  cardFeeCentsByPaymentId,
+  customerPaymentsForParty,
+} from '@/lib/customer-payments';
+import {
+  paymentLooksRepeated,
+  paymentLooksRepeatedLabel,
+  possibleDuplicatePaymentPeers,
+} from '@/lib/payment-duplicate-flag';
+import { assetSaleEconomics } from '@/lib/asset-sale-economics';
+import {
+  chargebackStatusLabel,
+  customerRefundStatus,
+  customerRefundStatusLabel,
+  parseChargebackStatus,
+} from '@/lib/customer-refund-status';
+import {
+  assetMatchesCap1ProfileFilter,
+  cap1ProfileBalanceLabel,
+  listCap1ProfileBalances,
+  toggleCap1ProfileFilter,
+} from '@/lib/credit-ledger';
+import { buildAddReferrerDefaults } from '@/lib/add-referrer-defaults';
+import { pointsBatchListLabel, pointsBatchSummary } from '@/lib/points-batch';
+import { formatReferralRateLabel, partyReferralRateBps } from '@/lib/referrer-defaults';
+import { formatStandingDealLabel, partyStandingDeals } from '@/lib/standing-deals';
+import {
+  buildProfitByMonth,
+  buildYearEndExportPack,
+  rowsToCsv,
+  yearEndFileNames,
+} from '@/lib/year-end-export';
+import { bookingTicketingDeadline, heldDeadlineUrgency } from '@/lib/held-pnr';
+import { reservationStatusLabel } from '@/lib/booking-status';
+import {
+  SUPPLIER_REFUND_DENIED_FORM,
+  supplierRefundStatus,
+  supplierRefundStatusLabel,
+} from '@/lib/supplier-refund-status';
+import {
+  bookingDocumentKindLabel,
+  hiddenBookingDocuments,
+  visibleBookingDocuments,
+} from '@/lib/booking-documents';
+import {
+  bookingProfitListLabels,
+  bookingProfitPair,
+  buildPlanTodoList,
+  filterPlanTodoList,
+  planTodoMatchesSearch,
+  planTodoRecordUrl,
+  PLAN_TODO_CATEGORY_LABELS,
+  teamTaskMatchesSearch,
+  type PlanTodoCategory,
+  dashboardProfitTotals,
+} from '@/lib/dashboard-todo';
 import { incompleteProfitReason, supplierCostIncomplete } from '@/lib/financial-display';
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import CommandForm from '@/components/command-form';
 import HistoricalDraftDetails from '@/components/historical-draft-details';
 import HistoricalRecordEditor from '@/components/historical-record-editor';
@@ -19,14 +120,26 @@ import HistoricalSourceDetails from '@/components/historical-source-details';
 import { csvCell } from '@/lib/csv';
 import { travelsBetween, upcomingBookings, nextTravelDate } from '@/lib/travel-schedule';
 import { assetUnit, formatQuantity, refundQuantityUnit } from '@/lib/asset-units';
+import { cancelFormMoneyDefaults } from '@/lib/refund-card-fee';
+import {
+  compareRefundFollowUpDue,
+  refundFollowUpDueOn,
+  refundFollowUpUrgency,
+  refundFollowUpUrgencyLabel,
+  refundMatchesSearch,
+} from '@/lib/refund-follow-up-due';
 import { latestCreditRequests, sourceConfirmationLabel } from '@/lib/v1-entry';
 import AuthScreen from '@/components/auth-screen';
 import { FormAlert } from '@/components/form-feedback';
 import CommissionsPage from '@/components/commissions-page';
 import OperationalViews from '@/components/operational-views';
+import { followupRowMatchesSearch } from '@/lib/operational-views';
 import {
+  bookingRecoveryContinueDefaults,
   clearBookingRecovery,
   clearBookingRecoverySnooze,
+  localBookingRecoveryOffer,
+  type LocalBookingRecoveryOffer,
   readBookingRecovery,
   shouldAutoOpenBookingRecovery,
 } from '@/lib/booking-recovery';
@@ -52,6 +165,8 @@ import {
   INTAKE_REQUIRED_ROWS,
   INTAKE_SAMPLE_PASTE,
   UNREAD_FILE_MESSAGE,
+  intakePreviewMark,
+  intakePreviewMarkLabel,
   type IntakeFieldOverrides,
   type IntakeMappingPreview,
 } from '@/lib/intake-preview';
@@ -63,7 +178,101 @@ import {
   hasExpectedCommissionOnBooking,
   receivableCommissionLabel,
 } from '@/lib/commission-line-label';
-import { readWorkspaceLocation, workspaceUrl } from '@/lib/workspace-routes';
+import { commissionOutstandingCents } from '@/lib/expected-commissions';
+import {
+  buildMoneyBackLines,
+  moneyBackAmountBasisLabel,
+  moneyBackFormLabel,
+  moneyBackIsAdmCorrection,
+  moneyBackStatusLabel,
+} from '@/lib/money-back';
+import { buildConfirmCommissionDefaults } from '@/lib/confirm-commission';
+import {
+  isTravelerLockedVoucher,
+  voucherLockDisplayLabel,
+} from '@/lib/voucher-traveler-lock';
+import { isVoucherAsset } from '@/lib/voucher-ledger';
+import { fundingCostKindLabel, fundingVoucherNote } from '@/lib/funding-cost-label';
+import {
+  fundingCostLineSettlement,
+  fundingSettlementBadgeTone,
+  fundingSettlementSummary,
+} from '@/lib/funding-settlement';
+import {
+  tripSharedChargeSummary,
+  type TripSharedCharge,
+} from '@/lib/trip-shared-charges';
+import { fhrProgramBenefitLabel } from '@/lib/fhr-program-benefit';
+import {
+  priceBreakdownNote,
+  priceBreakdownNoteVisible,
+} from '@/lib/price-breakdown-note';
+import { parseExpiryRuleFromRestrictions } from '@/lib/expiry-rules';
+import {
+  parsePointsBatchSourceFromRestrictions,
+  pointsBatchSourceLabel,
+} from '@/lib/points-batch-source';
+import { pointsOwningAccountLabel } from '@/lib/points-owning-account';
+import {
+  assetMatchesSearch,
+  expectedEventBookingSharePath,
+  expectedEventMatchesSearch,
+  filterCreditsAndPointsAssets,
+} from '@/lib/credits-points';
+import {
+  listTradesToComplete,
+  parseTradeStatus,
+  parseTradeToComplete,
+  tradeStatusLabel,
+  tradeToCompleteMatchesSearch,
+} from '@/lib/trade-desk';
+import {
+  buildExpireAssetDefaults,
+  canExpireAsset,
+  expireAssetLossLabel,
+} from '@/lib/expire-asset';
+import {
+  bookingListBookedOn,
+  bookingListColumnCount,
+  bookingListExpandFacts,
+  bookingListHowBooked,
+  BOOKING_LIST_SORT_OPTIONS,
+  bookingListActiveCount,
+  bookingListCancelledCount,
+  bookingListCompletedCount,
+  bookingListHeldCount,
+  bookingListHowBookedOptions,
+  bookingListIsCancelled,
+  bookingListIsOwed,
+  bookingListOwedCount,
+  bookingListOwedTotal,
+  bookingListOwedTotalLabel,
+  bookingListPnr,
+  bookingListRefundPendingCount,
+  bookingListYearOptions,
+  bookingMatchesHowBookedFilter,
+  bookingMatchesYearFilter,
+  compareBookingsForList,
+  toggleBookingActiveFilter,
+  toggleBookingCancelledFilter,
+  toggleBookingCompletedFilter,
+  toggleBookingHeldFilter,
+  toggleBookingOwedFilter,
+  toggleBookingRefundPendingFilter,
+  toggleExpandedBookingId,
+  type BookingListSort,
+} from '@/lib/booking-list';
+import {
+  listPageForRecordId,
+  readWorkspaceInvoiceId,
+  readWorkspaceLocation,
+  readWorkspaceRecord,
+  WORKSPACE_HOME_PAGE,
+  workspaceInvoiceUrl,
+  workspacePageForRecord,
+  workspaceRecordUrl,
+  workspaceUrl,
+} from '@/lib/workspace-routes';
 import ListPager, { pageSlice } from '@/components/list-pager';
 import { useConfirmDialog } from '@/components/confirm-dialog';
 import UserAdministration, {
@@ -89,9 +298,11 @@ import {
   Bell,
   Plus,
   ChevronRight,
+  ChevronDown,
   ChevronLeft,
   ArrowUpRight,
   ArrowDownLeft,
+  ArrowLeftRight,
   ArrowRight,
   Check,
   CheckCircle2,
@@ -234,18 +445,21 @@ function Metric({
   );
 }
 const nav = [
-  ['Dashboard', LayoutDashboard],
   ['Bookings', Plane],
+  ['Dashboard', LayoutDashboard],
   ['People & Families', Users],
   ['Companies', Building2],
   ['Suppliers', Landmark],
   ['Sources & Brokers', Users],
   ['Partnerships', Building2],
   ['Payments', Wallet],
+  ['Credits & points', Ticket],
+  ['Trade desk', ArrowLeftRight],
   ['Travel Assets', Ticket],
-  ['Commissions', Coins],
+  ['Expected commissions', Coins],
   ['Refunds', ArrowDownLeft],
   ['Calendar', CalendarDays],
+  ['To-do', ClipboardList],
   ['Tasks', ClipboardList],
   ['Accounting', ChartNoAxesCombined],
   ['Activity', History],
@@ -259,11 +473,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
   );
   const [s, setS] = useState<R | null>(null),
     [page, setPage] = useState(() =>
-      typeof window === 'undefined' ? 'Dashboard' : (readWorkspaceLocation().page ?? 'Dashboard'),
+      typeof window === 'undefined'
+        ? WORKSPACE_HOME_PAGE
+        : (readWorkspaceLocation().page ?? WORKSPACE_HOME_PAGE),
     ),
     [selected, setSelected] = useState<R | null>(null),
     [detail, setDetail] = useState<R | null>(null),
     [modal, setModal] = useState<R | null>(null),
+    [invoicePreview, setInvoicePreview] = useState<{
+      customer_id: string;
+      preview: InvoicePreview;
+    } | null>(null),
+    [statementPreview, setStatementPreview] = useState<CustomerStatementPreview | null>(null),
+    [invoiceBusy, setInvoiceBusy] = useState(false),
     [query, setQuery] = useState(''),
     [historicalQuery, setHistoricalQuery] = useState(''),
     [directoryQuery, setDirectoryQuery] = useState(''),
@@ -271,20 +493,42 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [directoryType, setDirectoryType] = useState('All'),
     [directorySort, setDirectorySort] = useState('name'),
     [bookingStatus, setBookingStatus] = useState('All'),
+    [bookingOwedOnly, setBookingOwedOnly] = useState(false),
+    [bookingHowBooked, setBookingHowBooked] = useState('All'),
+    [bookingYear, setBookingYear] = useState('All'),
+    [bookingQuery, setBookingQuery] = useState(''),
+    [bookingSort, setBookingSort] = useState<BookingListSort>('booked_desc'),
+    [expandedBookingId, setExpandedBookingId] = useState<string | null>(null),
+    [focusPaymentId, setFocusPaymentId] = useState<string | null>(null),
+    [focusRefundId, setFocusRefundId] = useState<string | null>(null),
+    [focusInvoiceId, setFocusInvoiceId] = useState<string | null>(null),
     [historicalStatus, setHistoricalStatus] = useState('Prepared booking'),
     [filter, setFilter] = useState('All'),
+    [cap1ProfileFilter, setCap1ProfileFilter] = useState('All'),
+    [assetQuery, setAssetQuery] = useState(''),
+    [paymentQuery, setPaymentQuery] = useState(''),
+    [refundQuery, setRefundQuery] = useState(''),
+    [activityQuery, setActivityQuery] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [toast, setToast] = useState(''),
+    [recoveryOffer, setRecoveryOffer] = useState<LocalBookingRecoveryOffer | null>(null),
     [mobile, setMobile] = useState(false),
     [unauth, setUnauth] = useState(false),
     [horizon, setHorizon] = useState(7),
+    [dashboardTravelQuery, setDashboardTravelQuery] = useState(''),
     [month, setMonth] = useState(new Date().toISOString().slice(0, 7)),
     [followupSelected, setFollowupSelected] = useState('Needs Attention'),
+    [todoCategory, setTodoCategory] = useState<PlanTodoCategory | 'All'>('All'),
+    [todoQuery, setTodoQuery] = useState(''),
+    [taskQuery, setTaskQuery] = useState(''),
+    [attentionQuery, setAttentionQuery] = useState(''),
+    [tradeQuery, setTradeQuery] = useState(''),
     [bookingPage, setBookingPage] = useState(1),
     [tablePage, setTablePage] = useState(1),
     [activityPage, setActivityPage] = useState(1),
     [expectedPage, setExpectedPage] = useState(1),
+    [expectedQuery, setExpectedQuery] = useState(''),
     [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7)),
     [day, setDay] = useState(''),
     [intakeOpen, setIntakeOpen] = useState(false),
@@ -295,6 +539,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     [intakeRemapRow, setIntakeRemapRow] = useState<string | null>(null),
     [intakeStatus, setIntakeStatus] = useState(''),
     [intakeBusy, setIntakeBusy] = useState(false),
+    intakeAbortRef = useRef<AbortController | null>(null),
     [intakeDrag, setIntakeDrag] = useState(false),
     [intakeProgress, setIntakeProgress] = useState<{
       processed: number;
@@ -315,6 +560,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       whatsapp?: string;
     } | null>(null),
     [draftChannelFilter, setDraftChannelFilter] = useState('All'),
+    [draftQuery, setDraftQuery] = useState(''),
     [draftPage, setDraftPage] = useState(1),
     [draftsOpen, setDraftsOpen] = useState(() => {
       if (typeof window === 'undefined') return true;
@@ -349,7 +595,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     if (clearText) setIntakeText('');
   };
   const closeIntake = () => {
-    if (intakeBusy) return;
+    // Plan v1: Escape/Cancel must always abort — never trap the user during file read.
+    try {
+      intakeAbortRef.current?.abort();
+    } catch {
+      /* ignore */
+    }
+    intakeAbortRef.current = null;
+    setIntakeBusy(false);
+    setIntakeProgress(null);
     setIntakeOpen(false);
     // Keep pasted text on cancel; clear channel toggles / file so reopen is clean.
     resetIntakeChannels(false);
@@ -360,13 +614,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       if (e.key !== 'Escape') return;
       e.preventDefault();
       e.stopPropagation();
-      // While a file is reading or a draft is saving, Escape must not close the modal.
-      if (intakeBusy) return;
       closeIntake();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [intakeOpen, intakeBusy]);
+  }, [intakeOpen]);
   // Draft card ⋮ menus: close on outside click / Escape (do not leave open).
   useEffect(() => {
     const closeDraftMenus = () => {
@@ -429,13 +681,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       setIntakeText('');
       setIntakePreview(null);
       setIntakeBusy(true);
+      const abort = new AbortController();
+      intakeAbortRef.current = abort;
       const previewOnce = async () => {
         const data = new FormData();
         data.append('preview_only', '1');
         data.append('source', 'staff_upload');
         data.append('file', file);
         data.append('filename', file.name);
-        const response = await fetch('/api/booking-intake', { method: 'POST', body: data });
+        const response = await fetch('/api/booking-intake', {
+          method: 'POST',
+          body: data,
+          signal: abort.signal,
+        });
         const raw = await response.text();
         let result: Record<string, any> = {};
         try {
@@ -474,30 +732,39 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           );
         }
       } catch (err) {
-        // One more attempt after a compile/network blip (matches “works after refresh”).
-        try {
-          await new Promise((r) => setTimeout(r, 600));
-          const result = await previewOnce();
-          if (result.unread) throw new Error(result.unread_message || UNREAD_FILE_MESSAGE);
-          const extracted = String(result.text || '');
-          setIntakeText(extracted);
-          setIntakePreview(
-            result.mapping ||
-              buildIntakeMappingPreview(extracted, { parties: s?.parties ?? [] }),
-          );
-        } catch (retryErr) {
-          setIntakeText('');
-          setIntakeStatus(
-            retryErr instanceof Error ? retryErr.message : UNREAD_FILE_MESSAGE,
-          );
-          setIntakePreview(
-            buildIntakeMappingPreview('', {
-              unread: true,
-              unreadMessage: UNREAD_FILE_MESSAGE,
-            }),
-          );
+        if ((err as Error)?.name === 'AbortError') {
+          setIntakeStatus('Cancelled.');
+        } else {
+          // One more attempt after a compile/network blip (matches “works after refresh”).
+          try {
+            await new Promise((r) => setTimeout(r, 600));
+            const result = await previewOnce();
+            if (result.unread) throw new Error(result.unread_message || UNREAD_FILE_MESSAGE);
+            const extracted = String(result.text || '');
+            setIntakeText(extracted);
+            setIntakePreview(
+              result.mapping ||
+                buildIntakeMappingPreview(extracted, { parties: s?.parties ?? [] }),
+            );
+          } catch (retryErr) {
+            if ((retryErr as Error)?.name === 'AbortError') {
+              setIntakeStatus('Cancelled.');
+            } else {
+              setIntakeText('');
+              setIntakeStatus(
+                retryErr instanceof Error ? retryErr.message : UNREAD_FILE_MESSAGE,
+              );
+              setIntakePreview(
+                buildIntakeMappingPreview('', {
+                  unread: true,
+                  unreadMessage: UNREAD_FILE_MESSAGE,
+                }),
+              );
+            }
+          }
         }
       } finally {
+        if (intakeAbortRef.current === abort) intakeAbortRef.current = null;
         setIntakeBusy(false);
       }
       return;
@@ -533,13 +800,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       setDetail(null);
       setModal(null);
       setQuery('');
-      setPage('Dashboard');
+      setPage(WORKSPACE_HOME_PAGE);
       setUnauth(true);
-      if (typeof window !== 'undefined') {
-        const next = workspaceUrl('Dashboard', window.location.hash);
-        const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-        if (current !== next) window.history.replaceState(null, '', next);
-      }
+      // Keep booking/person deep link in the URL so it opens after login.
       return;
     }
     const data = await r.json().catch(() => {
@@ -594,28 +857,26 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     };
   }, [page, s?.actor?.id, s?.actor?.role, historicalQuery, historicalStatus, historicalOffset]);
   const initialBusinessMonth = useRef(false);
-  useEffect(() => {
-    if (!s?.actor?.id) return;
-    const draft = readBookingRecovery(s.actor.id);
-    // Server "Continue Draft" rows stay in Drafts — do not pop the modal on every /w/… refresh.
-    // New unfinished bookings still auto-restore unless Cancel snoozed this tab session.
-    if (!shouldAutoOpenBookingRecovery(s.actor.id, draft)) {
-      if (draft && draft.values?.draft_id) clearBookingRecovery(s.actor.id);
+  const refreshRecoveryOffer = useCallback(() => {
+    const actorId = s?.actor?.id;
+    if (!actorId) {
+      setRecoveryOffer(null);
       return;
     }
-    setModal({
-      kind: 'booking',
-      key: draft!.commandKey,
-      defaults: {
-        ...draft!.values,
-        components: draft!.components,
-        pending_traveler: draft!.traveler,
-        recovery_paste: draft!.paste,
-        resume_recovery: true,
-      },
-    });
-    setToast('Your unfinished booking has been restored.');
+    const draft = readBookingRecovery(actorId);
+    // Plan Do-now: never auto-popup unfinished booking. Server drafts → Drafts list only.
+    if (draft?.values?.draft_id) {
+      clearBookingRecovery(actorId);
+      setRecoveryOffer(null);
+      return;
+    }
+    // Keep dead-path guard so shouldAutoOpen cannot regress into a popup.
+    if (shouldAutoOpenBookingRecovery(actorId, draft)) return;
+    setRecoveryOffer(localBookingRecoveryOffer(actorId, draft));
   }, [s?.actor?.id]);
+  useEffect(() => {
+    refreshRecoveryOffer();
+  }, [refreshRecoveryOffer]);
   useEffect(() => {
     if (s?.today && !initialBusinessMonth.current) {
       const businessMonth = s.today.slice(0, 7);
@@ -669,11 +930,97 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       return () => clearTimeout(t);
     }
   }, [toast]);
-  const openRecord = async (type: string, id: string) => {
+  const closeRecord = () => {
+    setSelected(null);
+    setDetail(null);
+    setFocusPaymentId(null);
+    setFocusRefundId(null);
+    setFocusInvoiceId(null);
+    if (typeof window !== 'undefined') {
+      const loc = readWorkspaceLocation();
+      const page = loc.page || WORKSPACE_HOME_PAGE;
+      const next = workspaceUrl(page, window.location.hash);
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (current !== next) window.history.replaceState(null, '', next);
+    }
+  };
+  const copyWorkspacePath = async (path: string) => {
+    if (!path) return;
+    await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+    setToast('Link copied');
+    if (typeof window !== 'undefined') {
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (current !== path) window.history.replaceState(null, '', path);
+    }
+  };
+  const focusListRecord = (
+    type: 'payment' | 'refund',
+    id: string,
+    opts?: { replaceUrl?: boolean },
+  ) => {
+    setSelected(null);
+    setDetail(null);
+    setQuery('');
+    setError('');
+    setMobile(false);
+    setFilter('All');
+    if (type === 'payment') {
+      setFocusPaymentId(id);
+      setFocusRefundId(null);
+      setFocusInvoiceId(null);
+      setPage('Payments');
+    } else {
+      setFocusRefundId(id);
+      setFocusPaymentId(null);
+      setFocusInvoiceId(null);
+      setPage('Refunds');
+    }
+    if (typeof window !== 'undefined') {
+      const next = workspaceRecordUrl(type, id);
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (current !== next) {
+        if (opts?.replaceUrl) window.history.replaceState(null, '', next);
+        else window.history.pushState(null, '', next);
+      }
+    }
+  };
+  const openRecord = async (type: string, id: string, opts?: { replaceUrl?: boolean }) => {
+    // Plan: payment/refund deep-links focus the list row (no separate detail fetch).
+    if (type === 'payment' || type === 'refund') {
+      focusListRecord(type, id, opts);
+      return;
+    }
+    setFocusPaymentId(null);
+    setFocusRefundId(null);
+    const hashPerson =
+      typeof window !== 'undefined' ? readWorkspaceRecord() : null;
+    const invoiceFocus =
+      type === 'person' &&
+      hashPerson?.type === 'person' &&
+      hashPerson.id === id
+        ? readWorkspaceInvoiceId()
+        : null;
+    setFocusInvoiceId(invoiceFocus);
     setSelected({ type, id });
     setDetail(null);
     setQuery('');
     setError('');
+    if (
+      typeof window !== 'undefined' &&
+      (type === 'booking' || type === 'person' || type === 'asset' || type === 'draft')
+    ) {
+      const page = workspacePageForRecord(type);
+      setPage(page);
+      const next =
+        type === 'person' && invoiceFocus
+          ? workspaceInvoiceUrl(id, invoiceFocus)
+          : workspaceRecordUrl(type as 'booking' | 'person' | 'asset' | 'draft', id);
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (current !== next) {
+        if (opts?.replaceUrl) window.history.replaceState(null, '', next);
+        else window.history.pushState(null, '', next);
+      }
+    }
     try {
       const r = await fetch(`/api/state?type=${type}&id=${id}`);
       const d = await r.json();
@@ -683,8 +1030,44 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       setError((e as Error).message);
     }
   };
+  const openRecordFromHash = useCallback(async (opts?: { replaceUrl?: boolean }) => {
+    const record = readWorkspaceRecord();
+    if (!record) return false;
+    if (record.type === 'payment' || record.type === 'refund') {
+      focusListRecord(record.type, record.id, opts);
+      return true;
+    }
+    setFocusPaymentId(null);
+    setFocusRefundId(null);
+    const invoiceFocus =
+      record.type === 'person' ? readWorkspaceInvoiceId() : null;
+    setFocusInvoiceId(invoiceFocus);
+    setPage(workspacePageForRecord(record.type));
+    setSelected({ type: record.type, id: record.id });
+    setDetail(null);
+    setQuery('');
+    setError('');
+    setMobile(false);
+    if (opts?.replaceUrl && typeof window !== 'undefined') {
+      const next =
+        record.type === 'person' && invoiceFocus
+          ? workspaceInvoiceUrl(record.id, invoiceFocus)
+          : workspaceRecordUrl(record.type, record.id);
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (current !== next) window.history.replaceState(null, '', next);
+    }
+    try {
+      const r = await fetch(`/api/state?type=${record.type}&id=${record.id}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setDetail(d);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    return true;
+  }, []);
   useEffect(() => {
-    const applyLocation = (opts?: { replaceLegacy?: boolean; initial?: boolean }) => {
+    const applyLocation = async (opts?: { replaceLegacy?: boolean; initial?: boolean }) => {
       const loc = readWorkspaceLocation();
       if (loc.reset) {
         setAuthReset(true);
@@ -692,7 +1075,14 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         setSelected(null);
         setDetail(null);
         setModal(null);
-        setPage('Dashboard');
+        setPage(WORKSPACE_HOME_PAGE);
+        return;
+      }
+      const opened = await openRecordFromHash({ replaceUrl: true });
+      if (opened) {
+        if (opts?.replaceLegacy !== false && !loc.reset) {
+          // Record URL already normalized inside openRecordFromHash.
+        }
         return;
       }
       if (loc.page) {
@@ -712,12 +1102,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         }
       }
     };
-    applyLocation({ replaceLegacy: true, initial: true });
-    const onPop = () => applyLocation({ replaceLegacy: false });
+    void applyLocation({ replaceLegacy: true, initial: true });
+    const onPop = () => {
+      void applyLocation({ replaceLegacy: false });
+    };
     const onHash = () => {
       const loc = readWorkspaceLocation();
       if (loc.reset) {
-        applyLocation({ replaceLegacy: false });
+        void applyLocation({ replaceLegacy: false });
+        return;
+      }
+      if (readWorkspaceRecord()) {
+        void openRecordFromHash({ replaceUrl: true });
         return;
       }
       // Legacy bookmark #page=… while already on a path — migrate once.
@@ -735,7 +1131,47 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       window.removeEventListener('popstate', onPop);
       window.removeEventListener('hashchange', onHash);
     };
-  }, []);
+  }, [openRecordFromHash]);
+  useEffect(() => {
+    if (!s?.actor?.id) return;
+    // After login, open a bookmarked booking/person/asset/payment/refund deep link once.
+    const record = readWorkspaceRecord();
+    if (!record) return;
+    if (record.type === 'payment') {
+      if (focusPaymentId !== record.id) void openRecordFromHash({ replaceUrl: true });
+      return;
+    }
+    if (record.type === 'refund') {
+      if (focusRefundId !== record.id) void openRecordFromHash({ replaceUrl: true });
+      return;
+    }
+    if (!selected) void openRecordFromHash({ replaceUrl: true });
+  }, [s?.actor?.id, selected, focusPaymentId, focusRefundId, openRecordFromHash]);
+  useEffect(() => {
+    if (page !== 'Payments' || !focusPaymentId || !s?.payments) return;
+    const ids = (s.payments as R[]).map((p) => String(p.id));
+    setTablePage(listPageForRecordId(ids, focusPaymentId, 12));
+  }, [page, focusPaymentId, s?.payments]);
+  useEffect(() => {
+    if (page !== 'Payments' || !focusPaymentId) return;
+    const el = document.getElementById(`payment-row-${focusPaymentId}`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [page, focusPaymentId, tablePage]);
+  useEffect(() => {
+    if (page !== 'Refunds' || !focusRefundId || !s?.refunds) return;
+    const ids = (s.refunds as R[]).map((r) => String(r.id));
+    setTablePage(listPageForRecordId(ids, focusRefundId, 12));
+  }, [page, focusRefundId, s?.refunds]);
+  useEffect(() => {
+    if (page !== 'Refunds' || !focusRefundId) return;
+    const el = document.getElementById(`refund-row-${focusRefundId}`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [page, focusRefundId, tablePage]);
+  useEffect(() => {
+    if (!focusInvoiceId || !detail?.invoiceDrafts) return;
+    const el = document.getElementById(`invoice-row-${focusInvoiceId}`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [focusInvoiceId, detail?.invoiceDrafts, selected?.id]);
   const go = (name: string) => {
     setDirectoryQuery('');
     setDirectoryPage(1);
@@ -743,6 +1179,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     setPage(name);
     setSelected(null);
     setDetail(null);
+    setFocusPaymentId(null);
+    setFocusRefundId(null);
+    setFocusInvoiceId(null);
     setFilter(name === 'Refunds' ? 'Outstanding' : 'All');
     setQuery('');
     setMobile(false);
@@ -768,22 +1207,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       setError('This action requires an Owner-granted permission.');
       return;
     }
-    if (kind === 'revise') {
-      const trips = (s?.travelComponents ?? []).filter(
-        (t: R) => t.booking_id === defaults.booking_id && t.status !== 'Cancelled',
-      );
-      if (trips.length === 1)
-        defaults = {
-          ...defaults,
-          provider_id: trips[0].provider_id,
-          itinerary: {
-            ...trips[0].details,
-            ...defaults.itinerary,
-            ...(trips[0].product === 'Flight' && trips[0].provider_id
-              ? { airline_id: trips[0].provider_id }
-              : {}),
-          },
-        };
+    if (kind === 'revise' || kind === 'booking_change') {
+      if (kind === 'revise') {
+        const trips = (s?.travelComponents ?? []).filter(
+          (t: R) => t.booking_id === defaults.booking_id && t.status !== 'Cancelled',
+        );
+        if (trips.length === 1)
+          defaults = {
+            ...defaults,
+            provider_id: trips[0].provider_id,
+            itinerary: {
+              ...trips[0].details,
+              ...defaults.itinerary,
+              ...(trips[0].product === 'Flight' && trips[0].provider_id
+                ? { airline_id: trips[0].provider_id }
+                : {}),
+            },
+          };
+      }
       const sources = [
         ...new Set(
           (s?.fundingComponents ?? [])
@@ -800,34 +1241,45 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       const r = s?.refunds.find((r: R) => r.id === defaults.refund_id);
       if (r) {
         const f = s?.fundingComponents.find((f: R) => f.id === r.funding_component_id);
+        const remainingSupplier = Number(r.supplier_expected) - Number(r.received);
+        const amountCents =
+          defaults.amount != null && defaults.amount !== ''
+            ? Number(defaults.amount)
+            : kind === 'pay_refund'
+              ? Number(r.customer_due) - Number(r.paid) - Number(r.handed_over ?? 0)
+              : remainingSupplier;
         defaults = {
           ...defaults,
           amount: (
-            (kind === 'pay_refund'
-              ? Number(r.customer_due) - Number(r.paid) - Number(r.handed_over ?? 0)
-              : Number(r.supplier_expected) - Number(r.received)) /
+            amountCents /
             (kind === 'receive_refund' && ['points', 'count'].includes(r.unit) ? 1 : 100)
           ).toFixed(2),
           ...(kind === 'receive_refund'
             ? {
                 form:
-                  r.unit === 'points'
+                  defaults.form ||
+                  (r.unit === 'points'
                     ? 'points'
                     : r.unit === 'count'
                       ? 'Certificate'
                       : f?.asset_id
                         ? 'Voucher'
-                        : 'cash',
-                asset_id: f?.asset_id,
-                account_id: f?.account_id,
-                ...(f?.account_id
-                  ? {
-                      method:
-                        s?.paymentAccounts.find((a: R) => a.id === f.account_id)?.kind === 'Card'
-                          ? 'Card'
-                          : 'ACH',
-                    }
-                  : {}),
+                        : 'cash'),
+                ...(defaults.form === SUPPLIER_REFUND_DENIED_FORM
+                  ? {}
+                  : {
+                      asset_id: f?.asset_id,
+                      account_id: f?.account_id,
+                      ...(f?.account_id
+                        ? {
+                            method:
+                              s?.paymentAccounts.find((a: R) => a.id === f.account_id)?.kind ===
+                              'Card'
+                                ? 'Card'
+                                : 'ACH',
+                          }
+                        : {}),
+                    }),
               }
             : {}),
         };
@@ -842,20 +1294,29 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         const f = funding.length === 1 ? funding[0] : null;
         const unit = f ? refundQuantityUnit(f) : 'money';
         const recoverable = f ? (f.asset_id ? f.face_amount : f.cost) : null;
+        const supplierExpected =
+          recoverable == null
+            ? null
+            : Number(recoverable);
+        const money = cancelFormMoneyDefaults(b, {
+          quantity_unit: unit,
+          supplier_expected_cents: unit === 'money' ? supplierExpected : null,
+          original_cost_cents: unit === 'money' ? supplierExpected : null,
+        });
         defaults = {
           ...defaults,
-          charge_reduction: b.sale == null ? '' : (Number(b.sale) / 100).toFixed(2),
-          customer_due:
-            b.customer_balance == null
-              ? ''
-              : (Math.max(0, Number(b.sale) - Number(b.customer_balance)) / 100).toFixed(2),
+          refund_card_fee: false,
+          charge_reduction: money.charge_reduction,
+          customer_due: money.customer_due,
           ...(f
             ? {
                 funding_component_id: f.id,
                 supplier_expected:
                   recoverable == null
                     ? ''
-                    : (Number(recoverable) / (unit === 'money' ? 100 : 1)).toString(),
+                    : unit === 'money'
+                      ? (Number(recoverable) / 100).toFixed(2)
+                      : String(Number(recoverable)),
               }
             : {}),
         };
@@ -877,7 +1338,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         return;
       }
     }
-    setModal({ kind, defaults, key: crypto.randomUUID() });
+    setModal({
+      kind,
+      defaults,
+      key: crypto.randomUUID(),
+      ...(kind === 'note' && defaults.call_note
+        ? {
+            title: 'Refund call note',
+            description: 'Plan: chase notes stay on the refund follow-up until it is settled.',
+          }
+        : {}),
+    });
   };
   const command = async (kind: string, data: R, key = crypto.randomUUID()) => {
     const r = await fetch('/api/commands', {
@@ -959,6 +1430,13 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
   const paymentRows: R[] = Array.isArray(s.payments) ? s.payments : [];
   const commissionRows: R[] = Array.isArray(s.commissions) ? s.commissions : [];
   const taskRows: R[] = Array.isArray(s.tasks) ? s.tasks : [];
+  const planTodosAll = buildPlanTodoList({
+    tasks: taskRows,
+    attention: Array.isArray(s.attention) ? s.attention : [],
+    followups: (s.operationalViews?.['Needs Attention'] as R[]) ?? [],
+    operationalViews: (s.operationalViews ?? {}) as Record<string, R[]>,
+    limit: 100,
+  });
   const today = String(s.today || new Date().toISOString().slice(0, 10));
   const person = (id: string) => parties.find((p) => p.id === id)?.name ?? '—';
   const currentMonth = today.slice(0, 7);
@@ -987,15 +1465,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       end,
       product,
     );
-  const todayTravel = bks.filter(
+  const todayTravelAll = bks.filter(
     (b) => b.reservation_status !== 'Traveled' && travelMatches(b, today),
   );
-  const upcoming = upcomingBookings(
+  const upcomingAll = upcomingBookings(
     bks as (R & Parameters<typeof travelsBetween>[0])[],
     s.travelComponents ?? [],
     today,
     new Date(new Date(today).getTime() + horizon * 86400000).toISOString().slice(0, 10),
   );
+  const todayTravel = todayTravelAll.filter((b) =>
+    bookingMatchesSearch(b, s, dashboardTravelQuery),
+  );
+  const upcoming = upcomingAll.filter((b) => bookingMatchesSearch(b, s, dashboardTravelQuery));
   const matches = (r: R) =>
     Object.values(r)
       .filter((v) => typeof v === 'string')
@@ -1086,6 +1568,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       .join(' ')
       .toLowerCase()
       .includes(query.toLowerCase());
+  const tripView = (b: R) => {
+    const travels = (s.travelComponents ?? []).filter((t: R) => t.booking_id === b.id);
+    return travels.length === 1
+      ? { ...b, details: travels[0].details, provider: person(travels[0].provider_id) }
+      : b;
+  };
   const searchHits = query.trim()
     ? [
         ...(s.bookingDrafts ?? []).filter(draftMatches).map((d: R) => ({
@@ -1108,7 +1596,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         ...bks.filter(matches).map((b) => ({
           type: 'booking',
           id: b.id,
-          label: `${b.code} · ${b.summary}`,
+          label: `${b.code} · ${bookingShortName(tripView(b))}`,
           sub: `${b.customer} · ${b.confirmations}`,
         })),
         ...parties.filter(matches).map((p) => ({
@@ -1135,12 +1623,6 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         })),
       ].slice(0, 14)
     : [];
-  const tripView = (b: R) => {
-    const travels = (s.travelComponents ?? []).filter((t: R) => t.booking_id === b.id);
-    return travels.length === 1
-      ? { ...b, details: travels[0].details, provider: person(travels[0].provider_id) }
-      : b;
-  };
   const transactions = transactionList(
     bks as (R & { id: string })[],
     (s.sales ?? []) as (R & { id: string })[],
@@ -1165,7 +1647,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {items.map(({ kind, record: r, date }) => (
               <tr
                 key={kind + ':' + r.id}
-                className="clickable"
+                className={`clickable${
+                  kind === 'booking' &&
+                  bookingListIsCancelled(r as { reservation_status?: string | null })
+                    ? ' is-cancelled'
+                    : ''
+                }`}
                 onClick={() =>
                   openRecord(
                     kind === 'booking' ? 'booking' : 'asset',
@@ -1237,7 +1724,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   </span>
                 </td>
                 <td>
-                  <Badge>{kind === 'booking' ? r.reservation_status : 'Sale'}</Badge>
+                  <Badge>
+                    {kind === 'booking' ? reservationStatusLabel(r.reservation_status) : 'Sale'}
+                  </Badge>
                 </td>
                 <td className="transaction-followup-cell">
                   <span className="transaction-indicators">
@@ -1305,91 +1794,248 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         <table>
           <thead>
             <tr>
+              <th>Date booked</th>
               <th>Trip / booking</th>
               <th>Customer / traveler</th>
               <th>Travel date</th>
+              <th>PNR</th>
+              <th>How booked</th>
               <th>Status</th>
               {canSale && (
                 <>
                   <th className="money">Price / balance</th>
                 </>
               )}
-              {canBookingProfit && <th className="money">Expected profit</th>}
+              {canCosts && <th className="money">Cost</th>}
+              {canBookingProfit && <th className="money">Confirmed / expected</th>}
               <th />
             </tr>
           </thead>
           <tbody>
-            {items.map((b) => (
-              <tr className="clickable" key={b.id} onClick={() => openRecord('booking', b.id)}>
-                <td>
-                  <strong className="booking-trip">
-                    <Icon name={b.product} />{' '}
-                    <span title={b.summary}>{tripTitle(tripView(b))}</span>
-                  </strong>
-                  <small className="booking-code">
-                    {tripView(b).provider && tripView(b).provider !== '—'
-                      ? `${tripView(b).provider} · `
-                      : b.supplier
-                        ? `${b.supplier} · `
-                        : ''}
-                    {b.code} · {b.confirmations || 'Confirmation missing'}
-                  </small>
-                </td>
-                <td>
-                  <strong>{b.customer}</strong>
-                  <small>{b.travelers || <Badge tone="amber">Traveler missing</Badge>}</small>
-                </td>
-                <td>
-                  {b.travel_start ? dateLabel(b.travel_start) : 'No date'}
-                  {b.travel_end && b.travel_end !== b.travel_start
-                    ? ` – ${dateLabel(b.travel_end)}`
-                    : ''}
-                  <small>{b.itinerary?.trip_type || b.product}</small>
-                </td>
-                <td>
-                  <Badge
-                    tone={
-                      b.reservation_status === 'Refund Pending'
-                        ? 'amber'
-                        : b.reservation_status === 'Cancelled'
-                          ? 'red'
-                          : ''
+            {items.map((b) => {
+              const expanded = expandedBookingId === b.id;
+              const colCount = bookingListColumnCount({
+                canSale,
+                canCosts,
+                canBookingProfit,
+              });
+              return (
+                <Fragment key={b.id}>
+                  <tr
+                    className={`clickable${bookingListIsCancelled(b) ? ' is-cancelled' : ''}${expanded ? ' is-expanded' : ''}`}
+                    aria-expanded={expanded}
+                    onClick={() =>
+                      setExpandedBookingId((cur) => toggleExpandedBookingId(cur, b.id))
                     }
                   >
-                    {b.reservation_status}
-                  </Badge>
-                </td>
-                {canSale && (
-                  <>
-                    {' '}
-                    <td className="money">
-                      <strong>{money(b.sale)}</strong>
-                      <small>
-                        Balance:{' '}
-                        {b.customer_balance == null ? (
-                          money(b.customer_balance)
-                        ) : Number(b.customer_balance) > 0 ? (
-                          <span style={{ color: '#ae8553' }}>{money(b.customer_balance)}</span>
-                        ) : (
-                          <span className="text-green">{money(b.customer_balance)}</span>
-                        )}
+                    <td className="booking-booked-on">
+                      <small className="mobile-cell-label">Date booked</small>
+                      {bookingListBookedOn(b) ? (
+                        dateLabel(bookingListBookedOn(b))
+                      ) : (
+                        <span className="muted">Unknown</span>
+                      )}
+                    </td>
+                    <td>
+                      <strong className="booking-trip">
+                        <Icon name={b.product} />{' '}
+                        <span title={b.summary}>{tripTitle(tripView(b))}</span>
+                      </strong>
+                      <small className="booking-code">
+                        {tripView(b).provider && tripView(b).provider !== '—'
+                          ? `${tripView(b).provider} · `
+                          : b.supplier
+                            ? `${b.supplier} · `
+                            : ''}
+                        {b.code || '—'}
                       </small>
                     </td>
-                  </>
-                )}
-                {canBookingProfit && (
-                  <td
-                    className={`money ${b.cost_incomplete || b.profit == null ? 'text-amber' : 'text-green'}`}
-                  >
-                    <small className="mobile-cell-label">Expected profit</small>
-                    {incompleteProfitReason(b) ?? money(b.profit)}
-                  </td>
-                )}
-                <td>
-                  <ChevronRight size={14} />
-                </td>
-              </tr>
-            ))}
+                    <td>
+                      <strong>{b.customer}</strong>
+                      <small>{b.travelers || <Badge tone="amber">Traveler missing</Badge>}</small>
+                    </td>
+                    <td>
+                      {(() => {
+                        const primary = (s?.travelComponents ?? []).find(
+                          (t: R) => t.booking_id === b.id && t.status !== 'Cancelled',
+                        );
+                        const span = travelDatesDisplay(b, primary);
+                        return (
+                          <>
+                            {span.label}
+                            {span.missing ? (
+                              <>
+                                {' '}
+                                <Badge tone="amber">{span.missing}</Badge>
+                              </>
+                            ) : null}
+                            <small>{b.itinerary?.trip_type || b.product}</small>
+                          </>
+                        );
+                      })()}
+                    </td>
+                    <td className="booking-pnr">
+                      <small className="mobile-cell-label">PNR</small>
+                      {(() => {
+                        const pnr = bookingListPnr(b);
+                        return pnr ? (
+                          <span className="booking-pnr-value">{pnr}</span>
+                        ) : (
+                          <span className="muted">Unknown</span>
+                        );
+                      })()}
+                    </td>
+                    <td>
+                      <small className="mobile-cell-label">How booked</small>
+                      {bookingListHowBooked(b) || (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td>
+                      <Badge
+                        tone={
+                          b.reservation_status === 'Refund Pending'
+                            ? 'amber'
+                            : b.reservation_status === 'Cancelled'
+                              ? 'red'
+                              : ''
+                        }
+                      >
+                        {reservationStatusLabel(b.reservation_status)}
+                      </Badge>
+                    </td>
+                    {canSale && (
+                      <>
+                        {' '}
+                        <td className="money">
+                          <strong>{money(b.sale)}</strong>
+                          <small>
+                            Balance:{' '}
+                            {b.customer_balance == null ? (
+                              money(b.customer_balance)
+                            ) : Number(b.customer_balance) > 0 ? (
+                              <span style={{ color: '#ae8553' }}>{money(b.customer_balance)}</span>
+                            ) : (
+                              <span className="text-green">{money(b.customer_balance)}</span>
+                            )}
+                          </small>
+                        </td>
+                      </>
+                    )}
+                    {canCosts && (
+                      <td className="money">
+                        <small className="mobile-cell-label">Cost</small>
+                        {supplierCostIncomplete(b) ? (
+                          <span className="text-amber">Incomplete</span>
+                        ) : (
+                          money(b.funding_cost)
+                        )}
+                      </td>
+                    )}
+                    {canBookingProfit &&
+                      (() => {
+                        const pair = bookingProfitPair({
+                          profit: b.profit == null ? null : Number(b.profit),
+                          current_profit:
+                            b.current_profit == null ? null : Number(b.current_profit),
+                          expected_commission:
+                            b.expected_commission == null ? null : Number(b.expected_commission),
+                          received_commission:
+                            b.received_commission == null ? null : Number(b.received_commission),
+                          cost_incomplete: b.cost_incomplete,
+                          itinerary: b.itinerary,
+                        });
+                        const labels = bookingProfitListLabels(
+                          pair,
+                          incompleteProfitReason(b) ?? 'Incomplete',
+                          money,
+                        );
+                        return (
+                          <td className={`money ${pair.incomplete ? 'text-amber' : 'text-green'}`}>
+                            <small className="mobile-cell-label">Confirmed / expected</small>
+                            <strong>{labels.confirmed}</strong>
+                            <small>Exp {labels.expected}</small>
+                          </td>
+                        );
+                      })()}
+                    <td>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                  </tr>
+                  {expanded ? (
+                    <tr className="booking-expand-row">
+                      <td colSpan={colCount}>
+                        <div className="booking-expand-panel">
+                          {(() => {
+                            const primary = (s?.travelComponents ?? []).find(
+                              (t: R) => t.booking_id === b.id && t.status !== 'Cancelled',
+                            );
+                            const travel = travelDatesDisplay(b, primary);
+                            const booked = bookingListBookedOn(b);
+                            const facts = bookingListExpandFacts({
+                              code: b.code || 'Booking',
+                              customer: b.customer || null,
+                              travelers: b.travelers || null,
+                              travelLabel: travel.label || null,
+                              bookedOnLabel: booked ? dateLabel(booked) : null,
+                              howBooked: bookingListHowBooked(b),
+                              pnr: bookingListPnr(b),
+                              statusLabel: reservationStatusLabel(b.reservation_status),
+                              priceLabel: canSale ? money(b.sale) : null,
+                              balanceLabel: canSale ? money(b.customer_balance) : null,
+                              costLabel: canCosts
+                                ? supplierCostIncomplete(b)
+                                  ? 'Incomplete'
+                                  : money(b.funding_cost)
+                                : null,
+                            });
+                            return (
+                              <dl className="booking-expand-facts">
+                                {facts.map((f) => (
+                                  <div key={f.label} className="booking-expand-fact">
+                                    <dt>{f.label}</dt>
+                                    <dd>{f.value}</dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            );
+                          })()}
+                          <div className="booking-expand-actions">
+                            <button
+                              type="button"
+                              className="btn primary small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openRecord('booking', b.id);
+                              }}
+                            >
+                              Open booking
+                            </button>
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const path = workspaceRecordUrl('booking', b.id);
+                                await navigator.clipboard.writeText(
+                                  `${window.location.origin}${path}`,
+                                );
+                                setToast('Booking link copied');
+                                if (typeof window !== 'undefined') {
+                                  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                                  if (current !== path)
+                                    window.history.replaceState(null, '', path);
+                                }
+                              }}
+                            >
+                              Copy link
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1397,34 +2043,64 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       <Empty>No bookings match this view.</Empty>
     );
   const attentionRows = (items: R[], limit = 100) =>
-    items.slice(0, limit).map((a) => (
-      <div className="attention-row" key={a.key}>
-        <span className="alert-icon">
-          <AlertCircle size={15} />
-        </span>
-        <div className="attention-text">
+    items.slice(0, limit).map((a) => {
+      const sharePath = planTodoRecordUrl({
+        booking_id: a.booking_id,
+        record_type: a.record_type,
+        record_id: a.record_id,
+      });
+      return (
+        <div className="attention-row" key={a.key}>
+          <span className="alert-icon">
+            <AlertCircle size={15} />
+          </span>
+          <div className="attention-text">
+            <button
+              style={{ textAlign: 'left', padding: 0 }}
+              onClick={() =>
+                a.booking_id
+                  ? openRecord('booking', a.booking_id)
+                  : a.record_type && a.record_id
+                    ? openRecord(a.record_type, a.record_id)
+                    : go(
+                        a.kind === 'Payment allocation'
+                          ? 'Payments'
+                          : 'Credits & points',
+                      )
+              }
+            >
+              <strong>{a.title}</strong>
+              <small>{a.detail}</small>
+            </button>
+          </div>
+          {a.amount !== undefined && <span className="row-amount">{money(a.amount)}</span>}
+          {sharePath ? (
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={async () => {
+                await navigator.clipboard.writeText(`${window.location.origin}${sharePath}`);
+                setToast('Link copied');
+                if (typeof window !== 'undefined') {
+                  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                  if (current !== sharePath)
+                    window.history.replaceState(null, '', sharePath);
+                }
+              }}
+            >
+              Copy link
+            </button>
+          ) : null}
           <button
-            style={{ textAlign: 'left', padding: 0 }}
-            onClick={() =>
-              a.booking_id
-                ? openRecord('booking', a.booking_id)
-                : go(a.kind === 'Payment allocation' ? 'Payments' : 'Travel Assets')
-            }
+            className="icon-button"
+            title="Acknowledge with a note; outstanding balances remain open"
+            onClick={() => action('resolve_attention', { key: a.key, fingerprint: a.fingerprint })}
           >
-            <strong>{a.title}</strong>
-            <small>{a.detail}</small>
+            <Check size={14} />
           </button>
         </div>
-        {a.amount !== undefined && <span className="row-amount">{money(a.amount)}</span>}
-        <button
-          className="icon-button"
-          title="Acknowledge with a note; outstanding balances remain open"
-          onClick={() => action('resolve_attention', { key: a.key, fingerprint: a.fingerprint })}
-        >
-          <Check size={14} />
-        </button>
-      </div>
-    ));
+      );
+    });
   const heading = (title: string, sub: string, button?: React.ReactNode) => (
     <div className="page-heading">
       <div>
@@ -1455,7 +2131,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             }}
           >
             <ChevronLeft size={14} />
-            Back to {page === 'Bookings' ? 'Transactions' : page}
+            Back to {page}
           </button>
           <Empty>{error || 'Loading record…'}</Empty>
         </>
@@ -1469,9 +2145,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         }) === 'voucher_sale';
       view = (
         <>
-          <button className="back" onClick={() => setSelected(null)}>
+          <button className="back" onClick={closeRecord}>
             <ChevronLeft size={14} />
-            Back to Transactions
+            Back to Bookings
           </button>
           {heading(
             heldSale ? 'Voucher sale' : held.route ? `Flight · ${held.route}` : 'Booking details',
@@ -1480,6 +2156,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               .join(' · '),
             <Badge tone="amber">Needs review</Badge>,
           )}
+          <div className="detail-actions">
+            <button
+              className="btn"
+              onClick={async () => {
+                const path = workspaceRecordUrl('draft', detail.id);
+                await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+                setToast('Draft link copied');
+              }}
+            >
+              <Copy size={13} />
+              Copy link
+            </button>
+          </div>
           <Card title={heldSale ? 'Sale details' : 'Trip details'}>
             <dl className="historical-facts section-body">
               <div>
@@ -1579,9 +2268,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       const m = detail.mapping;
       view = (
         <>
-          <button className="back" onClick={() => setSelected(null)}>
+          <button className="back" onClick={closeRecord}>
             <ChevronLeft size={14} />
-            Back to {page === 'Bookings' ? 'Transactions' : page}
+            Back to {page}
           </button>
           {heading(
             'Historical booking preparation',
@@ -1620,11 +2309,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       if (!detail?.booking) {
         view = (
           <>
-            <button className="back" onClick={() => setSelected(null)}>
+            <button className="back" onClick={closeRecord}>
               <ChevronLeft size={14} />
               Back
             </button>
-            <Empty>Booking details unavailable. Reload, or go back to Transactions.</Empty>
+            <Empty>Booking details unavailable. Reload, or go back to Bookings.</Empty>
           </>
         );
       } else {
@@ -1645,6 +2334,58 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         ...(b.itinerary?.operational_entry
           ? [
               ['Booked Through', b.channel],
+              ...(b.itinerary.operational_entry.how_booked
+                ? [['How booked', b.itinerary.operational_entry.how_booked]]
+                : []),
+              ...(b.itinerary.operational_entry.how_booked === 'Hotel with commission' &&
+              b.itinerary.operational_entry.hotel_paid_by
+                ? [['Hotel paid by', b.itinerary.operational_entry.hotel_paid_by]]
+                : []),
+              ...(b.itinerary.operational_entry.how_booked === 'Cash / GDS' &&
+              b.itinerary.operational_entry.gds_commissionable
+                ? [
+                    [
+                      'GDS commissionable',
+                      b.itinerary.operational_entry.gds_commissionable,
+                    ],
+                  ]
+                : []),
+              ...(b.itinerary.operational_entry.how_booked === 'Outside seller'
+                ? [
+                    [
+                      'Outside seller',
+                      'Agreed cost only · seller rebate/points info only (not Padova income)',
+                    ],
+                  ]
+                : []),
+              ...(b.itinerary.operational_entry.how_booked === 'Hotel at program rate (FHR)'
+                ? [
+                    [
+                      'Program rate',
+                      String(b.itinerary.operational_entry.program_rate_name || '').trim() ||
+                        'Not specified',
+                    ],
+                    [
+                      'Program perks',
+                      String(b.itinerary.operational_entry.program_perks || '').trim() ||
+                        'Not specified',
+                    ],
+                    [
+                      'Amex / points gained',
+                      `${fhrProgramBenefitLabel(
+                        b.itinerary.operational_entry.program_benefit_gained,
+                      )} · info only (not income)`,
+                    ],
+                  ]
+                : []),
+              ...(priceBreakdownNoteVisible(b.itinerary.operational_entry.price_breakdown_note)
+                ? [
+                    [
+                      'Price breakdown note',
+                      `${priceBreakdownNote(b.itinerary.operational_entry.price_breakdown_note)} · optional (one total sale)`,
+                    ],
+                  ]
+                : []),
               ...(s.bookingSourceMethods?.find(
                 (m: R) => m.id === b.itinerary.operational_entry.source_method_id,
               )?.award
@@ -1737,18 +2478,36 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             ]),
         [
           'Travel dates',
-          b.itinerary?.operational_entry?.trip_type === 'One Way'
-            ? dateLabel(b.travel_start)
-            : `${dateLabel(b.travel_start)} – ${dateLabel(b.travel_end)}`,
+          (() => {
+            const primary =
+              (detail?.travelComponents ?? s?.travelComponents ?? []).find(
+                (t: R) => t.booking_id === b.id && t.status !== 'Cancelled',
+              ) || null;
+            const span = travelDatesDisplay(b, primary);
+            return span.missing ? `${span.label} · ${span.missing}` : span.label;
+          })(),
         ],
         ['Booked on', dateLabel(b.booked_on)],
-        ['Reservation', b.reservation_status],
+        [
+          'Reservation',
+          (() => {
+            if (b.reservation_status !== 'Held')
+              return reservationStatusLabel(b.reservation_status);
+            const dl = bookingTicketingDeadline(b);
+            const urg = heldDeadlineUrgency(dl, today);
+            if (!dl) return 'Held · ticketing deadline missing';
+            if (urg === 'overdue') return `Held · past deadline ${dl}`;
+            if (urg === 'due_today') return `Held · deadline today ${dl}`;
+            if (urg === 'due_soon') return `Held · ticket by ${dl}`;
+            return `Held · ticket by ${dl}`;
+          })(),
+        ],
         ...(b.itinerary?.operational_entry
           ? []
           : [['Confirmation / ticketing', b.confirmation_status]]),
         ['Itinerary / documents', b.document_status],
         [
-          'Traveler(s)',
+          'Travelers',
           (Array.isArray(detail.travelers) ? detail.travelers : [])
             .map((p: R) => `${p.name}${p.status === 'Cancelled' ? ' (cancelled)' : ''}`)
             .join(', ') || 'Not linked',
@@ -1764,14 +2523,14 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             : 'Booking';
       view = (
         <>
-          <button className="back" onClick={() => setSelected(null)}>
+          <button className="back" onClick={closeRecord}>
             <ChevronLeft size={14} />
-            Back to {page === 'Bookings' ? 'Transactions' : page}
+            Back to {page}
           </button>
           {heading(
             b.summary,
             `${b.code} · ${c.confirmations || 'No confirmation'} · ${person(b.customer_id)}`,
-            <Badge>{b.reservation_status}</Badge>,
+            <Badge>{reservationStatusLabel(b.reservation_status)}</Badge>,
           )}
           <div className="metrics">
             {canSale && (
@@ -1796,14 +2555,45 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 />
               </>
             )}
-            {canBookingProfit && (
-              <Metric
-                label="Expected final profit"
-                value={incompleteProfitReason(b) ?? money(b.profit)}
-                foot="Includes expected commission and referrals"
-                icon={ChartNoAxesCombined}
-              />
-            )}
+            {canBookingProfit &&
+              (() => {
+                const pair = bookingProfitPair({
+                  profit: b.profit == null ? null : Number(b.profit),
+                  current_profit:
+                    b.current_profit == null ? null : Number(b.current_profit),
+                  expected_commission:
+                    b.expected_commission == null ? null : Number(b.expected_commission),
+                  received_commission:
+                    b.received_commission == null ? null : Number(b.received_commission),
+                  cost_incomplete: b.cost_incomplete,
+                  itinerary: b.itinerary,
+                });
+                const incompleteLabel = incompleteProfitReason(b) ?? 'Incomplete';
+                return (
+                  <>
+                    <Metric
+                      label="Confirmed profit"
+                      value={
+                        pair.incomplete || pair.confirmed_cents == null
+                          ? incompleteLabel
+                          : money(pair.confirmed_cents)
+                      }
+                      foot="Certain money and credits"
+                      icon={ChartNoAxesCombined}
+                    />
+                    <Metric
+                      label="Expected profit"
+                      value={
+                        pair.incomplete || pair.expected_cents == null
+                          ? incompleteLabel
+                          : money(pair.expected_cents)
+                      }
+                      foot="Adds commissions not yet received"
+                      icon={Landmark}
+                    />
+                  </>
+                );
+              })()}
           </div>
           <div className="detail-actions">
             {b.itinerary?.sale_known === false && can('edit_customer_charges') && (
@@ -1820,6 +2610,43 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 Add payment
               </button>
             )}
+            {canPay &&
+              canAction('allocate') &&
+              (() => {
+                const apply = buildApplyHeldCreditDefaults({
+                  payments: s.payments,
+                  partyId: b.customer_id,
+                  bookingId: b.id,
+                  bookingBalanceCents: b.customer_balance,
+                });
+                if (!apply) return null;
+                return (
+                  <button
+                    className="btn"
+                    title="Apply oldest held customer credit to this booking’s balance"
+                    onClick={() =>
+                      action('allocate', {
+                        payment_id: apply.payment_id,
+                        booking_id: apply.booking_id,
+                        amount: apply.amount,
+                      })
+                    }
+                  >
+                    Apply held credit
+                  </button>
+                );
+              })()}
+            <button
+              className="btn"
+              onClick={async () => {
+                const path = workspaceRecordUrl('booking', b.id);
+                await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+                setToast('Booking link copied');
+              }}
+            >
+              <Copy size={13} />
+              Copy link
+            </button>
             <button
               className="btn"
               disabled={
@@ -1836,6 +2663,36 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 Record cost
               </button>
             )}
+            {canAction('booking_extra') && b.reservation_status !== 'Cancelled' && (
+              <button
+                className="btn"
+                onClick={() =>
+                  action('booking_extra', {
+                    booking_id: b.id,
+                    category: 'Seat',
+                    payee_id: b.supplier_id,
+                  })
+                }
+              >
+                Add extra
+              </button>
+            )}
+            {canAction('booking_change') && b.reservation_status !== 'Cancelled' && (
+              <button
+                className="btn"
+                onClick={() =>
+                  action('booking_change', {
+                    booking_id: b.id,
+                    summary: b.summary,
+                    travel_start: b.travel_start,
+                    travel_end: b.travel_end,
+                    supplier_id: b.supplier_id,
+                  })
+                }
+              >
+                Record change
+              </button>
+            )}
             <details className="action-menu booking-action-menu">
               <summary className="btn">More actions</summary>
               <div className="action-menu-panel">
@@ -1848,6 +2705,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         ? [['cancellation_cost', 'Add cancellation cost']]
                         : []),
                       ['charge', 'Adjust charge'],
+                      ['booking_extra', 'Add extra (seat / bag)'],
+                      ['booking_change', 'Record change (fees / dates)'],
                       ['authorize_payer', 'Authorize payer'],
                       ['voucherize', 'Voucherize'],
                       ['benefit', 'Price match credit'],
@@ -1857,7 +2716,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       ['referral', 'Add Commission Payable'],
                     ]
                       .filter(([kind]) => {
-                        const actionGroup = ['charge', 'authorize_payer'].includes(kind)
+                        const actionGroup = [
+                          'charge',
+                          'authorize_payer',
+                          'booking_extra',
+                          'booking_change',
+                        ].includes(kind)
                           ? 'Customer money'
                           : ['commission', 'referral'].includes(kind)
                             ? 'Commissions'
@@ -1881,7 +2745,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         <button
                           key={kind}
                           className="btn"
-                          onClick={() => action(kind, { booking_id: b.id })}
+                          onClick={() =>
+                            action(kind, {
+                              booking_id: b.id,
+                              ...(['benefit', 'price_match_event'].includes(kind) &&
+                              b.itinerary?.operational_entry?.source_profile_id
+                                ? {
+                                    profile_id:
+                                      b.itinerary.operational_entry.source_profile_id,
+                                  }
+                                : {}),
+                            })
+                          }
                         >
                           {label}
                         </button>
@@ -1896,6 +2771,32 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         >
                           Add note
                         </button>
+                        {canAction('booking_document') && (
+                          <button
+                            className="btn"
+                            onClick={() =>
+                              action('booking_document', {
+                                booking_id: b.id,
+                                kind: 'pdf',
+                              })
+                            }
+                          >
+                            Add document
+                          </button>
+                        )}
+                        {canAction('link_booking') && (
+                          <button
+                            className="btn"
+                            onClick={() =>
+                              action('link_booking', {
+                                from_booking_id: b.id,
+                                booking_id: b.id,
+                              })
+                            }
+                          >
+                            Link related booking
+                          </button>
+                        )}
                         {canAction('cancel') && (
                           <button
                             className="btn danger"
@@ -1946,15 +2847,272 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </div>
             </Card>
           </div>
+          {detail.bookingRelationsEnabled !== false && (
+            <div className="detail-section">
+              <Card
+                title="Related bookings"
+                action={
+                  <div className="heading-actions">
+                    {canAction('booking_extra') && b.reservation_status !== 'Cancelled' && (
+                      <button
+                        className="btn small"
+                        onClick={() =>
+                          action('booking_extra', {
+                            booking_id: b.id,
+                            category: 'Other',
+                            trip_shared: true,
+                            date: s.today,
+                          })
+                        }
+                      >
+                        Add shared charge
+                      </button>
+                    )}
+                    {canAction('link_booking') && (
+                      <button
+                        className="btn small"
+                        onClick={() =>
+                          action('link_booking', {
+                            from_booking_id: b.id,
+                            booking_id: b.id,
+                          })
+                        }
+                      >
+                        Link booking
+                      </button>
+                    )}
+                  </div>
+                }
+              >
+                <div className="section-body">
+                  {(detail.bookingRelations ?? []).length ? (
+                    <>
+                      <ul className="plain-list">
+                        {(detail.bookingRelations as R[]).map((edge) => {
+                          const peerId =
+                            edge.from_booking_id === b.id
+                              ? edge.to_booking_id
+                              : edge.from_booking_id;
+                          const peer = (detail.bookingFamily?.nodes ?? []).find(
+                            (n: R) => n.id === peerId,
+                          );
+                          const peerShort = peer ? bookingShortName(peer) : null;
+                          const peerShare = calendarBookingSharePath(peerId);
+                          return (
+                            <li key={edge.id}>
+                              <strong>{edge.kind}</strong>
+                              {' · '}
+                              <button
+                                type="button"
+                                className="btn small ghost"
+                                onClick={() => openRecord('booking', peerId)}
+                              >
+                                {peer?.code || String(peerId).slice(0, 8)}
+                              </button>
+                              {peer?.reservation_status ? (
+                                <small> · {reservationStatusLabel(peer.reservation_status)}</small>
+                              ) : null}
+                              {peerShort ? (
+                                <small title={peer?.summary || undefined}> · {peerShort}</small>
+                              ) : null}
+                              {can('view_sale_price') && (
+                                <span className="money">
+                                  {' '}
+                                  ·{' '}
+                                  {peer?.sale_cents == null
+                                    ? 'Sale unknown'
+                                    : money(peer.sale_cents)}
+                                </span>
+                              )}
+                              {canCosts && (
+                                <span className="money">
+                                  {' '}
+                                  · Cost{' '}
+                                  {peer?.funding_cost_cents == null
+                                    ? 'unknown'
+                                    : money(peer.funding_cost_cents)}
+                                </span>
+                              )}
+                              {edge.note ? <small> · {edge.note}</small> : null}
+                              <div className="heading-actions" style={{ marginTop: 6 }}>
+                                {peerShare ? (
+                                  <button
+                                    type="button"
+                                    className="btn small ghost"
+                                    aria-label="Copy shareable link"
+                                    onClick={() => void copyWorkspacePath(peerShare)}
+                                  >
+                                    Copy link
+                                  </button>
+                                ) : null}
+                                {canAction('unlink_booking') ? (
+                                  <button
+                                    type="button"
+                                    className="btn small ghost"
+                                    onClick={() =>
+                                      action('unlink_booking', { relation_id: edge.id })
+                                    }
+                                  >
+                                    Remove link
+                                  </button>
+                                ) : null}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {detail.bookingFamily?.nodes?.length > 1 && (
+                        <p className="note" style={{ marginTop: 10 }}>
+                          Family of {detail.bookingFamily.nodes.length}{' '}
+                          {detail.bookingFamily.nodes.length === 1 ? 'booking' : 'bookings'}
+                          {can('view_sale_price')
+                            ? detail.bookingFamily.combined_incomplete
+                              ? ' · Combined sale incomplete (unknown on at least one)'
+                              : detail.bookingFamily.combined_sale_cents != null
+                                ? ` · Combined sale ${money(detail.bookingFamily.combined_sale_cents)}`
+                                : ''
+                            : ''}
+                          {canCosts
+                            ? detail.bookingFamily.combined_cost_incomplete
+                              ? ' · Combined cost incomplete (unknown on at least one)'
+                              : detail.bookingFamily.combined_cost_cents != null
+                                ? ` · Combined cost ${money(detail.bookingFamily.combined_cost_cents)}`
+                                : ''
+                            : ''}
+                          . Money stays on each booking.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <Empty>
+                      No related bookings yet. Link a change, extension, voucher, or same-trip
+                      booking. Money stays per booking.
+                    </Empty>
+                  )}
+                  {(detail.bookingFamily?.trip_shared_charges ?? []).length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div className="detail-label">Trip shared charges</div>
+                      <ul className="plain-list">
+                        {(detail.bookingFamily.trip_shared_charges as TripSharedCharge[]).map(
+                          (c) => (
+                          <li key={c.id}>
+                            {tripSharedChargeSummary(c)}
+                            {c.effective_on ? (
+                              <small> · {dateLabel(c.effective_on)}</small>
+                            ) : null}
+                            {c.note ? <small> · {c.note}</small> : null}
+                          </li>
+                          ),
+                        )}
+                      </ul>
+                      <small className="muted">
+                        Entered once at trip level; money stays on the posting booking.
+                      </small>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            </div>
+          )}
           <div className="grid-2">
             <Card
               title="Customer charges & payments"
               action={
-                canPay &&
-                newButton('Add payment', 'payment', { party_id: b.customer_id, booking_id: b.id })
+                <div className="heading-actions">
+                  {canPay &&
+                    newButton('Add payment', 'payment', {
+                      party_id: b.customer_id,
+                      booking_id: b.id,
+                    })}
+                  {canAction('authorize_payer') &&
+                    newButton('Authorize payer', 'authorize_payer', { booking_id: b.id })}
+                </div>
               }
             >
               <div className="section-body">
+                <div className="detail-label">Authorized payers</div>
+                {(Array.isArray(detail.authorizedPayers) ? detail.authorizedPayers : []).length ===
+                0 ? (
+                  <p className="muted" style={{ fontSize: 11, marginBottom: 12 }}>
+                    {authorizedPayersEmptyHint()}
+                  </p>
+                ) : (
+                  <ul className="plain-list" style={{ marginBottom: 12 }}>
+                    {(detail.authorizedPayers as R[]).map((p: R) => (
+                      <li key={p.party_id}>
+                        <button
+                          type="button"
+                          className="booking-code"
+                          onClick={() => openRecord('person', p.party_id)}
+                        >
+                          {p.name}
+                        </button>
+                        {p.reason ? <small> · {p.reason}</small> : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {can('view_sale_price') &&
+                  (() => {
+                    const tax = customerTaxesDisplay({
+                      taxes: b.itinerary?.operational_entry?.taxes,
+                      saleCents: b.sale,
+                    });
+                    const taxHint = standingDealNeedsTaxesHint(
+                      b.itinerary?.operational_entry?.standing_deals,
+                      b.itinerary?.operational_entry?.taxes,
+                    );
+                    const canEditTaxes = canAction('booking_taxes');
+                    if (!tax && !taxHint && !canEditTaxes) return null;
+                    return (
+                      <div style={{ marginBottom: 12 }}>
+                        <div
+                          className="detail-label"
+                          style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                        >
+                          <span>Taxes (part of customer price)</span>
+                          {canEditTaxes ? (
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              onClick={() =>
+                                action('booking_taxes', {
+                                  booking_id: b.id,
+                                  tax_amount:
+                                    tax?.amount_cents != null
+                                      ? (tax.amount_cents / 100).toFixed(2)
+                                      : '',
+                                })
+                              }
+                            >
+                              Edit taxes
+                            </button>
+                          ) : null}
+                        </div>
+                        {tax ? (
+                          <p style={{ margin: '0 0 4px' }}>
+                            <strong>{money(tax.amount_cents)}</strong>
+                            <small>
+                              {' '}
+                              · Included in price
+                              {tax.sale_ex_tax_cents != null
+                                ? ` · Sale excluding taxes ${money(tax.sale_ex_tax_cents)}`
+                                : ''}
+                            </small>
+                          </p>
+                        ) : (
+                          <p className="muted" style={{ fontSize: 11, margin: '0 0 4px' }}>
+                            Not entered
+                          </p>
+                        )}
+                        {taxHint ? (
+                          <p className="note" style={{ fontSize: 11, margin: 0 }}>
+                            {taxHint}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
                 <ul className="plain-list">
                   {(Array.isArray(detail.charges) ? detail.charges : []).map((r: R) => (
                     <li key={r.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1965,6 +3123,70 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </li>
                   ))}
                 </ul>
+                {can('view_sale_price') &&
+                  detail.cardFeeSpread?.has_any &&
+                  (() => {
+                    const fee = detail.cardFeeSpread as {
+                      customer_charged_cents: number | null;
+                      padova_cost_cents: number | null;
+                      spread_cents: number | null;
+                      incomplete: boolean;
+                    };
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div className="detail-label">Card fee (separate line)</div>
+                        <p style={{ margin: '0 0 4px', fontSize: 12 }}>
+                          Customer charged{' '}
+                          {fee.customer_charged_cents == null
+                            ? 'Unknown'
+                            : money(fee.customer_charged_cents)}
+                          {' · '}
+                          Padova cost{' '}
+                          {fee.padova_cost_cents == null
+                            ? 'Unknown'
+                            : money(fee.padova_cost_cents)}
+                          {' · '}
+                          Spread{' '}
+                          {fee.incomplete || fee.spread_cents == null
+                            ? 'Incomplete'
+                            : money(fee.spread_cents)}
+                        </p>
+                        <p className="muted" style={{ fontSize: 11, margin: 0 }}>
+                          Difference is Padova profit on the card fee. Unknown stays Incomplete — never
+                          $0 invented.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                {can('view_sale_price') &&
+                  detail.retainedCardFee?.visible &&
+                  (() => {
+                    const fee = detail.retainedCardFee as {
+                      retained_cents: number | null;
+                      refunded: boolean;
+                      incomplete: boolean;
+                    };
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div className="detail-label">Retained card fee (after cancel)</div>
+                        {fee.refunded ? (
+                          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                            Card fee was refunded to the customer — nothing retained as profit.
+                          </p>
+                        ) : (
+                          <p style={{ margin: 0, fontSize: 12 }}>
+                            Padova keeps{' '}
+                            <strong>
+                              {fee.incomplete || fee.retained_cents == null
+                                ? 'Incomplete'
+                                : money(fee.retained_cents)}
+                            </strong>
+                            <small> · Booking profit (not refunded)</small>
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 {(Array.isArray(detail.allocations) ? detail.allocations : [])
                   .filter((r: R) => r.direction === 'customer')
                   .map((r: R) => (
@@ -2064,21 +3286,69 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       </div>
                       <strong>{money(b.supplier_balance)}</strong>
                     </div>
-                    {canCosts && b.itinerary?.operational_entry?.taxes && (
+                    {canCosts &&
+                      (b.itinerary?.operational_entry?.components ?? []).some(
+                        (c: R) =>
+                          c.cost_is_estimate ||
+                          (c.other_currency?.code && (c.cost == null || c.cost === '')),
+                      ) && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <div className="detail-label">Cost estimate</div>
+                          <p style={{ margin: 0 }}>
+                            {(b.itinerary.operational_entry.components as R[])
+                              .filter(
+                                (c: R) =>
+                                  c.cost_is_estimate ||
+                                  (c.other_currency?.code &&
+                                    (c.cost == null || c.cost === '')),
+                              )
+                              .map((c: R, i: number) => {
+                                const fx = c.other_currency
+                                  ? [
+                                      c.other_currency.code,
+                                      c.other_currency.amount,
+                                      c.other_currency.rate
+                                        ? `rate ${c.other_currency.rate}`
+                                        : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ')
+                                  : '';
+                                return (
+                                  <span key={i}>
+                                    {i > 0 ? ' · ' : ''}
+                                    Estimate
+                                    {c.cost != null && c.cost !== ''
+                                      ? ` ${money(Number(c.cost))} (provisional)`
+                                      : ' · USD Unknown'}
+                                    {fx ? ` · ${fx}` : ''}
+                                  </span>
+                                );
+                              })}
+                          </p>
+                        </div>
+                      )}
+                    {canCosts &&
+                      b.itinerary?.operational_entry?.taxes &&
+                      (b.itinerary.operational_entry.taxes.bearer ||
+                        b.itinerary.operational_entry.taxes.economic_bearer) && (
                       <div style={{ gridColumn: '1 / -1' }}>
-                        <div className="detail-label">Taxes / customer recovery</div>
+                        <div className="detail-label">Tax funding (cost side)</div>
                         <p style={{ margin: 0 }}>
-                          <strong>{money(b.itinerary.operational_entry.taxes.amount)}</strong> ·{' '}
-                          Paid by {b.itinerary.operational_entry.taxes.bearer} · Cost borne by{' '}
+                          Paid by {b.itinerary.operational_entry.taxes.bearer || 'Not specified'} ·
+                          Cost borne by{' '}
                           {b.itinerary.operational_entry.taxes.economic_bearer ?? 'Not specified'}
                           {b.itinerary.operational_entry.taxes.customer_recovery !== undefined && (
                             <>
                               {' '}
-                              · Included in customer price:{' '}
+                              · Customer recovery:{' '}
                               {money(b.itinerary.operational_entry.taxes.customer_recovery)}
                             </>
                           )}
                         </p>
+                        <small className="muted">
+                          Customer tax amount is on Customer charges & payments.
+                        </small>
                       </div>
                     )}
                     {b.current_profit !== undefined && can('view_booking_profit') && (
@@ -2169,9 +3439,48 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     );
                   })()}
                   <ul className="plain-list">
-                    {(Array.isArray(detail.funding) ? detail.funding : []).map((f: R) => (
+                    {(Array.isArray(detail.funding) ? detail.funding : []).map((f: R) => {
+                      const linkedAsset = s.assets.find((a: R) => a.id === f.asset_id);
+                      const costKind = fundingCostKindLabel({
+                        kind: f.kind,
+                        asset_kind: linkedAsset?.kind ?? f.asset_kind,
+                        notes: f.notes,
+                      });
+                      const voucherNote = fundingVoucherNote({
+                        kind: f.kind,
+                        asset_kind: linkedAsset?.kind ?? f.asset_kind,
+                        asset_id: f.asset_id,
+                        notes: f.notes,
+                      });
+                      const sellerLabel =
+                        f.seller_name ||
+                        (f.seller_id ? person(f.seller_id) : null);
+                      const inventoryUse = Boolean(
+                        f.asset_id &&
+                          (linkedAsset?.ownership || f.asset_ownership) === 'Padova' &&
+                          f.obligation_amount == null &&
+                          f.obligation_remaining == null,
+                      );
+                      const settlement = fundingCostLineSettlement({
+                        cost_cents: f.cost,
+                        reversed: f.reversed,
+                        asset_id: f.asset_id,
+                        inventory_use: inventoryUse,
+                        seller_name: sellerLabel,
+                        effective_on: f.effective_on,
+                        obligation_amount_cents: f.obligation_amount,
+                        obligation_remaining_cents: f.obligation_remaining,
+                        paid_on: f.paid_on,
+                      });
+                      return (
                       <li key={f.id}>
-                        {f.kind} {f.asset && `· ${f.asset}`}
+                        {costKind} {f.asset && `· ${f.asset}`}
+                        {voucherNote && (
+                          <Badge tone="amber">{voucherNote}</Badge>
+                        )}
+                        <Badge tone={fundingSettlementBadgeTone(settlement.status)}>
+                          {fundingSettlementSummary(settlement)}
+                        </Badge>
                         {f.seller_id && (
                           <small>Purchased from / payable to {person(f.seller_id)}</small>
                         )}
@@ -2180,7 +3489,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             {formatQuantity(
                               f.face_amount,
                               f.unit ??
-                                assetUnit(s.assets.find((a: R) => a.id === f.asset_id) ?? f),
+                                assetUnit(linkedAsset ?? f),
                             )}{' '}
                             · {f.reversed ? 'Original reversed cost' : 'Cost basis'}:{' '}
                             {money(f.cost)}
@@ -2190,7 +3499,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                           </small>
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                   {canCosts &&
                     (b.itinerary?.price_match_history ?? []).map((event: R) => (
@@ -2301,7 +3611,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                     : 'green'
                               }
                             >
-                              {t.status ?? 'Booked'}
+                              {reservationStatusLabel(t.status ?? 'Booked')}
                             </Badge>
                           </div>
                           <h3 className="travel-detail-title">{t.summary}</h3>
@@ -2833,19 +4143,37 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                 </div>
                               </div>
                             </div>
-                            {can('manage_assets') &&
-                              !['Denied', 'Reversed'].includes(status) && (
+                            {(() => {
+                              const share = expectedEventBookingSharePath(e);
+                              const canRecord =
+                                can('manage_assets') &&
+                                !['Denied', 'Reversed'].includes(status);
+                              if (!share && !canRecord) return null;
+                              return (
                                 <div className="expected-event-card-actions">
-                                  <button
-                                    className="btn small"
-                                    onClick={() =>
-                                      action('update_expected_event', { event_id: e.id })
-                                    }
-                                  >
-                                    Record issuer result
-                                  </button>
+                                  {share ? (
+                                    <button
+                                      type="button"
+                                      className="btn small ghost"
+                                      aria-label="Copy link for booking"
+                                      onClick={() => void copyWorkspacePath(share)}
+                                    >
+                                      Copy link
+                                    </button>
+                                  ) : null}
+                                  {canRecord ? (
+                                    <button
+                                      className="btn small"
+                                      onClick={() =>
+                                        action('update_expected_event', { event_id: e.id })
+                                      }
+                                    >
+                                      Record issuer result
+                                    </button>
+                                  ) : null}
                                 </div>
-                              )}
+                              );
+                            })()}
                           </article>
                         );
                       })}
@@ -2857,164 +4185,619 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           {(canCommissions || canRefunds) && (
             <div className="detail-section">
               <Card
-                title="Commissions, referrals & refunds"
+                title="Money Back"
                 action={
-                  canAction('commission') &&
-                  newButton('Add commission', 'commission', { booking_id: b.id })
+                  <>
+                    {canAction('commission') &&
+                      newButton('Add commission', 'commission', { booking_id: b.id })}
+                    {canAction('referral') &&
+                      newButton(
+                        'Add referrer',
+                        'referral',
+                        buildAddReferrerDefaults(b.id),
+                      )}
+                    {canAction('price_match_event') &&
+                      newButton('Add price match', 'price_match_event', {
+                        booking_id: b.id,
+                        status: 'Pending',
+                        ...(b.itinerary?.operational_entry?.source_profile_id
+                          ? {
+                              profile_id: b.itinerary.operational_entry.source_profile_id,
+                            }
+                          : {}),
+                      })}
+                  </>
                 }
               >
                 <div className="section-body">
+                  <p className="money-back-intro">
+                    Commissions, price matches, and referrer shares in one list. Add referrer here
+                    (or create a new payee in the form). Owed when commission is confirmed. Unknown
+                    stays Unknown.
+                  </p>
                   {(() => {
-                    const primaryExpected = expectedCommissionDisplay(
-                      b.itinerary?.operational_entry?.commission,
-                    );
-                    const secondaryExpected = expectedCommissionDisplay(
-                      b.itinerary?.operational_entry?.secondary_commission,
-                    );
-                    const recorded = s.commissions.filter((r: R) => r.booking_id === b.id);
-                    const showExpectedSnapshot =
-                      recorded.length === 0 &&
-                      (primaryExpected.status !== 'none' || secondaryExpected.status !== 'none');
-                    return showExpectedSnapshot ? (
-                      <ul className="plain-list commission-expected-snapshot">
-                        {primaryExpected.status !== 'none' && (
-                          <li>
-                            <strong>{expectedCommissionPanelLabel('primary')}</strong>
-                            {' · '}
-                            {primaryExpected.status === 'unknown'
-                              ? 'Unknown'
-                              : primaryExpected.amount != null
-                                ? money(primaryExpected.amount)
-                                : 'Amount TBD'}
-                            <small>
-                              Expected on booking. Not a recorded receivable yet. Received: none.
-                            </small>
-                          </li>
-                        )}
-                        {secondaryExpected.status !== 'none' && (
-                          <li>
-                            <strong>{expectedCommissionPanelLabel('secondary')}</strong>
-                            {' · '}
-                            {secondaryExpected.status === 'unknown'
-                              ? 'Unknown'
-                              : secondaryExpected.amount != null
-                                ? money(secondaryExpected.amount)
-                                : 'Amount TBD'}
-                            <small>
-                              Expected on booking. Not a recorded receivable yet. Received: none.
-                            </small>
-                          </li>
-                        )}
-                      </ul>
-                    ) : null;
-                  })()}
-                  <ul className="plain-list">
-                    {s.commissions
-                      .filter((r: R) => r.booking_id === b.id)
-                      .map((r: R) => {
-                        const siblings = s.commissions.filter((x: R) => x.booking_id === b.id);
-                        return (
-                        <li key={r.id}>
-                          {receivableCommissionLabel(
-                            r,
-                            b.itinerary?.operational_entry,
-                            siblings,
-                          )}{' '}
-                          · via {r.collector ?? r.payer} · Expected{' '}
-                          {money(Number(r.gross) - Number(r.retained))} · Received{' '}
-                          {money(r.received)}{' '}
-                          <button
-                            className="btn small"
-                            onClick={() => action('commission_receipt', { commission_id: r.id })}
-                          >
-                            Allocate receipt
-                          </button>
-                        </li>
-                        );
-                      })}
-                    {s.referrals
-                      .filter((r: R) => r.booking_id === b.id)
-                      .map((r: R) => (
-                        <li key={r.id}>
-                          Referring-org commission payable · {r.referrer}
-                          {b.referring_organization_name
-                            ? ` · ${b.referring_organization_name}`
-                            : ''}{' '}
-                          · Expected {money(r.expected_due)} · Earned {money(r.accrued)} · Paid{' '}
-                          {money(r.paid)} · Outstanding {money(r.outstanding)}
-                          <small>
-                            {r.reason} · {r.status}
-                          </small>
-                          <button
-                            className="btn small"
-                            disabled={!can('manage_commissions') || !(r.payable_now > 0)}
-                            onClick={() => action('pay_referral', { referral_id: r.id })}
-                          >
-                            Record payout
-                          </button>
-                          {can('manage_commissions') &&
-                            s.payableTermsEnabled &&
-                            r.active !== false && (
-                              <button
-                                className="btn small ghost"
-                                onClick={() =>
-                                  action('revise_referral', {
-                                    ...r,
-                                    referral_id: r.id,
-                                    basis: r.calculation === 'fixed' ? 'fixed' : 'percentage',
-                                  })
-                                }
-                              >
-                                Correct terms
-                              </button>
-                            )}
-                        </li>
-                      ))}
-                    {s.refunds
-                      .filter((r: R) => r.booking_id === b.id)
-                      .map((r: R) => (
-                        <li key={r.id}>
-                          Refund · Expected {refundValue(r, r.supplier_expected)} · Received{' '}
-                          {refundValue(r, r.received)} · Customer due {money(r.customer_due)}{' '}
-                          <small>Supplier return form: {r.received_forms || 'Not received'}</small>
-                          <button
-                            className="btn small"
-                            disabled={
-                              !canAction('receive_refund') ||
-                              Number(r.received) >= Number(r.supplier_expected)
-                            }
-                            hidden={Number(r.received) >= Number(r.supplier_expected)}
-                            onClick={() => action('receive_refund', { refund_id: r.id })}
-                          >
-                            Receive
-                          </button>{' '}
-                          <button
-                            className="btn small"
-                            disabled={
-                              !canAction('pay_refund') ||
-                              Number(r.paid) + Number(r.handed_over ?? 0) >= Number(r.customer_due)
-                            }
-                            hidden={
-                              Number(r.paid) + Number(r.handed_over ?? 0) >= Number(r.customer_due)
-                            }
-                            onClick={() => action('pay_refund', { refund_id: r.id })}
-                          >
-                            Pay customer
-                          </button>
-                        </li>
-                      ))}
-                  </ul>
-                  {(() => {
-                    const empty = bookingCommissionsEmptyMessage({
-                      hasRecordedReceivable: s.commissions.some((r: R) => r.booking_id === b.id),
-                      hasReferral: s.referrals.some((r: R) => r.booking_id === b.id),
-                      hasRefund: s.refunds.some((r: R) => r.booking_id === b.id),
-                      hasExpectedOnBooking: hasExpectedCommissionOnBooking(
-                        b.itinerary?.operational_entry,
-                      ),
+                    const partyName = (id: string | null | undefined) => {
+                      if (!id) return 'Unknown';
+                      const p = (s.parties ?? []).find((x: R) => x.id === id);
+                      return p?.name ? String(p.name) : 'Unknown';
+                    };
+                    const profileName = (id: string | null | undefined) => {
+                      if (!id) return '';
+                      const p = (s.bookingSourceProfiles ?? []).find((x: R) => x.id === id);
+                      return p?.name ? String(p.name) : '';
+                    };
+                    const lines = buildMoneyBackLines({
+                      bookingId: b.id,
+                      operational: b.itinerary?.operational_entry,
+                      commissions: s.commissions,
+                      referrals: s.referrals,
+                      referralPayments: s.referralPayments,
+                      priceMatchHistory: b.itinerary?.price_match_history,
+                      partyName,
+                      profileName,
                     });
-                    return empty ? <Empty>{empty}</Empty> : null;
+                    if (!lines.length) {
+                      const empty = bookingCommissionsEmptyMessage({
+                        hasRecordedReceivable: false,
+                        hasReferral: false,
+                        hasRefund: s.refunds.some((r: R) => r.booking_id === b.id),
+                        hasExpectedOnBooking: hasExpectedCommissionOnBooking(
+                          b.itinerary?.operational_entry,
+                        ),
+                      });
+                      return empty ? <Empty>{empty}</Empty> : <Empty>No Money Back lines yet.</Empty>;
+                    }
+                    return (
+                      <div className="money-back-list">
+                        {lines.map((line) => {
+                          const src = line.source as R;
+                          const row = src.row as R | undefined;
+                          return (
+                            <article
+                              key={line.id}
+                              className={`money-back-card is-${line.direction} is-${line.status}`}
+                            >
+                              <div className="money-back-card-main">
+                                <div className="money-back-identity">
+                                  <div className="money-back-title-row">
+                                    <strong>{line.label}</strong>
+                                    <span className={`money-back-status is-${line.status}`}>
+                                      {moneyBackStatusLabel(line.status)}
+                                    </span>
+                                    <span className="money-back-dir">
+                                      {line.direction === 'in' ? 'In to Padova' : 'Out from Padova'}
+                                    </span>
+                                    <span
+                                      className={`money-back-form is-${line.form}`}
+                                      title="Plan: cash remittance or credit to a ledger"
+                                    >
+                                      {moneyBackFormLabel(line.form)}
+                                    </span>
+                                    {moneyBackIsAdmCorrection(line.note) ? (
+                                      <span
+                                        className="money-back-form is-adm"
+                                        title="Airline debit memo — earlier remittance was too high"
+                                      >
+                                        ADM
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <span className="money-back-party">{line.party}</span>
+                                </div>
+                                <div className="money-back-metrics">
+                                  {line.retainedCents != null &&
+                                  line.retainedCents > 0 &&
+                                  line.grossCents != null ? (
+                                    <>
+                                      <div className="money-back-metric">
+                                        <span className="detail-label">Gross</span>
+                                        <strong>{money(line.grossCents)}</strong>
+                                      </div>
+                                      <div className="money-back-metric">
+                                        <span className="detail-label">Padova net</span>
+                                        <strong>
+                                          {money(line.grossCents - line.retainedCents)}
+                                        </strong>
+                                      </div>
+                                    </>
+                                  ) : null}
+                                  {(() => {
+                                    const basisLabel = moneyBackAmountBasisLabel(line.amountBasis);
+                                    return basisLabel ? (
+                                      <div className="money-back-metric">
+                                        <span className="detail-label">Amount basis</span>
+                                        <strong>{basisLabel}</strong>
+                                      </div>
+                                    ) : null;
+                                  })()}
+                                  <div className="money-back-metric">
+                                    <span className="detail-label">Expected</span>
+                                    <strong>
+                                      {line.expectedCents == null
+                                        ? 'Unknown'
+                                        : money(line.expectedCents)}
+                                    </strong>
+                                  </div>
+                                  {line.kind === 'standing_deal' &&
+                                  line.expectedCents == null &&
+                                  (() => {
+                                    const hint = standingDealUnknownAmountHint(
+                                      (line.source as R)?.row ?? line.source,
+                                    );
+                                    return hint ? (
+                                      <p
+                                        className="muted"
+                                        style={{
+                                          fontSize: 11,
+                                          margin: '4px 0 0',
+                                          gridColumn: '1 / -1',
+                                        }}
+                                      >
+                                        {hint}
+                                      </p>
+                                    ) : null;
+                                  })()}
+                                  <div className="money-back-metric">
+                                    <span className="detail-label">
+                                      {line.direction === 'out' ? 'Paid' : 'Received'}
+                                    </span>
+                                    <strong
+                                      className={
+                                        line.receivedCents && line.receivedCents > 0
+                                          ? ''
+                                          : 'is-empty'
+                                      }
+                                    >
+                                      {line.receivedCents == null
+                                        ? '—'
+                                        : money(line.receivedCents)}
+                                    </strong>
+                                  </div>
+                                  {line.deductedCents != null && line.deductedCents > 0 ? (
+                                    <div className="money-back-metric">
+                                      <span className="detail-label">Deducted</span>
+                                      <strong>{money(line.deductedCents)}</strong>
+                                    </div>
+                                  ) : null}
+                                </div>
+                                {line.retainedCents != null && line.retainedCents > 0 ? (
+                                  <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+                                    Collector keeps {money(line.retainedCents)}
+                                    {line.grossCents != null
+                                      ? ` of ${money(line.grossCents)} gross`
+                                      : ''}
+                                    .
+                                  </p>
+                                ) : null}
+                                {(line.expectedOn ||
+                                  line.confirmedOn ||
+                                  line.receivedOn ||
+                                  line.howReceived) && (
+                                  <p
+                                    className="muted money-back-dates"
+                                    style={{ fontSize: 11, marginTop: 6 }}
+                                  >
+                                    {[
+                                      line.expectedOn ? `Expected ${line.expectedOn}` : null,
+                                      line.confirmedOn ? `Confirmed ${line.confirmedOn}` : null,
+                                      line.receivedOn
+                                        ? `${line.direction === 'out' ? 'Paid' : 'Received'} ${line.receivedOn}`
+                                        : null,
+                                      line.howReceived ? `How ${line.howReceived}` : null,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ')}
+                                  </p>
+                                )}
+                                {line.form === 'credit' &&
+                                  (line.creditProfile || line.creditExpiresOn) && (
+                                    <p
+                                      className="muted money-back-credit-details"
+                                      style={{ fontSize: 11, marginTop: 4 }}
+                                    >
+                                      Credit details:{' '}
+                                      {[
+                                        line.creditProfile
+                                          ? `Profile ${line.creditProfile}`
+                                          : null,
+                                        line.creditExpiresOn
+                                          ? `Expires ${line.creditExpiresOn}`
+                                          : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(' · ')}
+                                    </p>
+                                  )}
+                                {line.note ? (
+                                  <p
+                                    className="muted money-back-note"
+                                    style={{ fontSize: 11, marginTop: 4, whiteSpace: 'pre-wrap' }}
+                                  >
+                                    Note: {line.note}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <div className="money-back-card-actions">
+                                {line.status !== 'voided' &&
+                                line.status !== 'denied' &&
+                                line.kind === 'commission_receivable' &&
+                                row?.id ? (
+                                  <>
+                                    <button
+                                      className="btn small"
+                                      disabled={!can('edit_payments') || line.status === 'received'}
+                                      onClick={() => {
+                                        const due = commissionOutstandingCents({
+                                          ...row,
+                                          deducted: line.deductedCents ?? 0,
+                                        });
+                                        if (!(due > 0)) {
+                                          action('commission_receipt', {
+                                            commission_id: row.id,
+                                          });
+                                          return;
+                                        }
+                                        action('payment', {
+                                          direction: 'commission',
+                                          party_id: row.collector_id ?? row.payer_id,
+                                          amount: (due / 100).toFixed(2),
+                                          commission_allocations: [
+                                            {
+                                              commission_id: row.id,
+                                              amount: (due / 100).toFixed(2),
+                                            },
+                                          ],
+                                        });
+                                      }}
+                                    >
+                                      Record receipt
+                                    </button>
+                                    <button
+                                      className="btn small"
+                                      disabled={line.status === 'received'}
+                                      onClick={() =>
+                                        action('commission_receipt', { commission_id: row.id })
+                                      }
+                                    >
+                                      Allocate existing
+                                    </button>
+                                    {canAction('deduct_money_back') &&
+                                      line.status !== 'received' && (
+                                        <button
+                                          className="btn small ghost"
+                                          onClick={() => {
+                                            const due = commissionOutstandingCents({
+                                              ...row,
+                                              deducted: line.deductedCents ?? 0,
+                                            });
+                                            action('deduct_money_back', {
+                                              booking_id: b.id,
+                                              target_kind: 'commission',
+                                              target_id: row.id,
+                                              ...(due > 0
+                                                ? { amount: (due / 100).toFixed(2) }
+                                                : {}),
+                                            });
+                                          }}
+                                        >
+                                          Deduct
+                                        </button>
+                                      )}
+                                  </>
+                                ) : null}
+                                {line.status !== 'voided' && line.kind === 'commission_expected' ? (
+                                  <button
+                                    className="btn small"
+                                    disabled={!canAction('commission')}
+                                    onClick={() => {
+                                      const which =
+                                        src.kind === 'expected_secondary'
+                                          ? 'secondary'
+                                          : 'primary';
+                                      const op = b.itinerary?.operational_entry;
+                                      action(
+                                        'commission',
+                                        buildConfirmCommissionDefaults({
+                                          bookingId: b.id,
+                                          which,
+                                          commission: op?.commission,
+                                          secondary_commission: op?.secondary_commission,
+                                        }),
+                                      );
+                                    }}
+                                  >
+                                    Confirm
+                                  </button>
+                                ) : null}
+                                {line.status !== 'voided' &&
+                                line.kind === 'referral_payable' &&
+                                row?.id ? (
+                                  <>
+                                    <button
+                                      className="btn small"
+                                      disabled={
+                                        !can('manage_commissions') || !(row.payable_now > 0)
+                                      }
+                                      onClick={() => {
+                                        const seeded = buildPayReferralPaymentDefaults({
+                                          referral_id: row.id,
+                                          payable_now: row.payable_now,
+                                          outstanding: row.outstanding,
+                                          today,
+                                        });
+                                        action(
+                                          'pay_referral',
+                                          seeded
+                                            ? {
+                                                referral_id: seeded.referral_id,
+                                                amount: seeded.amount,
+                                                date: seeded.date,
+                                              }
+                                            : { referral_id: row.id },
+                                        );
+                                      }}
+                                    >
+                                      Mark paid
+                                    </button>
+                                    {can('manage_commissions') &&
+                                      s.payableTermsEnabled &&
+                                      row.active !== false && (
+                                        <button
+                                          className="btn small ghost"
+                                          onClick={() =>
+                                            action('revise_referral', {
+                                              ...row,
+                                              referral_id: row.id,
+                                              basis:
+                                                row.calculation === 'fixed'
+                                                  ? 'fixed'
+                                                  : 'percentage',
+                                            })
+                                          }
+                                        >
+                                          Correct terms
+                                        </button>
+                                      )}
+                                  </>
+                                ) : null}
+                                {line.status !== 'voided' &&
+                                line.status !== 'denied' &&
+                                line.status !== 'received' &&
+                                line.kind === 'price_match' ? (
+                                  <>
+                                    <button
+                                      className="btn small"
+                                      onClick={() =>
+                                        action('price_match_event', {
+                                          booking_id: b.id,
+                                          ...(row?.request_id
+                                            ? { request_id: row.request_id }
+                                            : {}),
+                                        })
+                                      }
+                                    >
+                                      Update price match
+                                    </button>
+                                    <button
+                                      className="btn small ghost"
+                                      onClick={() =>
+                                        action('price_match_event', {
+                                          booking_id: b.id,
+                                          status: 'Denied',
+                                          reason: 'Issuer denied price match',
+                                          ...(row?.request_id
+                                            ? { request_id: row.request_id }
+                                            : {}),
+                                        })
+                                      }
+                                    >
+                                      Mark denied
+                                    </button>
+                                  </>
+                                ) : null}
+                                {line.status !== 'voided' &&
+                                  line.status !== 'received' &&
+                                  line.status !== 'denied' &&
+                                  src.target_id &&
+                                  (() => {
+                                    const target_kind =
+                                      src.kind === 'expected_primary'
+                                        ? 'expected_primary'
+                                        : src.kind === 'expected_secondary'
+                                          ? 'expected_secondary'
+                                          : src.kind === 'standing_deal'
+                                            ? 'standing_deal'
+                                            : src.kind === 'commission'
+                                              ? 'commission'
+                                              : src.kind === 'referral'
+                                                ? 'referral'
+                                                : 'price_match';
+                                    return (
+                                      <>
+                                        {line.kind !== 'price_match' &&
+                                          canAction('deny_money_back') && (
+                                            <button
+                                              className="btn small ghost"
+                                              onClick={() =>
+                                                action('deny_money_back', {
+                                                  booking_id: b.id,
+                                                  target_kind,
+                                                  target_id: src.target_id,
+                                                })
+                                              }
+                                            >
+                                              Mark denied
+                                            </button>
+                                          )}
+                                        {canAction('void_money_back') && (
+                                          <button
+                                            className="btn small ghost"
+                                            onClick={() =>
+                                              action('void_money_back', {
+                                                booking_id: b.id,
+                                                target_kind,
+                                                target_id: src.target_id,
+                                              })
+                                            }
+                                          >
+                                            Void
+                                          </button>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    );
                   })()}
+                  {can('view_sale_price') &&
+                    detail.retainedCardFee?.visible &&
+                    (() => {
+                      const fee = detail.retainedCardFee as {
+                        retained_cents: number | null;
+                        refunded: boolean;
+                        incomplete: boolean;
+                      };
+                      return (
+                        <div style={{ marginBottom: 12 }}>
+                          <h4 className="money-back-subhead">Retained card fee</h4>
+                          {fee.refunded ? (
+                            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                              Card fee was refunded to the customer — nothing retained as profit.
+                            </p>
+                          ) : (
+                            <p style={{ margin: 0, fontSize: 12 }}>
+                              Padova keeps{' '}
+                              <strong>
+                                {fee.incomplete || fee.retained_cents == null
+                                  ? 'Incomplete'
+                                  : money(fee.retained_cents)}
+                              </strong>
+                              <small> · Booking profit (card fee not refunded)</small>
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  {canRefunds &&
+                    s.refunds.some((r: R) => r.booking_id === b.id) && (
+                      <>
+                        <h4 className="money-back-subhead">Refunds (separate from Money Back)</h4>
+                        <ul className="plain-list">
+                          {s.refunds
+                            .filter((r: R) => r.booking_id === b.id)
+                            .map((r: R) => (
+                              <li key={r.id}>
+                                {(() => {
+                                  const supplierStatus = supplierRefundStatus({
+                                    supplier_expected: r.supplier_expected,
+                                    received: r.received,
+                                    received_forms: r.received_forms,
+                                  });
+                                  const supplierOpen =
+                                    Number(r.received) < Number(r.supplier_expected);
+                                  const customerStatus = customerRefundStatus(r);
+                                  const chargeback = chargebackStatusLabel(
+                                    parseChargebackStatus(r.reason) ||
+                                      parseChargebackStatus(r.call_notes_latest),
+                                  );
+                                  return (
+                                    <>
+                                      Refund · Customer{' '}
+                                      {customerRefundStatusLabel(customerStatus)}
+                                      {' · '}
+                                      Supplier {supplierRefundStatusLabel(supplierStatus)} ·
+                                      Expected {refundValue(r, r.supplier_expected)} · Received{' '}
+                                      {refundValue(r, r.received)} · Customer due{' '}
+                                      {money(r.customer_due)}{' '}
+                                      {chargeback ? <small>{chargeback}</small> : null}
+                                      <small>
+                                        Supplier return form:{' '}
+                                        {r.received_forms || 'Not received'}
+                                      </small>
+                                      {(() => {
+                                        const due = refundFollowUpDueOn(r.due_on);
+                                        const urg = refundFollowUpUrgency(due, today);
+                                        const label = refundFollowUpUrgencyLabel(urg);
+                                        if (!due) return null;
+                                        return (
+                                          <small>
+                                            Follow-up {dateLabel(due)}
+                                            {label ? ` · ${label}` : ''}
+                                          </small>
+                                        );
+                                      })()}
+                                      {r.call_notes_latest ? (
+                                        <small>Call note: {r.call_notes_latest}</small>
+                                      ) : null}
+                                      <button
+                                        className="btn small"
+                                        disabled={!canAction('receive_refund') || !supplierOpen}
+                                        hidden={!supplierOpen}
+                                        onClick={() =>
+                                          action('receive_refund', { refund_id: r.id })
+                                        }
+                                      >
+                                        Receive
+                                      </button>{' '}
+                                      <button
+                                        className="btn small"
+                                        disabled={!canAction('receive_refund') || !supplierOpen}
+                                        hidden={!supplierOpen}
+                                        onClick={() =>
+                                          action('receive_refund', {
+                                            refund_id: r.id,
+                                            form: SUPPLIER_REFUND_DENIED_FORM,
+                                            amount: Math.max(
+                                              0,
+                                              Number(r.supplier_expected) - Number(r.received),
+                                            ),
+                                          })
+                                        }
+                                      >
+                                        Deny supplier
+                                      </button>{' '}
+                                      <button
+                                        className="btn small"
+                                        disabled={
+                                          !canAction('pay_refund') ||
+                                          Number(r.paid) + Number(r.handed_over ?? 0) >=
+                                            Number(r.customer_due)
+                                        }
+                                        hidden={
+                                          Number(r.paid) + Number(r.handed_over ?? 0) >=
+                                          Number(r.customer_due)
+                                        }
+                                        onClick={() =>
+                                          action('pay_refund', { refund_id: r.id })
+                                        }
+                                      >
+                                        Pay customer
+                                      </button>{' '}
+                                      <button
+                                        className="btn small"
+                                        disabled={!canAction('note')}
+                                        onClick={() =>
+                                          action('note', {
+                                            call_note: true,
+                                            record_type: 'refund',
+                                            record_id: r.id,
+                                          })
+                                        }
+                                      >
+                                        Call note
+                                      </button>
+                                    </>
+                                  );
+                                })()}
+                              </li>
+                            ))}
+                        </ul>
+                      </>
+                    )}
                 </div>
               </Card>
             </div>
@@ -3047,6 +4830,79 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </p>
               </div>
             </Card>
+            {(() => {
+              const docs = visibleBookingDocuments(b.itinerary?.operational_entry);
+              const hiddenDocs = hiddenBookingDocuments(b.itinerary?.operational_entry);
+              return (
+                <Card
+                  title="Documents"
+                  count={docs.length}
+                  action={
+                    canAction('booking_document') ? (
+                      <button
+                        className="btn small"
+                        onClick={() =>
+                          action('booking_document', { booking_id: b.id, kind: 'pdf' })
+                        }
+                      >
+                        Add
+                      </button>
+                    ) : null
+                  }
+                >
+                  <div className="section-body">
+                    {!docs.length ? (
+                      <p className="muted">
+                        Itineraries, screenshots, and PDF links for this booking. Add a link —
+                        file upload comes later.
+                      </p>
+                    ) : (
+                      <ul className="plain-list">
+                        {docs.map((doc) => (
+                          <li key={doc.id}>
+                            <strong>{doc.label}</strong>
+                            <small>
+                              {' '}
+                              · {bookingDocumentKindLabel(doc.kind)} · {dateLabel(doc.added_on)}
+                            </small>
+                            {doc.url ? (
+                              <div>
+                                <a href={doc.url} target="_blank" rel="noreferrer">
+                                  Open link
+                                </a>
+                              </div>
+                            ) : null}
+                            {doc.note ? <small>{doc.note}</small> : null}
+                            {canAction('booking_document_hide') ? (
+                              <button
+                                type="button"
+                                className="btn small ghost"
+                                style={{ marginTop: 6 }}
+                                disabled={busy}
+                                onClick={() =>
+                                  action('booking_document_hide', {
+                                    booking_id: b.id,
+                                    document_id: doc.id,
+                                  })
+                                }
+                              >
+                                Hide
+                              </button>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {hiddenDocs.length > 0 ? (
+                      <p className="muted" style={{ fontSize: 11, marginTop: 12 }}>
+                        {hiddenDocs.length} hidden document
+                        {hiddenDocs.length === 1 ? '' : 's'} (history kept).
+                      </p>
+                    ) : null}
+                  </div>
+                </Card>
+              );
+            })()}
             <Card title="Notes & Activity">
               {[
                 ...(Array.isArray(detail.activity) ? detail.activity : []).filter(
@@ -3054,6 +4910,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 ),
                 ...(Array.isArray(detail.notes) ? detail.notes : []).map((n: R) => ({
                   ...n,
+                  note_id: n.id,
                   id: `note:${n.id}`,
                   kind: 'Shared note',
                   shared_note: n.body,
@@ -3070,10 +4927,48 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     <div>
                       {a.summary || pretty(a.kind)}
                       <p>
-                        {new Date(a.created_at).toLocaleString()} · {a.actor_name ?? a.actor}
+                        {dateTimeLabel(a.created_at)} · {a.actor_name ?? a.actor}
+                        {a.source_label && !a.shared_note ? (
+                          <>
+                            {' · '}
+                            <Badge
+                              tone={
+                                a.source_channel === 'whatsapp' || a.source_channel === 'email'
+                                  ? 'blue'
+                                  : a.source_channel === 'import'
+                                    ? 'amber'
+                                    : 'gray'
+                              }
+                            >
+                              {a.source_label}
+                            </Badge>
+                          </>
+                        ) : null}
                       </p>
                       {a.shared_note && <p style={{ whiteSpace: 'pre-wrap' }}>{a.shared_note}</p>}
                       {a.reason && <p>{a.reason}</p>}
+                      {a.note_id && (
+                        <button
+                          type="button"
+                          className="btn small ghost"
+                          style={{ marginTop: 6 }}
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await command('note_hide', { note_id: a.note_id });
+                              await refresh();
+                              setToast('Note hidden. Restore from Recently hidden.');
+                            } catch (err) {
+                              setError((err as Error).message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Hide
+                        </button>
+                      )}
                       {s.actor.role === 'OWNER' && !a.shared_note && (
                         <details style={{ marginTop: 8 }}>
                           <summary>View saved event</summary>
@@ -3089,6 +4984,40 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </div>
                   </div>
                 ))}
+              {(detail.notesHidden ?? []).length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <h4 className="money-back-subhead">Recently hidden</h4>
+                  <p className="muted" style={{ fontSize: 11 }}>
+                    Soft-removed only — restore brings the note back. History stays.
+                  </p>
+                  <ul className="plain-list">
+                    {(detail.notesHidden as R[]).map((n) => (
+                      <li key={n.id} className="intake-draft-removed-row">
+                        <span>{String(n.body || 'Note').slice(0, 80)}</span>
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await command('note_restore', { note_id: n.id });
+                              await refresh();
+                              setToast('Note restored.');
+                            } catch (err) {
+                              setError((err as Error).message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </Card>
           </div>
         </>
@@ -3096,16 +5025,38 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       }
     } else if (selected.type === 'asset') {
       const a = detail.asset;
+      const cap1Credit = a.kind === 'Capital One credit';
+      const creditVoided = a.credit_status === 'voided' || a.credit_voided;
+      const voucherAsset = isVoucherAsset(a.kind);
+      const voucherStatus = a.voucher_status as string | null | undefined;
+      const voucherTerminal =
+        voucherStatus === 'expired' || voucherStatus === 'sold' || voucherStatus === 'used';
+      const tradeStatus = parseTradeStatus(a.restrictions);
+      const tradeMissing = parseTradeToComplete(a.restrictions);
       view = (
         <>
-          <button className="back" onClick={() => setSelected(null)}>
+          <button className="back" onClick={closeRecord}>
             <ChevronLeft size={14} />
-            Back to {page === 'Bookings' ? 'Transactions' : page}
+            Back to {page}
           </button>
           {heading(
             a.name,
             `${a.kind} · ${a.issuer} · ${a.ownership}`,
-            <Badge>{a.ownership}</Badge>,
+            <>
+              {tradeStatus ? (
+                <Badge tone="green">{tradeStatusLabel(tradeStatus)}</Badge>
+              ) : null}
+              {tradeMissing.length ? (
+                <Badge tone="amber">To complete</Badge>
+              ) : null}
+              {cap1Credit && a.credit_status ? (
+                <Badge tone={creditVoided ? 'amber' : 'green'}>{a.credit_status}</Badge>
+              ) : null}
+              {voucherAsset && voucherStatus ? (
+                <Badge tone={voucherTerminal ? 'amber' : 'green'}>{voucherStatus}</Badge>
+              ) : null}
+              <Badge>{a.ownership}</Badge>
+            </>,
           )}
           <div className="metrics">
             <Metric
@@ -3120,40 +5071,161 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               }
               icon={Ticket}
             />
+            {isPoints(a) &&
+              (() => {
+                const batch = pointsBatchSummary({
+                  remaining: a.balance == null ? null : Number(a.balance),
+                  remaining_basis_cents:
+                    a.remaining_basis == null ? null : Number(a.remaining_basis),
+                  opening:
+                    a.opening_quantity == null ? null : Number(a.opening_quantity),
+                });
+                return (
+                  <Metric
+                    label="Batch used / rate"
+                    value={pointsBatchListLabel(batch, (n) => n.toLocaleString('en-US'))}
+                    foot="Plan: cost stays on this batch. Unknown opening or basis stays Incomplete."
+                    icon={Coins}
+                  />
+                );
+              })()}
             <Metric
               label="Remaining cost basis"
               value={money(a.remaining_basis)}
               foot="Exact acquisition-lot basis"
               icon={Landmark}
             />
+            {cap1Credit && detail.credit_profile ? (
+              <Metric
+                label="Cap1 profile balance"
+                value={
+                  detail.credit_profile_balance?.incomplete
+                    ? 'Incomplete'
+                    : money(detail.credit_profile_balance?.balance_cents)
+                }
+                foot={`${detail.credit_profile.name}${
+                  detail.credit_profile_balance?.credit_count != null
+                    ? ` · ${countLabel(detail.credit_profile_balance.credit_count, 'credit')}`
+                    : ''
+                }`}
+                icon={CreditCard}
+              />
+            ) : null}
           </div>
+          {cap1Credit ? (
+            <Card title="Cap1 credit">
+              <div className="section-body">
+                <p>
+                  Status: <strong>{a.credit_status || 'Unknown'}</strong>
+                  {a.source_booking_id ? (
+                    <>
+                      {' '}
+                      · Source booking linked
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        style={{ marginLeft: 8 }}
+                        onClick={() => openRecord('booking', a.source_booking_id)}
+                      >
+                        Open booking
+                      </button>
+                    </>
+                  ) : (
+                    <> · Source booking missing</>
+                  )}
+                </p>
+                <p>
+                  Account profile:{' '}
+                  <strong>{detail.credit_profile?.name || 'Not linked'}</strong>
+                  {detail.credit_profile?.provider
+                    ? ` · ${detail.credit_profile.provider}`
+                    : null}
+                </p>
+              </div>
+            </Card>
+          ) : null}
+          {voucherAsset ? (
+            <Card title="Voucher status">
+              <div className="section-body">
+                <p>
+                  Status: <strong>{voucherStatus || 'Unknown'}</strong>
+                  <span className="muted">
+                    {' '}
+                    · Plan: held → partly used → used | sold | expired
+                  </span>
+                </p>
+              </div>
+            </Card>
+          ) : null}
           <div className="detail-actions">
-            <button className="btn primary" onClick={() => action('fund', { asset_id: a.id })}>
-              Use for booking
+            <button
+              className="btn"
+              onClick={async () => {
+                const path = workspaceRecordUrl('asset', a.id);
+                await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+                setToast('Asset link copied');
+              }}
+            >
+              <Copy size={13} />
+              Copy link
             </button>
+            {!creditVoided && (
+              <button className="btn primary" onClick={() => action('fund', { asset_id: a.id })}>
+                Use for booking
+              </button>
+            )}
             {can('manage_assets') && (
               <button
                 className="btn"
-                onClick={() => action('revise_asset', { ...a, asset_id: a.id })}
+                onClick={() =>
+                  action('revise_asset', {
+                    ...a,
+                    asset_id: a.id,
+                    expiry_rule: parseExpiryRuleFromRestrictions(a.restrictions) || '',
+                  })
+                }
               >
                 Edit asset details
               </button>
             )}
-            <button className="btn" onClick={() => action('sell_asset', { asset_id: a.id })}>
-              Sell asset
-            </button>
-            <button
-              className="btn"
-              onClick={() => action('transfer_asset', { sending_asset_id: a.id })}
-            >
-              Transfer value
-            </button>
-            <button className="btn" onClick={() => action('convert_asset', { asset_id: a.id })}>
-              Convert into new asset
-            </button>
-            <button className="btn" onClick={() => action('expire_asset', { asset_id: a.id })}>
-              Record expiration
-            </button>
+            {!creditVoided && (
+              <button className="btn" onClick={() => action('sell_asset', { asset_id: a.id })}>
+                Sell asset
+              </button>
+            )}
+            {!creditVoided && (
+              <button
+                className="btn"
+                onClick={() => action('transfer_asset', { sending_asset_id: a.id })}
+              >
+                Transfer value
+              </button>
+            )}
+            {!creditVoided && (
+              <button className="btn" onClick={() => action('convert_asset', { asset_id: a.id })}>
+                Convert into new asset
+              </button>
+            )}
+            {can('manage_assets') && canExpireAsset(a) && (
+              <button
+                className="btn"
+                title={expireAssetLossLabel(
+                  a.remaining_basis == null ? null : Number(a.remaining_basis),
+                  money,
+                )}
+                onClick={() => action('expire_asset', buildExpireAssetDefaults(a))}
+              >
+                Expire unused (loss)
+              </button>
+            )}
+            {cap1Credit && can('manage_assets') && !creditVoided && Number(a.balance) > 0 && (
+              <button
+                className="btn"
+                onClick={() => action('void_credit', { asset_id: a.id })}
+              >
+                Void unused credit
+              </button>
+            )}
             <button
               className="btn"
               onClick={() => action('pay_asset_purchase', { asset_id: a.id })}
@@ -3167,6 +5239,51 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               Add note
             </button>
           </div>
+          {detail.chain?.steps?.length ? (
+            <div className="detail-section">
+              <Card title="Voucher / credit chain">
+                <div className="section-body">
+                  {detail.chain.incomplete ? (
+                    <p className="note">Some chain amounts are unknown — result is incomplete.</p>
+                  ) : null}
+                  <ul className="plain-list asset-chain-list">
+                    {detail.chain.steps.map((step: R, i: number) => (
+                      <li key={`${step.kind}-${i}`}>
+                        <strong>{step.label}</strong>
+                        {step.date ? <small> · {dateLabel(step.date)}</small> : null}
+                        {step.note ? <small> · {step.note}</small> : null}
+                        {step.amount_cents != null ? (
+                          <span className="money"> · {money(step.amount_cents)}</span>
+                        ) : step.kind === 'net' || step.kind === 'price_match' ? (
+                          <span className="money"> · Unknown</span>
+                        ) : null}
+                        <div className="heading-actions" style={{ marginTop: 6 }}>
+                          {step.booking_id ? (
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              onClick={() => openRecord('booking', step.booking_id)}
+                            >
+                              Open booking
+                            </button>
+                          ) : null}
+                          {step.asset_id && step.asset_id !== a.id ? (
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              onClick={() => openRecord('asset', step.asset_id)}
+                            >
+                              Open asset
+                            </button>
+                          ) : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </Card>
+            </div>
+          ) : null}
           <div className="detail-section">
             <Card title="Asset ledger">
               <div className="table-wrap">
@@ -3228,32 +5345,107 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       </small>
                     </li>
                   ))}
-                  {detail.sales.map((sale: R) => (
-                    <li key={sale.id}>
-                      Sold to {sale.buyer} · Proceeds {money(sale.proceeds)} · Received{' '}
-                      {money(sale.received)}
-                      {Number(sale.received) < Number(sale.proceeds) && (
-                        <button
-                          className="btn small"
-                          style={{ marginTop: 9 }}
-                          onClick={() => action('receive_asset_sale', { sale_id: sale.id })}
-                        >
-                          Record sale receipt
-                        </button>
-                      )}
-                    </li>
-                  ))}
+                  {detail.sales.map((sale: R) => {
+                    const econ = assetSaleEconomics({
+                      quantity: sale.quantity,
+                      proceeds: sale.proceeds,
+                      basis: sale.basis,
+                      face_cents: a.kind === 'Voucher' || /voucher/i.test(String(a.kind || ''))
+                        ? a.opening ?? a.balance
+                        : null,
+                    });
+                    return (
+                      <li key={sale.id}>
+                        Sold to {sale.buyer}
+                        {econ.quantity != null ? (
+                          <>
+                            {' · '}
+                            {assetQuantity(a, econ.quantity)}
+                          </>
+                        ) : null}
+                        {' · '}
+                        Proceeds{' '}
+                        {econ.proceeds_cents == null ? 'Unknown' : money(econ.proceeds_cents)}
+                        {' · '}
+                        Cost{' '}
+                        {econ.cost_cents == null ? 'Unknown' : money(econ.cost_cents)}
+                        {' · '}
+                        {econ.incomplete || econ.gain_loss_cents == null ? (
+                          <strong>Incomplete</strong>
+                        ) : (
+                          <>
+                            <strong>
+                              {econ.result_label} {money(Math.abs(econ.gain_loss_cents))}
+                            </strong>
+                            {econ.sold_below_face ? (
+                              <small> · sold below face value</small>
+                            ) : null}
+                          </>
+                        )}
+                        <small style={{ display: 'block', marginTop: 4 }}>
+                          Received {money(sale.received)}
+                        </small>
+                        {Number(sale.received) < Number(sale.proceeds) && (
+                          <button
+                            className="btn small"
+                            style={{ marginTop: 9 }}
+                            onClick={() => action('receive_asset_sale', { sale_id: sale.id })}
+                          >
+                            Record sale receipt
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             </Card>
             <Card title="Source & restrictions">
               <div className="section-body">
-                <p>Holder: {person(a.holder_id)}</p>
+                <p>
+                  {isTravelerLockedVoucher(a)
+                    ? voucherLockDisplayLabel(person(a.holder_id))
+                    : `Holder: ${person(a.holder_id)}`}
+                </p>
                 <p className="subtitle">Seller: {person(a.seller_id)}</p>
+                {pointsOwningAccountLabel(detail.owning_account) ? (
+                  <p className="subtitle">
+                    Owning account: {pointsOwningAccountLabel(detail.owning_account)}
+                  </p>
+                ) : /point|mile/i.test(String(a.kind || '')) ? (
+                  <p className="subtitle">Owning account: Not linked</p>
+                ) : null}
                 <p className="subtitle">
                   {a.expires_on ? `Expires ${dateLabel(a.expires_on)}` : 'No expiration recorded'}
                 </p>
+                {parseExpiryRuleFromRestrictions(a.restrictions) ? (
+                  <p className="subtitle">
+                    Expiry rule: {parseExpiryRuleFromRestrictions(a.restrictions)}
+                  </p>
+                ) : null}
+                {pointsBatchSourceLabel(
+                  parsePointsBatchSourceFromRestrictions(a.restrictions),
+                ) ? (
+                  <p className="subtitle">
+                    Points source:{' '}
+                    {pointsBatchSourceLabel(
+                      parsePointsBatchSourceFromRestrictions(a.restrictions),
+                    )}
+                  </p>
+                ) : null}
                 <p className="subtitle">{a.restrictions || 'No restrictions recorded'}</p>
+                {tradeStatus && (
+                  <p className="subtitle">
+                    Trade status: <strong>{tradeStatusLabel(tradeStatus)}</strong>
+                    <span className="muted"> · Plan: offered · agreed · paid · delivered</span>
+                  </p>
+                )}
+                {tradeMissing.length ? (
+                  <p className="subtitle">
+                    To complete: <strong>{tradeMissing.join(' · ')}</strong>
+                    <span className="muted"> · not a warning — layer-1 already saved</span>
+                  </p>
+                ) : null}
                 {a.source_booking_id && (
                   <button
                     className="btn ghost"
@@ -3266,8 +5458,58 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 {detail.notes.map((n: R) => (
                   <div className="note" key={n.id}>
                     {n.body}
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      style={{ marginLeft: 8 }}
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await command('note_hide', { note_id: n.id });
+                          await refresh();
+                          setToast('Note hidden. Restore from Recently hidden.');
+                        } catch (err) {
+                          setError((err as Error).message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Hide
+                    </button>
                   </div>
                 ))}
+                {(detail.notesHidden ?? []).length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <h4 className="money-back-subhead">Recently hidden</h4>
+                    {(detail.notesHidden as R[]).map((n) => (
+                      <div className="note" key={n.id}>
+                        <span>{String(n.body || 'Note').slice(0, 80)}</span>
+                        <button
+                          type="button"
+                          className="btn small"
+                          style={{ marginLeft: 8 }}
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await command('note_restore', { note_id: n.id });
+                              await refresh();
+                              setToast('Note restored.');
+                            } catch (err) {
+                              setError((err as Error).message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </Card>
           </div>
@@ -3282,6 +5524,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             s.travelerLinks.some((t: R) => t.booking_id === b.id && t.person_id === p.id),
         );
       const pp = s.payments.filter((r: R) => r.party_id === p.id && r.direction === 'customer');
+      const heldCredit = heldCustomerCreditCents(pp, p.id);
       const isSource =
         p.roles.some((role: string) =>
           ['seller', 'supplier', 'source', 'partner'].includes(role),
@@ -3298,14 +5541,45 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       let running = 0;
       view = (
         <>
-          <button className="back" onClick={() => setSelected(null)}>
+          <button className="back" onClick={closeRecord}>
             <ChevronLeft size={14} />
-            Back to {page === 'Bookings' ? 'Transactions' : page}
+            Back to {page}
           </button>
           {heading(
             p.name,
             `${pretty(p.kind)} · ${p.email || p.phone || 'No contact information'}`,
             <Badge>{(p.roles ?? []).join(' · ') || p.kind}</Badge>,
+          )}
+          {Array.isArray(p.details?.merge_history) && p.details.merge_history.length > 0 && (
+            <p className="note">
+              Merged into this record:{' '}
+              {(p.details.merge_history as Array<{ merged_name?: string; date?: string }>)
+                .map((m) =>
+                  m.merged_name
+                    ? `${m.merged_name}${m.date ? ` (${m.date})` : ''}`
+                    : null,
+                )
+                .filter(Boolean)
+                .join('; ') || 'prior duplicates'}
+              .
+            </p>
+          )}
+          {p.roles.includes('referrer') && (
+            <p className="note">
+              Referrer default share:{' '}
+              {formatReferralRateLabel(partyReferralRateBps(p))} of profit (edit profile to
+              change; blank stays Unknown).
+            </p>
+          )}
+          {partyStandingDeals(p).length > 0 && (
+            <p className="note">
+              Standing deals (seed onto matching new bookings):{' '}
+              {partyStandingDeals(p)
+                .filter((d) => d.active)
+                .map((d) => formatStandingDealLabel(d))
+                .join('; ') || 'none active'}
+              . Cadence ☐ Owner-open — expected Money Back only.
+            </p>
           )}
           {p.details?.test_reference_only && (
             <div className="note">
@@ -3327,6 +5601,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             >
               Edit profile / rules
             </button>
+            {p.kind === 'person' && canAction('merge_party') && (
+              <button
+                className="btn"
+                onClick={() =>
+                  action('merge_party', {
+                    keep_id: p.id,
+                  })
+                }
+              >
+                Merge duplicate into this person
+              </button>
+            )}
             <button
               className="btn"
               onClick={() =>
@@ -3360,6 +5646,121 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 Add payment
               </button>
             )}
+            {canPay && p.roles.includes('customer') && (
+              <button
+                className="btn"
+                onClick={() =>
+                  action('payment', {
+                    party_id: p.id,
+                    direction: 'customer',
+                    method: 'Zelle',
+                    reference: 'Customer deposit',
+                  })
+                }
+                title="Record money held before a booking (leave unallocated)"
+              >
+                Record deposit
+              </button>
+            )}
+            {canPay && p.roles.includes('customer') && heldCredit > 0 && canAction('allocate') && (
+              <button
+                className="btn"
+                title="Apply oldest held credit to the oldest booking that still owes"
+                onClick={() => {
+                  const target = pickBookingForHeldCreditApply(related);
+                  if (!target) {
+                    setToast('No open booking balance to apply held credit to.');
+                    return;
+                  }
+                  const apply = buildApplyHeldCreditDefaults({
+                    payments: s.payments,
+                    partyId: p.id,
+                    bookingId: target.id,
+                    bookingBalanceCents: target.balance_cents,
+                  });
+                  if (!apply) {
+                    setToast('No held credit available to allocate.');
+                    return;
+                  }
+                  action('allocate', {
+                    payment_id: apply.payment_id,
+                    booking_id: apply.booking_id,
+                    amount: apply.amount,
+                  });
+                }}
+              >
+                Apply held credit
+              </button>
+            )}
+            {canPay && p.roles.includes('customer') && heldCredit > 0 && (
+              <button
+                className="btn"
+                onClick={() =>
+                  action('return_customer_credit', {
+                    party_id: p.id,
+                    amount: heldCredit / 100,
+                    method: 'Zelle',
+                  })
+                }
+              >
+                Return held credit
+              </button>
+            )}
+            {can('view_sale_price') && p.roles.includes('customer') && (
+              <button
+                className="btn"
+                onClick={() => {
+                  const bookings = (detail.invoiceBookings ?? []) as R[];
+                  if (!bookings.length) {
+                    setToast('No bookings to invoice for this customer yet.');
+                    return;
+                  }
+                  setInvoicePreview({
+                    customer_id: p.id,
+                    preview: buildInvoicePreview({
+                      customer_name: p.name,
+                      bookings: bookings.map((b) => ({
+                        id: b.id,
+                        code: b.code,
+                        summary: b.summary,
+                        product: b.product,
+                        sale: b.sale == null ? null : Number(b.sale),
+                        taxes: b.taxes == null ? null : Number(b.taxes),
+                        charges: Array.isArray(b.charges) ? b.charges : [],
+                      })),
+                      payment: pickInvoicePaymentReceipt({
+                        payments: (s.payments ?? []).filter((pay: R) => pay.party_id === p.id),
+                        payment_accounts: s.paymentAccounts ?? [],
+                      }),
+                    }),
+                  });
+                }}
+              >
+                Preview invoice
+              </button>
+            )}
+            {can('view_sale_price') &&
+              (p.roles.includes('customer') || entries.length > 0) && (
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setStatementPreview(
+                      buildCustomerStatementPreview({
+                        customer_name: p.name,
+                        as_of: today,
+                        entries: entries.map((r) => ({
+                          date: r.date,
+                          label: r.label,
+                          debit: r.debit,
+                          credit: r.credit,
+                        })),
+                      }),
+                    );
+                  }}
+                >
+                  Preview statement
+                </button>
+              )}
             {canPayAsSeller && can('manage_funding') && (
               <button
                 className="btn"
@@ -3393,6 +5794,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 Edit traveler details
               </button>
             )}
+            <button
+              className="btn"
+              onClick={async () => {
+                const path = workspaceRecordUrl('person', p.id);
+                await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+                setToast('Person link copied');
+              }}
+            >
+              <Copy size={13} />
+              Copy link
+            </button>
             <button
               className="btn"
               onClick={async () => {
@@ -3469,6 +5881,13 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         'identity_status',
                         'corporate_policy',
                         'company_policies',
+                        'merge_history',
+                        'merged_into',
+                        'merged_at',
+                        'merged_by',
+                        'merge_reason',
+                        'merge_command_id',
+                        'standing_deals',
                       ].includes(k),
                   )
                   .map(([k, v]) => (
@@ -3536,6 +5955,45 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         : undefined,
                   )}
                 </div>
+                {p.roles.includes('customer') &&
+                  canSale &&
+                  (() => {
+                    const o = partyCustomerOwes(bks, p.id);
+                    return (
+                      <>
+                        <div className="detail-label" style={{ marginTop: 12 }}>
+                          Still owes (open bookings)
+                        </div>
+                        <div
+                          className="metric-value"
+                          style={{
+                            color:
+                              o.owed_cents != null && o.owed_cents > 0 ? '#ae8553' : undefined,
+                          }}
+                        >
+                          {customerOwesListLabel(o, money)}
+                        </div>
+                        <p className="muted" style={{ fontSize: 11 }}>
+                          Positive unpaid balances on this customer’s bookings. Incomplete when any
+                          booking AR is Unknown — never shown as $0.
+                        </p>
+                      </>
+                    );
+                  })()}
+                {p.roles.includes('customer') && canPay && (
+                  <>
+                    <div className="detail-label" style={{ marginTop: 12 }}>
+                      Held credit (wallet)
+                    </div>
+                    <div className="metric-value" style={{ color: heldCredit > 0 ? '#2f6b4f' : undefined }}>
+                      {money(heldCredit)}
+                    </div>
+                    <p className="muted" style={{ fontSize: 11 }}>
+                      Deposits and unallocated receipts Padova holds. Use Apply held credit on a
+                      booking (or here), or Return held credit as a payment out.
+                    </p>
+                  </>
+                )}
                 <p className="muted" style={{ fontSize: 11 }}>
                   {isSource && !p.roles.includes('customer')
                     ? 'Authorized booking payables and inventory purchases, less recorded payments and corrections. Negative amounts represent a seller advance or credit.'
@@ -3544,8 +6002,58 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 {detail.notes.map((n: R) => (
                   <div className="note" key={n.id}>
                     {n.body}
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      style={{ marginLeft: 8 }}
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await command('note_hide', { note_id: n.id });
+                          await refresh();
+                          setToast('Note hidden. Restore from Recently hidden.');
+                        } catch (err) {
+                          setError((err as Error).message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Hide
+                    </button>
                   </div>
                 ))}
+                {(detail.notesHidden ?? []).length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <h4 className="money-back-subhead">Recently hidden</h4>
+                    {(detail.notesHidden as R[]).map((n) => (
+                      <div className="note" key={n.id}>
+                        <span>{String(n.body || 'Note').slice(0, 80)}</span>
+                        <button
+                          type="button"
+                          className="btn small"
+                          style={{ marginLeft: 8 }}
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await command('note_restore', { note_id: n.id });
+                              await refresh();
+                              setToast('Note restored.');
+                            } catch (err) {
+                              setError((err as Error).message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </Card>
           </div>
@@ -3571,17 +6079,407 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               {bookingTable(related)}
             </Card>
           </div>
+          {(canPay || canSale) &&
+            p.roles.includes('customer') &&
+            (() => {
+              const paySummary = customerPaymentsForParty(
+                paymentRows,
+                p.id,
+                Array.isArray(s.customerPaymentAllocations) ? s.customerPaymentAllocations : [],
+                cardFeeCentsByPaymentId(
+                  Array.isArray(s.customerPaymentCardFees) ? s.customerPaymentCardFees : [],
+                ),
+              );
+              const personDupPeers = possibleDuplicatePaymentPeers(
+                paymentRows.filter(
+                  (r: R) => r.party_id === p.id && r.direction === 'customer',
+                ),
+              );
+              return (
+                <Card title="Payments & allocations" count={paySummary.rows.length}>
+                  {paySummary.rows.length === 0 ? (
+                    <p className="note">
+                      No customer receipts yet for this person. Record a payment, then Allocate
+                      across bookings when money is left.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                        Received{' '}
+                        {paySummary.received_cents == null
+                          ? 'Incomplete'
+                          : money(paySummary.received_cents)}
+                        {' · '}
+                        Allocated{' '}
+                        {paySummary.allocated_cents == null
+                          ? 'Incomplete'
+                          : money(paySummary.allocated_cents)}
+                        {' · '}
+                        Left{' '}
+                        {paySummary.unallocated_cents == null
+                          ? 'Incomplete'
+                          : paySummary.unallocated_cents === 0
+                            ? 'Fully allocated'
+                            : money(paySummary.unallocated_cents)}
+                        {paySummary.incomplete ? ' · Some amounts Unknown' : ''}
+                      </p>
+                      <div className="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Method / reference</th>
+                              <th className="money">Amount</th>
+                              <th className="money">Unallocated</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {paySummary.rows.map((row) => (
+                              <Fragment key={row.id}>
+                                <tr>
+                                  <td>{row.paid_on ? dateLabel(row.paid_on) : '—'}</td>
+                                  <td>
+                                    {row.method}
+                                    <small>{row.reference}</small>
+                                    {paymentLooksRepeated(row.id, personDupPeers) ? (
+                                      <small>
+                                        <Badge tone="amber">
+                                          {paymentLooksRepeatedLabel(
+                                            personDupPeers.get(row.id)?.length ?? 0,
+                                          )}
+                                        </Badge>
+                                      </small>
+                                    ) : null}
+                                  </td>
+                                  <td className="money">
+                                    {row.amount_cents == null
+                                      ? 'Unknown'
+                                      : money(row.amount_cents)}
+                                  </td>
+                                  <td className="money">
+                                    {paymentUnallocatedColumnLabel(
+                                      {
+                                        direction: 'customer',
+                                        current_amount: row.amount_cents,
+                                        allocated: row.allocated_cents,
+                                        commission_allocated: 0,
+                                      },
+                                      money,
+                                    )}
+                                  </td>
+                                  <td>
+                                    {canPay && row.status === 'open' ? (
+                                      <button
+                                        type="button"
+                                        className="btn small"
+                                        onClick={() =>
+                                          action('allocate', { payment_id: row.id })
+                                        }
+                                      >
+                                        Allocate
+                                      </button>
+                                    ) : null}
+                                  </td>
+                                </tr>
+                                {row.lines.length > 0 ||
+                                (row.card_fee_cents != null && row.card_fee_cents > 0) ||
+                                (row.unallocated_cents != null &&
+                                  row.unallocated_cents > 0 &&
+                                  row.amount_cents != null &&
+                                  row.unallocated_cents === row.amount_cents) ? (
+                                  <tr className="sub">
+                                    <td></td>
+                                    <td colSpan={4}>
+                                      {row.lines.length > 0 ||
+                                      (row.card_fee_cents != null && row.card_fee_cents > 0) ? (
+                                        <ul
+                                          className="muted"
+                                          style={{
+                                            margin: '0 0 6px',
+                                            paddingLeft: 16,
+                                            fontSize: 11,
+                                            listStyle: 'disc',
+                                          }}
+                                        >
+                                          {row.card_fee_cents != null &&
+                                          row.card_fee_cents > 0 ? (
+                                            <li>
+                                              Card fee (separate) · {money(row.card_fee_cents)}
+                                            </li>
+                                          ) : null}
+                                          {row.lines.map((line) => (
+                                            <li key={line.id}>
+                                              <button
+                                                type="button"
+                                                className="linkish"
+                                                style={{
+                                                  background: 'none',
+                                                  border: 0,
+                                                  padding: 0,
+                                                  cursor: 'pointer',
+                                                  font: 'inherit',
+                                                  color: 'inherit',
+                                                  textDecoration: 'underline',
+                                                }}
+                                                onClick={() =>
+                                                  openRecord('booking', line.booking_id)
+                                                }
+                                              >
+                                                {line.booking_label}
+                                              </button>
+                                              {' · '}
+                                              {line.amount_cents == null
+                                                ? 'Unknown'
+                                                : money(line.amount_cents)}
+                                            </li>
+                                          ))}
+                                          {row.unallocated_cents != null &&
+                                          row.unallocated_cents > 0 ? (
+                                            <li>
+                                              Remainder left · {money(row.unallocated_cents)}
+                                            </li>
+                                          ) : null}
+                                        </ul>
+                                      ) : (
+                                        <span className="muted" style={{ fontSize: 11 }}>
+                                          No booking lines yet · full amount left to allocate
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </Card>
+              );
+            })()}
+          {can('view_sale_price') && p.roles.includes('customer') && (
+            <Card
+              title="Invoices"
+              count={(detail.invoiceDrafts ?? []).length}
+            >
+              {!detail.invoiceDraftsEnabled ? (
+                <p className="note">
+                  Invoice drafts table is not installed in this workspace yet. Preview still works;
+                  Save draft needs the extension.
+                </p>
+              ) : (detail.invoiceDrafts ?? []).length === 0 ? (
+                <p className="note">
+                  No saved drafts yet. Use Preview invoice → Save draft. Owner marks previewed, then
+                  emails the customer (or marks sent without email). Nothing is sent automatically.
+                </p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Created</th>
+                        <th>Status</th>
+                        <th className="money">Total</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(detail.invoiceDrafts as R[]).map((inv) => (
+                        <tr
+                          key={inv.id}
+                          id={`invoice-row-${inv.id}`}
+                          className={focusInvoiceId === inv.id ? 'is-focused' : undefined}
+                        >
+                          <td>{dateLabel(String(inv.created_at).slice(0, 10))}</td>
+                          <td>
+                            {invoiceStatusLabel(inv.status)}
+                            {inv.incomplete ? ' · incomplete' : ''}
+                          </td>
+                          <td className="money">
+                            {inv.total_cents == null ? 'Unknown' : money(Number(inv.total_cents))}
+                          </td>
+                          <td className="row-actions">
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              onClick={async () => {
+                                const path = workspaceInvoiceUrl(p.id, inv.id);
+                                await navigator.clipboard.writeText(
+                                  `${window.location.origin}${path}`,
+                                );
+                                setFocusInvoiceId(inv.id);
+                                setToast('Invoice link copied');
+                                if (typeof window !== 'undefined') {
+                                  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                                  if (current !== path)
+                                    window.history.replaceState(null, '', path);
+                                }
+                              }}
+                            >
+                              Copy link
+                            </button>
+                            {s.actor.role === 'OWNER' && canApproveInvoice(inv.status) && (
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                disabled={busy || invoiceBusy}
+                                onClick={() =>
+                                  perform('invoice_approve', { invoice_id: inv.id })
+                                }
+                              >
+                                Mark previewed
+                              </button>
+                            )}
+                            {s.actor.role === 'OWNER' && canSendInvoiceEmail(inv.status) && (
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                disabled={busy || invoiceBusy}
+                                onClick={async () => {
+                                  setInvoiceBusy(true);
+                                  try {
+                                    const r = await fetch('/api/invoices/send', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        invoice_id: inv.id,
+                                        prepare_whatsapp_copy: true,
+                                      }),
+                                    });
+                                    const json = await r.json().catch(() => ({}));
+                                    if (!r.ok) throw new Error(json.error || 'Invoice send failed');
+                                    const wa = json.result?.whatsapp_copy;
+                                    if (wa) {
+                                      try {
+                                        await navigator.clipboard.writeText(wa);
+                                        setToast(
+                                          `Emailed ${json.result.sent_to}. Owner WhatsApp copy on clipboard.`,
+                                        );
+                                      } catch {
+                                        setToast(`Emailed ${json.result.sent_to}.`);
+                                      }
+                                    } else {
+                                      setToast(`Emailed ${json.result?.sent_to || 'customer'}.`);
+                                    }
+                                    await refresh();
+                                    if (selected) await openRecord(selected.type, selected.id);
+                                  } catch (e) {
+                                    setError((e as Error).message);
+                                  } finally {
+                                    setInvoiceBusy(false);
+                                  }
+                                }}
+                              >
+                                Email customer
+                              </button>
+                            )}
+                            {s.actor.role === 'OWNER' && canMarkInvoiceSent(inv.status) && (
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                disabled={busy || invoiceBusy}
+                                onClick={() =>
+                                  perform('invoice_mark_sent', {
+                                    invoice_id: inv.id,
+                                    note: 'Marked sent without system email',
+                                  })
+                                }
+                              >
+                                Mark sent (no email)
+                              </button>
+                            )}
+                            {s.actor.role === 'OWNER' && canSendInvoiceEmail(inv.status) && (
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                disabled={busy || invoiceBusy}
+                                title="Clipboard only — WhatsApp helper never sends"
+                                onClick={async () => {
+                                  try {
+                                    const preview = {
+                                      customer_name: inv.customer_name || p.name,
+                                      lines: Array.isArray(inv.lines) ? inv.lines : [],
+                                      subtotal_cents:
+                                        inv.total_cents == null ? null : Number(inv.total_cents),
+                                      total_cents:
+                                        inv.total_cents == null ? null : Number(inv.total_cents),
+                                      incomplete: Boolean(inv.incomplete),
+                                      payment: null,
+                                    } as InvoicePreview;
+                                    await navigator.clipboard.writeText(
+                                      formatInvoiceWhatsAppOwnerCopy(preview),
+                                    );
+                                    setToast('Owner WhatsApp copy on clipboard (not auto-sent).');
+                                  } catch (e) {
+                                    setError((e as Error).message);
+                                  }
+                                }}
+                              >
+                                Copy WhatsApp
+                              </button>
+                            )}
+                            {s.actor.role === 'OWNER' && canVoidInvoice(inv.status) && (
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                disabled={busy || invoiceBusy}
+                                onClick={() => {
+                                  const reason = window.prompt('Void reason (required)');
+                                  if (!reason?.trim()) return;
+                                  void perform('invoice_void', {
+                                    invoice_id: inv.id,
+                                    reason: reason.trim(),
+                                  });
+                                }}
+                              >
+                                Void
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
           {(p.roles.includes('customer') || !isSource || entries.length > 0) && (
             <Card
               title="Running customer statement"
               action={
-                <button
-                  className="btn ghost"
-                  onClick={() => downloadCSV(`${p.name}-statement.csv`, entries)}
-                >
-                  <Download size={13} />
-                  Export CSV
-                </button>
+                <div className="heading-actions">
+                  {can('view_sale_price') && (
+                    <button
+                      className="btn ghost"
+                      onClick={() =>
+                        setStatementPreview(
+                          buildCustomerStatementPreview({
+                            customer_name: p.name,
+                            as_of: today,
+                            entries: entries.map((r) => ({
+                              date: r.date,
+                              label: r.label,
+                              debit: r.debit,
+                              credit: r.credit,
+                            })),
+                          }),
+                        )
+                      }
+                    >
+                      Preview
+                    </button>
+                  )}
+                  <button
+                    className="btn ghost"
+                    onClick={() => downloadCSV(`${p.name}-statement.csv`, entries)}
+                  >
+                    <Download size={13} />
+                    Export CSV
+                  </button>
+                </div>
               }
             >
               <div className="table-wrap">
@@ -3623,6 +6521,20 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
   } else if (page === 'Partnerships') {
     view = <Partnerships />;
   } else if (page === 'Dashboard') {
+    const todoItems = planTodosAll.slice(0, 12);
+    const profitTotals = canTotalProfit
+      ? dashboardProfitTotals(
+          bks.map((b) => ({
+            profit: b.profit == null ? null : Number(b.profit),
+            expected_commission:
+              b.expected_commission == null ? null : Number(b.expected_commission),
+            received_commission:
+              b.received_commission == null ? null : Number(b.received_commission),
+            cost_incomplete: b.profit == null,
+            reservation_status: b.reservation_status,
+          })),
+        )
+      : null;
     view = (
       <div className="dashboard-page">
         {heading(
@@ -3636,7 +6548,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {newButton('New booking', 'booking')}
           </>,
         )}
-        <div className={`metrics${canAssetBasis ? ' metrics-5' : ' metrics-4'}`}>
+        <div
+          className={`metrics${
+            canTotalProfit ? (canAssetBasis ? ' metrics-6' : ' metrics-5') : canAssetBasis ? ' metrics-5' : ' metrics-4'
+          }`}
+        >
           <Metric
             label="Active bookings"
             value={String(bks.filter((b) => b.reservation_status === 'Booked').length)}
@@ -3645,23 +6561,51 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           />
           <Metric
             label="Traveling today"
-            value={String(todayTravel.length)}
+            value={String(todayTravelAll.length)}
             foot="Live travel records"
             icon={Plane}
           />
           <Metric
             label="Upcoming travel"
-            value={String(upcoming.length)}
+            value={String(upcomingAll.length)}
             foot="Next 7 days"
             icon={CalendarDays}
           />
           <Metric
             label="Open tasks"
-            value={String(s.tasks.filter((t: R) => t.status === 'Open').length)}
+            value={String(taskRows.filter((t: R) => t.status === 'Open').length)}
             foot="Team follow-ups"
             icon={ClipboardList}
           />
-          {canAssetBasis && (
+          {canTotalProfit && profitTotals && (
+            <>
+              <Metric
+                label="Confirmed profit"
+                value={
+                  profitTotals.confirmed_cents == null
+                    ? 'Incomplete'
+                    : money(profitTotals.confirmed_cents)
+                }
+                foot={
+                  profitTotals.incomplete
+                    ? 'Some bookings incomplete — not a $0 total'
+                    : 'Certain money and credits'
+                }
+                icon={Coins}
+              />
+              <Metric
+                label="Expected profit"
+                value={
+                  profitTotals.expected_cents == null
+                    ? 'Incomplete'
+                    : money(profitTotals.expected_cents)
+                }
+                foot="Adds commissions not yet received"
+                icon={Landmark}
+              />
+            </>
+          )}
+          {canAssetBasis && !canTotalProfit && (
             <Metric
               label="Travel asset cost basis"
               value={
@@ -3683,6 +6627,84 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               icon={Ticket}
             />
           )}
+        </div>
+        <div className="list-block">
+          <Card
+            title="To-do"
+            count={todoItems.length}
+            action={
+              <div className="heading-actions">
+                {canAction('task') ? (
+                  <button className="btn small" onClick={() => action('task')}>
+                    New task
+                  </button>
+                ) : null}
+                <button className="btn ghost" onClick={() => go('To-do')}>
+                  Full To-do <ArrowRight size={12} />
+                </button>
+              </div>
+            }
+          >
+            {!todoItems.length ? (
+              <Empty>Nothing on the to-do list right now.</Empty>
+            ) : (
+              <ul className="plain-list dashboard-todo-list">
+                {todoItems.map((item) => (
+                  <li key={item.id} className="dashboard-todo-item">
+                    <button
+                      type="button"
+                      className="dashboard-todo-main"
+                      onClick={() => {
+                        if (item.booking_id) void openRecord('booking', item.booking_id);
+                        else if (item.record_type && item.record_id)
+                          void openRecord(item.record_type, item.record_id);
+                        else if (item.kind === 'task') go('To-do');
+                        else {
+                          setFollowupSelected('Needs Attention');
+                          go('To-do');
+                        }
+                      }}
+                    >
+                      <strong>{item.title}</strong>
+                      {item.detail ? <small>{item.detail}</small> : null}
+                      {item.due_on ? <small>Due {dateLabel(item.due_on)}</small> : null}
+                    </button>
+                    {planTodoRecordUrl(item) ? (
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const path = planTodoRecordUrl(item);
+                          if (!path) return;
+                          await navigator.clipboard.writeText(
+                            `${window.location.origin}${path}`,
+                          );
+                          setToast('Link copied');
+                          if (typeof window !== 'undefined') {
+                            const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                            if (current !== path)
+                              window.history.replaceState(null, '', path);
+                          }
+                        }}
+                      >
+                        Copy link
+                      </button>
+                    ) : null}
+                    {item.kind === 'task' && item.task_id ? (
+                      <button
+                        type="button"
+                        className="btn small"
+                        onClick={() => action('complete_task', { task_id: item.task_id })}
+                      >
+                        Done
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         </div>
         <div className="list-block">
           <Card title="Recent transactions">
@@ -3707,6 +6729,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   r.booking_id ?? r.record_id,
                 )
               }
+              copyLink={copyWorkspacePath}
             />
           </div>
           <div className="dashboard-today">
@@ -3720,28 +6743,46 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               }
             >
               {todayTravel.length ? (
-                todayTravel.slice(0, 4).map((b) => (
-                  <button
-                    className="travel-item"
-                    style={{ width: '100%', textAlign: 'left' }}
-                    key={b.id}
-                    onClick={() => openRecord('booking', b.id)}
-                  >
-                    <span className="travel-icon">
-                      <Icon name={b.product} />
-                    </span>
-                    <div>
-                      <strong>{b.summary}</strong>
-                      <p>{b.travelers || 'Traveler missing'}</p>
-                      <p>
-                        {b.confirmations} · {b.code}
-                      </p>
-                    </div>
-                    <Badge>Today</Badge>
-                  </button>
+                (dashboardTravelQuery.trim() ? todayTravel : todayTravel.slice(0, 4)).map((b) => (
+                  <div className="travel-item" key={b.id}>
+                    <button
+                      type="button"
+                      className="travel-item-main"
+                      onClick={() => openRecord('booking', b.id)}
+                    >
+                      <span className="travel-icon">
+                        <Icon name={b.product} />
+                      </span>
+                      <div>
+                        <strong title={b.summary}>{bookingShortName(tripView(b))}</strong>
+                        <p>{b.travelers || 'Traveler missing'}</p>
+                        <p>
+                          {b.confirmations} · {b.code}
+                        </p>
+                      </div>
+                      <Badge>Today</Badge>
+                    </button>
+                    {calendarBookingSharePath(b.id) ? (
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        aria-label="Copy shareable link"
+                        onClick={() => {
+                          const path = calendarBookingSharePath(b.id);
+                          if (path) void copyWorkspacePath(path);
+                        }}
+                      >
+                        Copy link
+                      </button>
+                    ) : null}
+                  </div>
                 ))
               ) : (
-                <Empty>No travelers traveling today.</Empty>
+                <Empty>
+                  {dashboardTravelQuery.trim()
+                    ? 'No travelers today match this search.'
+                    : 'No travelers traveling today.'}
+                </Empty>
               )}
               <div
                 className="section-body"
@@ -3770,6 +6811,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </button>
               }
             >
+              <label className="directory-search" htmlFor="dashboard-travel-search">
+                {' '}
+                <input
+                  id="dashboard-travel-search"
+                  type="search"
+                  aria-label="Search traveling today and upcoming"
+                  placeholder="Search booking #, traveler or trip…"
+                  value={dashboardTravelQuery}
+                  onChange={(e) => setDashboardTravelQuery(e.target.value)}
+                />
+              </label>
               <div className="tabs">
                 {[7, 14, 30].map((n) => (
                   <button
@@ -3784,31 +6836,49 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               {upcoming.length ? (
                 <div className="dashboard-trips">
                   {upcoming.map((b) => (
-                    <button
-                      type="button"
-                      className="dashboard-trip"
-                      key={b.id}
-                      onClick={() => openRecord('booking', b.id)}
-                    >
-                      <Icon name={b.product} />
-                      <span>
-                        <strong title={b.summary}>{tripTitle(tripView(b))}</strong>
-                        <small>
-                          {b.code} · {b.travelers || 'Traveler missing'}
-                        </small>
-                      </span>
-                      <span>
-                        {dateLabel(
-                          nextTravelDate(b, s.travelComponents ?? [], today, '9999-12-31') ??
-                            b.travel_start,
-                        )}
-                        {canSale && <small>{money(b.sale)}</small>}
-                      </span>
-                    </button>
+                    <div className="dashboard-trip-row" key={b.id}>
+                      <button
+                        type="button"
+                        className="dashboard-trip"
+                        onClick={() => openRecord('booking', b.id)}
+                      >
+                        <Icon name={b.product} />
+                        <span>
+                          <strong title={b.summary}>{bookingShortName(tripView(b))}</strong>
+                          <small>
+                            {b.code} · {b.travelers || 'Traveler missing'}
+                          </small>
+                        </span>
+                        <span>
+                          {dateLabel(
+                            nextTravelDate(b, s.travelComponents ?? [], today, '9999-12-31') ??
+                              b.travel_start,
+                          )}
+                          {canSale && <small>{money(b.sale)}</small>}
+                        </span>
+                      </button>
+                      {calendarBookingSharePath(b.id) ? (
+                        <button
+                          type="button"
+                          className="btn small ghost"
+                          aria-label="Copy shareable link"
+                          onClick={() => {
+                            const path = calendarBookingSharePath(b.id);
+                            if (path) void copyWorkspacePath(path);
+                          }}
+                        >
+                          Copy link
+                        </button>
+                      ) : null}
+                    </div>
                   ))}
                 </div>
               ) : (
-                <Empty>No upcoming travel.</Empty>
+                <Empty>
+                  {dashboardTravelQuery.trim()
+                    ? 'No upcoming travel matches this search.'
+                    : 'No upcoming travel.'}
+                </Empty>
               )}
             </Card>
           </div>
@@ -3821,6 +6891,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   ['Add customer', 'party', Users],
                   ...(true
                     ? [
+                        ['Trade desk', 'trade', Ticket],
                         ['Buy travel asset', 'acquire_asset', Ticket],
                         ['Sell voucher', 'sell_asset', ArrowUpRight],
                         ['Supplier payment', 'payment', CreditCard],
@@ -3844,7 +6915,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             ? { direction: 'supplier' }
                             : label === 'Add customer'
                               ? { kind: 'person' }
-                              : {},
+                              : label === 'Trade desk'
+                                ? { side: 'Buy', stock_mode: 'for_booking' }
+                                : {},
                         )
                       }
                     >
@@ -3871,7 +6944,36 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       {dateLabel(a.created_at)} ·{' '}
                       {a.actor_name ??
                         (a.actor === 'local-owner' ? 'Legacy synthetic import' : a.actor)}
+                      {a.source_label ? (
+                        <>
+                          {' · '}
+                          <Badge
+                            tone={
+                              a.source_channel === 'whatsapp' || a.source_channel === 'email'
+                                ? 'blue'
+                                : a.source_channel === 'import'
+                                  ? 'amber'
+                                  : 'gray'
+                            }
+                          >
+                            {a.source_label}
+                          </Badge>
+                        </>
+                      ) : null}
                     </p>
+                    {bks.some((b) => b.id === a.record_id) ? (
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        aria-label="Copy shareable link"
+                        onClick={() => {
+                          const path = calendarBookingSharePath(a.record_id);
+                          if (path) void copyWorkspacePath(path);
+                        }}
+                      >
+                        Copy link
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -3886,20 +6988,70 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         (filter === 'All' ||
           (kind === 'sale' ? filter === 'Voucher / asset sales' : r.product === filter)) &&
         (!day || (kind === 'booking' && r.travel_start <= day && r.travel_end >= day)) &&
-        (bookingStatus === 'All' || (kind === 'booking' && r.reservation_status === bookingStatus)),
+        (bookingStatus === 'All' || (kind === 'booking' && r.reservation_status === bookingStatus)) &&
+        (bookingHowBooked === 'All' ||
+          (kind === 'booking' &&
+            bookingMatchesHowBookedFilter(
+              r as {
+                itinerary?: {
+                  operational_entry?: { how_booked?: string | null } | null;
+                } | null;
+              },
+              bookingHowBooked,
+            ))) &&
+        (bookingYear === 'All' ||
+          (kind === 'booking' &&
+            bookingMatchesYearFilter(
+              r as { booked_on?: string | null },
+              bookingYear,
+            ))) &&
+        (!bookingOwedOnly ||
+          (kind === 'booking' &&
+            bookingListIsOwed(
+              r as {
+                customer_balance?: number | null;
+                reservation_status?: string | null;
+              },
+            ))) &&
+        (kind === 'booking'
+          ? bookingMatchesSearch(r, s, bookingQuery)
+          : saleMatchesSearch(r, bookingQuery)),
     );
     const filteredDrafts = (s.bookingDrafts ?? []).filter((draft: R) => {
+      if (!draftMatchesSearch(draft, draftQuery)) return false;
       if (draftChannelFilter === 'All') return true;
       if (draftChannelFilter === 'historical') return draft.kind === 'historical_booking';
       if (draftChannelFilter === 'voucher') return draft.kind === 'voucher_sale';
       if (draft.kind === 'historical_booking' || draft.kind === 'voucher_sale') return false;
       return intakeChannelFilterKey(draft.intake_source) === draftChannelFilter;
     });
+    const showVoucherSales = filter === 'Voucher / asset sales';
+    const bookingRows = items
+      .filter((row): row is Extract<typeof row, { kind: 'booking' }> => row.kind === 'booking')
+      .map((row) => row.record)
+      .slice()
+      .sort((a, b) =>
+        compareBookingsForList(
+          a as { booked_on?: string | null; travel_start?: string | null },
+          b as { booked_on?: string | null; travel_start?: string | null },
+          bookingSort,
+        ),
+      );
+    const voucherSaleRows = items.filter(
+      (row): row is Extract<typeof row, { kind: 'sale' }> => row.kind === 'sale',
+    );
+    const heldCount = bookingListHeldCount(bks);
+    const activeCount = bookingListActiveCount(bks);
+    const completedCount = bookingListCompletedCount(bks);
+    const cancelledCount = bookingListCancelledCount(bks);
+    const refundPendingCount = bookingListRefundPendingCount(bks);
+    const owedCount = bookingListOwedCount(bks);
+    const owedTotal = bookingListOwedTotal(bks);
     view = (
       <div className="transactions-page">
         {heading(
-          'Transactions',
-          'Bookings and sales in one list. Open a row for payments and delivery.',
+          'Bookings',
+          'Newest first. Date booked, customer, travelers, trip, travel date, how booked, price, cost, paid/balance, confirmed/expected. Cancelled rows are red. Status and How booked filters.',
           <>
             {canAction('booking_draft') && (
               <button
@@ -3945,9 +7097,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             {newButton('New booking', 'booking')}
           </>,
         )}
-        {!!s.bookingDrafts?.length && (
+        {!!(s.bookingDrafts?.length || s.bookingDraftsRemoved?.length) && (
           <div className="list-block intake-drafts-block">
-          <details
+            <details
             className="card section-body intake-drafts"
             open={draftsOpen}
             onToggle={(e) => {
@@ -3990,12 +7142,30 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 </button>
               ))}
             </div>
+            <div className="toolbar directory-toolbar" style={{ marginBottom: 8 }}>
+              <label className="directory-search" htmlFor="drafts-search">
+                {' '}
+                <input
+                  id="drafts-search"
+                  type="search"
+                  aria-label="Search drafts"
+                  placeholder="Search title, customer or source…"
+                  value={draftQuery}
+                  onChange={(e) => {
+                    setDraftQuery(e.target.value);
+                    setDraftPage(1);
+                  }}
+                />
+              </label>
+            </div>
             <div className="intake-draft-grid">
               {(() => {
                 if (!filteredDrafts.length) {
                   return (
                     <p className="intake-draft-empty">
-                      No drafts in this filter. Try All, or create one from Intake.
+                      {draftQuery.trim()
+                        ? 'No drafts match this search.'
+                        : 'No drafts in this filter. Try All, or create one from Intake.'}
                     </p>
                   );
                 }
@@ -4041,6 +7211,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               Pattern
                             </span>
                           )}
+                          <button
+                            type="button"
+                            className="btn small ghost intake-draft-copy-link"
+                            aria-label={`Copy link for ${title}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const path = workspaceRecordUrl('draft', draft.id);
+                              if (path) void copyWorkspacePath(path);
+                            }}
+                          >
+                            Copy link
+                          </button>
                           {canAction('booking_draft') && (
                             <details
                               className="intake-draft-menu"
@@ -4092,7 +7275,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                       setSelected(null);
                                       setDetail(null);
                                       await refresh();
-                                      setToast('Draft deleted.');
+                                      setToast('Draft deleted. Restore from Recently deleted.');
                                     } catch (err) {
                                       setError((err as Error).message);
                                     } finally {
@@ -4256,9 +7439,61 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   </div>
                 );
               })()}
+            {(s.bookingDraftsRemoved ?? []).length > 0 && (
+              <div className="intake-draft-removed">
+                <h4 className="money-back-subhead">Recently deleted</h4>
+                <p className="intake-draft-empty">
+                  Soft-removed only — restore brings the draft back. History stays.
+                </p>
+                <ul className="plain-list">
+                  {(s.bookingDraftsRemoved as R[]).map((draft) => (
+                    <li key={draft.id} className="intake-draft-removed-row">
+                      <span>
+                        {String(draft.title || draft.summary || 'Draft').slice(0, 80)}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn small"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            await command('booking_draft_restore', { draft_id: draft.id });
+                            await refresh();
+                            setToast('Draft restored.');
+                          } catch (err) {
+                            setError((err as Error).message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Restore
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </details>
           </div>
         )}
+        <div className="toolbar directory-toolbar">
+          <label className="directory-search" htmlFor="bookings-search">
+            {' '}
+            <input
+              id="bookings-search"
+              type="search"
+              aria-label="Search bookings"
+              placeholder="Search booking #, PNR, customer or ticket…"
+              value={bookingQuery}
+              onChange={(e) => {
+                setBookingQuery(e.target.value);
+                setBookingPage(1);
+              }}
+            />
+          </label>
+        </div>
         <div className="toolbar transactions-toolbar">
           <div className="transactions-filter-group" role="group" aria-label="Product filter">
             {['All', 'Flight', 'Hotel', 'Car', 'Other', 'Voucher / asset sales'].map((v) => (
@@ -4276,13 +7511,173 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <select
               aria-label="Booking status"
               value={bookingStatus}
-              onChange={(e) => setBookingStatus(e.target.value)}
+              onChange={(e) => {
+                setBookingStatus(e.target.value);
+                setBookingPage(1);
+              }}
             >
               {['All', ...new Set<string>(bks.map((b) => b.reservation_status))].map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>
+                  {v === 'All' ? 'All' : reservationStatusLabel(v)}
+                </option>
               ))}
             </select>
           </label>
+          <label className="transactions-status-filter">
+            How booked
+            <select
+              aria-label="How booked"
+              value={bookingHowBooked}
+              onChange={(e) => {
+                setBookingHowBooked(e.target.value);
+                setBookingPage(1);
+              }}
+            >
+              {['All', ...bookingListHowBookedOptions(bks)].map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="transactions-status-filter">
+            Year
+            <select
+              aria-label="Booked year"
+              value={bookingYear}
+              onChange={(e) => {
+                setBookingYear(e.target.value);
+                setBookingPage(1);
+              }}
+            >
+              {[
+                'All',
+                ...bookingListYearOptions(bks),
+                ...(bks.some((b) =>
+                  bookingMatchesYearFilter(b as { booked_on?: string | null }, 'Unknown'),
+                )
+                  ? ['Unknown']
+                  : []),
+              ].map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="transactions-status-filter">
+            Sort
+            <select
+              aria-label="Sort bookings"
+              value={bookingSort}
+              onChange={(e) => {
+                setBookingSort(e.target.value as BookingListSort);
+                setBookingPage(1);
+              }}
+            >
+              {BOOKING_LIST_SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className={`btn ${bookingOwedOnly ? 'primary' : ''}`}
+            aria-pressed={bookingOwedOnly}
+            aria-label="Filter bookings owed to Padova"
+            title="Owed to me — known positive customer balance (Unknown ≠ invent)"
+            disabled={owedCount === 0 && !bookingOwedOnly}
+            onClick={() => {
+              setBookingOwedOnly(toggleBookingOwedFilter(bookingOwedOnly));
+              setBookingPage(1);
+            }}
+          >
+            Owed{owedCount ? ` (${owedCount})` : ''}
+          </button>
+          {canSale ? (
+            <span
+              className="muted"
+              style={{ marginLeft: 'auto', fontSize: 12 }}
+              title="Sum of known positive customer balances. Unknown AR stays Incomplete ≠ $0."
+            >
+              Total owed{' '}
+              <strong style={{ color: owedTotal.owed_cents > 0 ? '#ae8553' : undefined }}>
+                {bookingListOwedTotalLabel(owedTotal, money)}
+              </strong>
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className={`btn ${bookingStatus === 'Held' ? 'primary' : ''}`}
+            aria-pressed={bookingStatus === 'Held'}
+            aria-label="Filter Held PNRs"
+            title="Held PNRs waiting for payment / ticketing"
+            disabled={heldCount === 0 && bookingStatus !== 'Held'}
+            onClick={() => {
+              setBookingStatus(toggleBookingHeldFilter(bookingStatus));
+              setBookingPage(1);
+            }}
+          >
+            Held{heldCount ? ` (${heldCount})` : ''}
+          </button>
+          <button
+            type="button"
+            className={`btn ${bookingStatus === 'Booked' ? 'primary' : ''}`}
+            aria-pressed={bookingStatus === 'Booked'}
+            aria-label="Filter active bookings"
+            title="Active bookings (Plan Active)"
+            disabled={activeCount === 0 && bookingStatus !== 'Booked'}
+            onClick={() => {
+              setBookingStatus(toggleBookingActiveFilter(bookingStatus));
+              setBookingPage(1);
+            }}
+          >
+            Active{activeCount ? ` (${activeCount})` : ''}
+          </button>
+          <button
+            type="button"
+            className={`btn ${bookingStatus === 'Traveled' ? 'primary' : ''}`}
+            aria-pressed={bookingStatus === 'Traveled'}
+            aria-label="Filter completed bookings"
+            title="Completed travel (Plan Completed)"
+            disabled={completedCount === 0 && bookingStatus !== 'Traveled'}
+            onClick={() => {
+              setBookingStatus(toggleBookingCompletedFilter(bookingStatus));
+              setBookingPage(1);
+            }}
+          >
+            Completed{completedCount ? ` (${completedCount})` : ''}
+          </button>
+          <button
+            type="button"
+            className={`btn ${bookingStatus === 'Cancelled' ? 'primary' : ''}`}
+            aria-pressed={bookingStatus === 'Cancelled'}
+            aria-label="Filter cancelled bookings"
+            title="Cancelled bookings (red rows)"
+            disabled={cancelledCount === 0 && bookingStatus !== 'Cancelled'}
+            onClick={() => {
+              setBookingStatus(toggleBookingCancelledFilter(bookingStatus));
+              setBookingPage(1);
+            }}
+          >
+            Cancelled{cancelledCount ? ` (${cancelledCount})` : ''}
+          </button>
+          <button
+            type="button"
+            className={`btn ${bookingStatus === 'Refund Pending' ? 'primary' : ''}`}
+            aria-pressed={bookingStatus === 'Refund Pending'}
+            aria-label="Filter refund pending bookings"
+            title="Bookings with refund still open"
+            disabled={refundPendingCount === 0 && bookingStatus !== 'Refund Pending'}
+            onClick={() => {
+              setBookingStatus(toggleBookingRefundPendingFilter(bookingStatus));
+              setBookingPage(1);
+            }}
+          >
+            Refund pending{refundPendingCount ? ` (${refundPendingCount})` : ''}
+          </button>
           {day && (
             <button className="btn" onClick={() => setDay('')}>
               {day}
@@ -4290,25 +7685,47 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           )}
         </div>
-        {(() => {
-          const bookingPager = pageSlice(items, bookingPage, 20);
-          return (
-            <div className="list-block">
-              <Card title="Transactions" count={items.length}>
-                {transactionTable(bookingPager.items)}
-              </Card>
-              <ListPager
-                page={bookingPager.page}
-                totalPages={bookingPager.totalPages}
-                total={bookingPager.total}
-                from={bookingPager.from}
-                to={bookingPager.to}
-                onPage={setBookingPage}
-                label="transactions"
-              />
-            </div>
-          );
-        })()}
+        {showVoucherSales ? (
+          (() => {
+            const salePager = pageSlice(voucherSaleRows, bookingPage, 20);
+            return (
+              <div className="list-block">
+                <Card title="Voucher / asset sales" count={voucherSaleRows.length}>
+                  {transactionTable(salePager.items)}
+                </Card>
+                <ListPager
+                  page={salePager.page}
+                  totalPages={salePager.totalPages}
+                  total={salePager.total}
+                  from={salePager.from}
+                  to={salePager.to}
+                  onPage={setBookingPage}
+                  label="sales"
+                />
+              </div>
+            );
+          })()
+        ) : (
+          (() => {
+            const bookingPager = pageSlice(bookingRows, bookingPage, 20);
+            return (
+              <div className="list-block">
+                <Card title="Bookings" count={bookingRows.length}>
+                  {bookingTable(bookingPager.items)}
+                </Card>
+                <ListPager
+                  page={bookingPager.page}
+                  totalPages={bookingPager.totalPages}
+                  total={bookingPager.total}
+                  from={bookingPager.from}
+                  to={bookingPager.to}
+                  onPage={setBookingPage}
+                  label="bookings"
+                />
+              </div>
+            );
+          })()
+        )}
       </div>
     );
   } else if (['People & Families', 'Companies', 'Suppliers', 'Sources & Brokers'].includes(page)) {
@@ -4340,9 +7757,18 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           .toLowerCase()
           .includes(directoryQuery.trim().toLowerCase()),
       )
-      .sort((a, b) =>
-        directorySort === 'name-desc' ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name),
-      );
+      .sort((a, b) => {
+        if (directorySort === 'owed-desc' || directorySort === 'owed-asc') {
+          const ao = partyCustomerOwes(bks, a.id);
+          const bo = partyCustomerOwes(bks, b.id);
+          const av = ao.owed_cents == null ? -1 : ao.owed_cents;
+          const bv = bo.owed_cents == null ? -1 : bo.owed_cents;
+          return directorySort === 'owed-desc' ? bv - av : av - bv;
+        }
+        return directorySort === 'name-desc'
+          ? b.name.localeCompare(a.name)
+          : a.name.localeCompare(b.name);
+      });
     view = (
       <>
         {heading(
@@ -4352,14 +7778,14 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               ? 'Suppliers'
               : page === 'Sources & Brokers'
                 ? 'Sources & brokers'
-                : 'People',
+                : 'Customers',
           page === 'Companies'
             ? 'Corporate travelers, billing relationships, and travel rules.'
             : page === 'Suppliers'
               ? 'Actual travel providers, separate from booking channels and acquisition sellers.'
               : page === 'Sources & Brokers'
                 ? 'People and companies supplying awards, points, certificates or other travel value. Open a profile for transactions and history.'
-                : 'One person. Every role. A connected history.',
+                : 'Each customer’s bookings, what they owe, payments with allocations, and invoice or statement on demand.',
           newButton(
             page === 'Companies'
               ? 'Add company'
@@ -4474,6 +7900,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             >
               <option value="name">Name A–Z</option>
               <option value="name-desc">Name Z–A</option>
+              {page === 'People & Families' && canSale ? (
+                <>
+                  <option value="owed-desc">Owes most</option>
+                  <option value="owed-asc">Owes least</option>
+                </>
+              ) : null}
             </select>
           </label>
         </div>
@@ -4486,7 +7918,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           className="directory-list"
           role="list"
           aria-label={
-            page === 'Bookings' ? 'Transactions' : page === 'People & Families' ? 'People' : page
+            page === 'People & Families' ? 'Customers' : page
           }
         >
           {directoryPager.items.map((p) => {
@@ -4510,6 +7942,12 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             const past = linked
               .filter((b: R) => b.travel_start && b.travel_start < today)
               .sort((a: R, b: R) => b.travel_start.localeCompare(a.travel_start))[0];
+            const owes =
+              page === 'People & Families' &&
+              canSale &&
+              (p.roles ?? []).includes('customer')
+                ? partyCustomerOwes(bks, p.id)
+                : null;
             return (
               <div role="listitem" className="directory-row" key={p.id}>
                 <button className="directory-identity" onClick={() => openRecord('person', p.id)}>
@@ -4551,7 +7989,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   )}
                 </div>
                 <div className="directory-history">
-                  <strong>{linked.length} bookings</strong>
+                  <strong>
+                    {linked.length} {linked.length === 1 ? 'booking' : 'bookings'}
+                  </strong>
                   <small>
                     {upcoming
                       ? `Next: ${dateLabel(upcoming.travel_start)}`
@@ -4559,14 +7999,39 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                         ? `Last: ${dateLabel(past.travel_start)}`
                         : 'No dated travel in view'}
                   </small>
+                  {owes ? (
+                    <small
+                      style={{
+                        display: 'block',
+                        marginTop: 2,
+                        color:
+                          owes.owed_cents != null && owes.owed_cents > 0 ? '#ae8553' : undefined,
+                      }}
+                    >
+                      Owes {customerOwesListLabel(owes, money)}
+                    </small>
+                  ) : null}
                 </div>
-                <button
-                  className="icon-button"
-                  aria-label={`Open ${p.name}`}
-                  onClick={() => openRecord('person', p.id)}
-                >
-                  <ChevronRight size={16} />
-                </button>
+                <div className="directory-actions">
+                  <button
+                    type="button"
+                    className="btn small ghost"
+                    aria-label={`Copy link for ${p.name}`}
+                    onClick={() => {
+                      const path = workspaceRecordUrl('person', p.id);
+                      if (path) void copyWorkspacePath(path);
+                    }}
+                  >
+                    Copy link
+                  </button>
+                  <button
+                    className="icon-button"
+                    aria-label={`Open ${p.name}`}
+                    onClick={() => openRecord('person', p.id)}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -4586,23 +8051,34 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
       </>
     );
   } else if (page === 'Payments') {
-    const list = s.payments.filter((p: R) => filter === 'All' || p.direction === filter);
+    const directionFilters = [
+      'All',
+      'customer',
+      ...new Set<string>(
+        s.payments.filter((p: R) => p.direction !== 'customer').map((p: R) => p.direction),
+      ),
+    ];
+    const allocationFilter =
+      filter === 'Unallocated' || filter === 'Fully allocated' ? filter : 'All';
+    const directionFilter =
+      filter === 'Unallocated' || filter === 'Fully allocated' ? 'All' : filter;
+    const list = s.payments.filter(
+      (p: R) =>
+        (directionFilter === 'All' || p.direction === directionFilter) &&
+        paymentMatchesAllocationFilter(p, allocationFilter) &&
+        paymentMatchesSearch(p, paymentQuery),
+    );
+    const paymentDupPeers = possibleDuplicatePaymentPeers(s.payments);
     const activity = s.financialActivity ?? [];
     view = (
       <>
         {heading(
           'Payments',
-          'Enter once. Allocate across the right bookings.',
+          'Enter once. Allocate across the right bookings. Fully allocated receipts are not Pending. Looks-repeated flags same party·amount·method within a few days.',
           canPay && newButton('Add payment', 'payment'),
         )}
         <div className="toolbar">
-          {[
-            'All',
-            'customer',
-            ...new Set<string>(
-              s.payments.filter((p: R) => p.direction !== 'customer').map((p: R) => p.direction),
-            ),
-          ].map((v) => (
+          {[...directionFilters, 'Unallocated', 'Fully allocated'].map((v) => (
             <button
               className={`btn ${filter === v ? 'primary' : ''}`}
               key={v}
@@ -4615,6 +8091,22 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               {pretty(v)}
             </button>
           ))}
+        </div>
+        <div className="toolbar directory-toolbar">
+          <label className="directory-search" htmlFor="payments-search">
+            {' '}
+            <input
+              id="payments-search"
+              type="search"
+              aria-label="Search payments"
+              placeholder="Search party, reference or method…"
+              value={paymentQuery}
+              onChange={(e) => {
+                setPaymentQuery(e.target.value);
+                setTablePage(1);
+              }}
+            />
+          </label>
         </div>
         <div className="payments-stack">
           {(() => {
@@ -4697,10 +8189,23 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                       </thead>
                       <tbody>
                         {paymentPager.items.map((p: R) => (
-                          <tr key={p.id}>
+                          <tr
+                            key={p.id}
+                            id={`payment-row-${p.id}`}
+                            className={focusPaymentId === p.id ? 'is-focused' : undefined}
+                          >
                             <td>
                               <strong>{p.party}</strong>
                               <small>{p.id.slice(0, 8)}</small>
+                              {paymentLooksRepeated(p.id, paymentDupPeers) ? (
+                                <small>
+                                  <Badge tone="amber">
+                                    {paymentLooksRepeatedLabel(
+                                      paymentDupPeers.get(p.id)?.length ?? 0,
+                                    )}
+                                  </Badge>
+                                </small>
+                              ) : null}
                             </td>
                             <td>
                               <Badge
@@ -4721,23 +8226,42 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             </td>
                             <td className="money">{money(p.current_amount)}</td>
                             <td className="money">
-                              {['customer', 'supplier', 'commission'].includes(p.direction)
-                                ? money(
-                                    Number(p.current_amount) -
-                                      Number(p.allocated) -
-                                      Number(p.commission_allocated),
-                                  )
-                                : '—'}
+                              {paymentUnallocatedColumnLabel(p, money)}
+                              {paymentAllocationStatus(p) === 'cleared' ? (
+                                <small>Cleared</small>
+                              ) : null}
                             </td>
                             <td className="payments-actions">
-                              {canPay && ['customer', 'supplier'].includes(p.direction) && (
-                                <button
-                                  className="btn small"
-                                  onClick={() => action('allocate', { payment_id: p.id })}
-                                >
-                                  Allocate
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                className="btn small ghost"
+                                onClick={async () => {
+                                  const path = workspaceRecordUrl('payment', p.id);
+                                  await navigator.clipboard.writeText(
+                                    `${window.location.origin}${path}`,
+                                  );
+                                  setFocusPaymentId(p.id);
+                                  setToast('Payment link copied');
+                                  if (typeof window !== 'undefined') {
+                                    const next = path;
+                                    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                                    if (current !== next)
+                                      window.history.replaceState(null, '', next);
+                                  }
+                                }}
+                              >
+                                Copy link
+                              </button>
+                              {canPay &&
+                                ['customer', 'supplier'].includes(p.direction) &&
+                                paymentAllocationStatus(p) === 'open' && (
+                                  <button
+                                    className="btn small"
+                                    onClick={() => action('allocate', { payment_id: p.id })}
+                                  >
+                                    Allocate
+                                  </button>
+                                )}
                               {canPay &&
                                 (p.direction === 'customer' ||
                                   (p.direction === 'supplier' && can('manage_funding'))) && (
@@ -4776,20 +8300,133 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         </div>
       </>
     );
-  } else if (page === 'Travel Assets') {
-    const list = s.assets.filter((a: R) => filter === 'All' || a.kind === filter);
+  } else if (page === 'Trade desk') {
+    const incompleteTrades = canAssets
+      ? listTradesToComplete((s.assets as R[]) ?? []).filter((row) =>
+          tradeToCompleteMatchesSearch(row, tradeQuery),
+        )
+      : [];
+    view = (
+      <>
+        {heading(
+          'Trade desk',
+          'Buy or sell in about 10 seconds — Buy/Sell, What, Amount, Total price. Missing facts stay on To complete, never a popup.',
+          can('manage_assets') && (
+            <>
+              {newButton('New trade', 'trade', { side: 'Buy', stock_mode: 'for_booking' })}
+              <button type="button" className="btn ghost" onClick={() => go('Credits & points')}>
+                Credits & points
+              </button>
+            </>
+          ),
+        )}
+        {!canAssets ? (
+          <Empty>Trade desk access requires permission.</Empty>
+        ) : (
+          <>
+            <div className="toolbar directory-toolbar">
+              <label className="directory-search" htmlFor="trade-search">
+                {' '}
+                <input
+                  id="trade-search"
+                  type="search"
+                  aria-label="Search trades to complete"
+                  placeholder="Search trade name or missing fact…"
+                  value={tradeQuery}
+                  onChange={(e) => setTradeQuery(e.target.value)}
+                />
+              </label>
+            </div>
+            <Card title="Trades to complete" count={incompleteTrades.length}>
+              {incompleteTrades.length ? (
+                <ul className="trade-to-complete-list">
+                  {incompleteTrades.map((row) => (
+                    <li key={row.id}>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => openRecord('asset', row.id)}
+                      >
+                        {row.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        aria-label={`Copy link for ${row.name}`}
+                        onClick={() => {
+                          const path = workspaceRecordUrl('asset', row.id);
+                          if (path) void copyWorkspacePath(path);
+                        }}
+                      >
+                        Copy link
+                      </button>
+                      <small>To complete: {row.missing.join(' · ')}</small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <Empty>
+                  {tradeQuery.trim()
+                    ? 'No trades match this search.'
+                    : 'Nothing waiting. Layer-1 trades can leave counterparty blank — extras sit in More.'}
+                </Empty>
+              )}
+            </Card>
+          </>
+        )}
+      </>
+    );
+  } else if (page === 'Credits & points' || page === 'Travel Assets') {
+    const creditsPointsPage = page === 'Credits & points';
+    const scopedAssets = creditsPointsPage
+      ? filterCreditsAndPointsAssets(s.assets as R[])
+      : (s.assets as R[]);
+    const profileLinks = (s.sourceProfileAssets ?? []) as Array<{
+      profile_id?: string | null;
+      asset_id?: string | null;
+    }>;
+    const list = scopedAssets.filter(
+      (a: R) =>
+        (filter === 'All' || a.kind === filter) &&
+        assetMatchesCap1ProfileFilter(a.id, cap1ProfileFilter, profileLinks) &&
+        assetMatchesSearch(a, assetQuery),
+    );
     const assetPager = pageSlice<R>(list, tablePage, 12);
-    const expectedEvents = s.expectedEvents ?? [];
+    const expectedEvents = (s.expectedEvents ?? []).filter((e: R) =>
+      expectedEventMatchesSearch(e, expectedQuery),
+    );
     const expectedPager = pageSlice<R>(expectedEvents, expectedPage, 8);
     view = (
       <>
         {heading(
-          'Travel assets',
-          'Reusable value, with provenance and exact cost basis.',
-          can('manage_assets') && newButton('Buy travel asset', 'acquire_asset'),
+          creditsPointsPage ? 'Credits & points' : 'Travel assets',
+          creditsPointsPage
+            ? 'Balance per account and per batch — used, remaining, expiry, and history.'
+            : 'Reusable value, with provenance and exact cost basis.',
+          can('manage_assets') && (
+            <>
+              <button type="button" className="btn" onClick={() => go('Trade desk')}>
+                Trade desk
+              </button>
+              {newButton('New trade', 'trade', { side: 'Buy', stock_mode: 'for_booking' })}
+              {newButton(
+                creditsPointsPage ? 'Acquire points / credit' : 'Buy travel asset',
+                'acquire_asset',
+              )}
+              {creditsPointsPage ? (
+                <button type="button" className="btn ghost" onClick={() => go('Travel Assets')}>
+                  All travel assets
+                </button>
+              ) : (
+                <button type="button" className="btn ghost" onClick={() => go('Credits & points')}>
+                  Credits & points
+                </button>
+              )}
+            </>
+          ),
         )}
         <div className="toolbar">
-          {['All', ...new Set(s.assets.map((a: R) => a.kind))].map((v: any) => (
+          {['All', ...new Set(scopedAssets.map((a: R) => a.kind))].map((v: any) => (
             <button
               key={v}
               className={`btn ${filter === v ? 'primary' : ''}`}
@@ -4802,6 +8439,156 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           ))}
         </div>
+        <div className="toolbar directory-toolbar">
+          <label className="directory-search" htmlFor="assets-search">
+            {' '}
+            <input
+              id="assets-search"
+              type="search"
+              aria-label="Search credits and assets"
+              placeholder="Search name, issuer or kind…"
+              value={assetQuery}
+              onChange={(e) => {
+                setAssetQuery(e.target.value);
+                setTablePage(1);
+              }}
+            />
+          </label>
+        </div>
+        {canAssets &&
+          (() => {
+            const incompleteTrades = listTradesToComplete(scopedAssets as R[]);
+            if (!incompleteTrades.length) return null;
+            return (
+              <Card title="Trades to complete" count={incompleteTrades.length}>
+                <ul className="trade-to-complete-list">
+                  {incompleteTrades.map((row) => (
+                    <li key={row.id}>
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => openRecord('asset', row.id)}
+                      >
+                        {row.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        aria-label={`Copy link for ${row.name}`}
+                        onClick={() => {
+                          const path = workspaceRecordUrl('asset', row.id);
+                          if (path) void copyWorkspacePath(path);
+                        }}
+                      >
+                        Copy link
+                      </button>
+                      <small>To complete: {row.missing.join(' · ')}</small>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            );
+          })()}
+        {canAssets &&
+          (() => {
+            const profileRows = listCap1ProfileBalances(
+              s.bookingSourceProfiles ?? [],
+              s.sourceProfileAssets ?? [],
+              assetRows.map((a: R) => ({
+                id: a.id,
+                kind: a.kind,
+                balance: a.balance == null ? null : Number(a.balance),
+                voided: a.credit_status === 'voided' || a.voided === true,
+              })),
+            );
+            if (!profileRows.length) return null;
+            const selectedProfile = profileRows.find(
+              (r) => r.profile_id === cap1ProfileFilter,
+            );
+            return (
+              <Card title="Cap1 credit balances by profile" count={profileRows.length}>
+                <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                  Plan: remaining face per Cap1 account profile. Click a profile to filter the
+                  batches below. Incomplete when a linked credit balance is Unknown — never shown
+                  as $0.
+                </p>
+                {selectedProfile ? (
+                  <div className="toolbar" style={{ marginBottom: 8 }}>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      Showing credits for <strong>{selectedProfile.name}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      aria-label="Clear Cap1 profile filter"
+                      onClick={() => {
+                        setCap1ProfileFilter('All');
+                        setTablePage(1);
+                      }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ) : null}
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Profile</th>
+                        <th>Credits</th>
+                        <th className="money">Remaining</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {profileRows.map((row) => {
+                        const selected = cap1ProfileFilter === row.profile_id;
+                        return (
+                          <tr
+                            key={row.profile_id}
+                            className={selected ? 'is-focused' : undefined}
+                          >
+                            <td>
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                style={{ padding: 0, textAlign: 'left' }}
+                                aria-pressed={selected}
+                                aria-label={`Filter credits for ${row.name}`}
+                                onClick={() => {
+                                  setCap1ProfileFilter(
+                                    toggleCap1ProfileFilter(
+                                      cap1ProfileFilter,
+                                      row.profile_id,
+                                    ),
+                                  );
+                                  setTablePage(1);
+                                }}
+                              >
+                                <strong>{row.name}</strong>
+                              </button>
+                              {row.provider ? <small>{row.provider}</small> : null}
+                            </td>
+                            <td>{row.credit_count}</td>
+                            <td
+                              className="money"
+                              style={{
+                                color:
+                                  row.balance_cents != null && row.balance_cents > 0
+                                    ? '#2f6b4f'
+                                    : undefined,
+                              }}
+                            >
+                              {cap1ProfileBalanceLabel(row, money)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            );
+          })()}
         <div className="list-block">
         <div className="asset-grid">
           {assetPager.items.map((a: R) => (
@@ -4810,6 +8597,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 <span className="travel-icon">
                   {isPoints(a) ? <Coins size={19} /> : <Ticket size={19} />}
                 </span>
+                {isVoucherAsset(a.kind) && a.voucher_status ? (
+                  <Badge
+                    tone={
+                      a.voucher_status === 'expired' ||
+                      a.voucher_status === 'sold' ||
+                      a.voucher_status === 'used'
+                        ? 'amber'
+                        : 'green'
+                    }
+                  >
+                    {a.voucher_status}
+                  </Badge>
+                ) : null}
                 <Badge tone={a.ownership === 'Padova' ? '' : 'amber'}>{a.ownership}</Badge>
               </div>
               <button
@@ -4824,6 +8624,23 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 {a.issuer} · {a.kind}
               </p>
               <div className="balance">{assetQuantity(a, a.balance)}</div>
+              {isPoints(a) &&
+                (() => {
+                  const batch = pointsBatchSummary({
+                    remaining: a.balance == null ? null : Number(a.balance),
+                    remaining_basis_cents:
+                      a.remaining_basis == null ? null : Number(a.remaining_basis),
+                    opening:
+                      a.opening_quantity == null ? null : Number(a.opening_quantity),
+                  });
+                  return (
+                    <p style={{ fontSize: 12, marginTop: 4 }}>
+                      {pointsBatchListLabel(batch, (n) =>
+                        n.toLocaleString('en-US'),
+                      )}
+                    </p>
+                  );
+                })()}
               <p>
                 Remaining cost basis{' '}
                 <strong style={{ color: '#53685b' }}>{money(a.remaining_basis)}</strong>
@@ -4851,6 +8668,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 <button className="btn small" onClick={() => openRecord('asset', a.id)}>
                   Ledger
                 </button>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  aria-label={`Copy link for ${a.name}`}
+                  onClick={() => {
+                    const path = workspaceRecordUrl('asset', a.id);
+                    if (path) void copyWorkspacePath(path);
+                  }}
+                >
+                  Copy link
+                </button>
               </div>
             </div>
           ))}
@@ -4865,7 +8693,14 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           label="assets"
         />
         </div>
-        {!canAssets && <Empty>Travel Assets access requires permission.</Empty>}
+        {!canAssets && (
+          <Empty>
+            {creditsPointsPage ? 'Credits & points' : 'Travel Assets'} access requires permission.
+          </Empty>
+        )}
+        {creditsPointsPage && canAssets && !list.length ? (
+          <Empty>No credit or points balances yet. Acquire a batch or record a Cap1 credit.</Empty>
+        ) : null}
         {s.fulfillmentEnabled && can('manage_assets') && (
           <div className="detail-section list-block">
             <Card
@@ -4878,8 +8713,26 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   Expected value does not change inventory or profit. Post only the actual issuer
                   receipt.
                 </p>
+                <label className="directory-search" htmlFor="expected-events-search">
+                  {' '}
+                  <input
+                    id="expected-events-search"
+                    type="search"
+                    aria-label="Search pending transfers and rewards"
+                    placeholder="Search kind, reference or booking…"
+                    value={expectedQuery}
+                    onChange={(e) => {
+                      setExpectedQuery(e.target.value);
+                      setExpectedPage(1);
+                    }}
+                  />
+                </label>
                 {expectedPager.items.length === 0 ? (
-                  <Empty>No pending transfers or rewards to show.</Empty>
+                  <Empty>
+                    {expectedQuery.trim()
+                      ? 'No pending transfers or rewards match this search.'
+                      : 'No pending transfers or rewards to show.'}
+                  </Empty>
                 ) : (
                   <div className="expected-events-list">
                     {expectedPager.items.map((e: R) => {
@@ -4926,18 +8779,45 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               </div>
                             </div>
                           </div>
-                          {!['Denied', 'Reversed'].includes(status) && (
-                            <div className="expected-event-card-actions">
-                              <button
-                                className="btn small"
-                                onClick={() =>
-                                  action('update_expected_event', { event_id: e.id })
-                                }
-                              >
-                                Record issuer result
-                              </button>
-                            </div>
-                          )}
+                          {(() => {
+                            const bookingId = String(e.booking_id || '').trim();
+                            const share = expectedEventBookingSharePath(e);
+                            const canRecord = !['Denied', 'Reversed'].includes(status);
+                            if (!bookingId && !canRecord) return null;
+                            return (
+                              <div className="expected-event-card-actions">
+                                {bookingId ? (
+                                  <button
+                                    type="button"
+                                    className="btn small ghost"
+                                    onClick={() => openRecord('booking', bookingId)}
+                                  >
+                                    Open booking
+                                  </button>
+                                ) : null}
+                                {share ? (
+                                  <button
+                                    type="button"
+                                    className="btn small ghost"
+                                    aria-label="Copy link for booking"
+                                    onClick={() => void copyWorkspacePath(share)}
+                                  >
+                                    Copy link
+                                  </button>
+                                ) : null}
+                                {canRecord ? (
+                                  <button
+                                    className="btn small"
+                                    onClick={() =>
+                                      action('update_expected_event', { event_id: e.id })
+                                    }
+                                  >
+                                    Record issuer result
+                                  </button>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
                         </article>
                       );
                     })}
@@ -4958,7 +8838,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         )}
       </>
     );
-  } else if (page === 'Commissions') {
+  } else if (page === 'Expected commissions') {
     view = (
       <CommissionsPage
         commissions={s.commissions}
@@ -4966,12 +8846,17 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         referralPayments={s.referralPayments ?? []}
         referralTerms={s.referralTerms ?? []}
         referralPaymentAdjustments={s.referralPaymentAdjustments ?? []}
+        bookings={bks}
         canManage={can('manage_commissions')}
         canEditPayments={can('edit_payments')}
         payableTermsEnabled={s.payableTermsEnabled}
         today={s.today}
         action={action}
         openBooking={(id) => openRecord('booking', id)}
+        copyBookingLink={(id) => {
+          const path = calendarBookingSharePath(id);
+          if (path) void copyWorkspacePath(path);
+        }}
         newCommissionButton={
           can('manage_commissions') && newButton('Add commission', 'commission')
         }
@@ -4999,13 +8884,39 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             </button>
           ))}
         </div>
+        <div className="toolbar directory-toolbar">
+          <label className="directory-search" htmlFor="refunds-search">
+            {' '}
+            <input
+              id="refunds-search"
+              type="search"
+              aria-label="Search refunds"
+              placeholder="Search booking #, customer or reason…"
+              value={refundQuery}
+              onChange={(e) => {
+                setRefundQuery(e.target.value);
+                setTablePage(1);
+              }}
+            />
+          </label>
+        </div>
         {(() => {
-          const refundRows = s.refunds.filter(
-            (r: R) =>
-              filter === 'All' ||
-              Number(r.received) < Number(r.supplier_expected) ||
-              Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due),
-          );
+          const refundRows = s.refunds
+            .filter(
+              (r: R) =>
+                (filter === 'All' ||
+                  Number(r.received) < Number(r.supplier_expected) ||
+                  Number(r.paid) + Number(r.handed_over ?? 0) < Number(r.customer_due)) &&
+                refundMatchesSearch(r, refundQuery),
+            )
+            .slice()
+            .sort((a: R, b: R) =>
+              compareRefundFollowUpDue(
+                { due_on: a.due_on },
+                { due_on: b.due_on },
+                today,
+              ),
+            );
           const refundPager = pageSlice<R>(refundRows, tablePage, 12);
           return (
             <div className="list-block">
@@ -5015,6 +8926,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     <thead>
                       <tr>
                         <th>Booking / reason</th>
+                        <th>Follow-up</th>
                         <th>Customer</th>
                         {canRefunds && (
                           <>
@@ -5022,6 +8934,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             <th className="money">Supplier received</th>
                           </>
                         )}
+                        <th>Customer status</th>
                         <th className="money">Customer due</th>
                         <th className="money">Customer paid</th>
                         <th />
@@ -5029,7 +8942,11 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     </thead>
                     <tbody>
                       {refundPager.items.map((r: R) => (
-                        <tr key={r.id}>
+                        <tr
+                          key={r.id}
+                          id={`refund-row-${r.id}`}
+                          className={focusRefundId === r.id ? 'is-focused' : undefined}
+                        >
                           <td>
                             <button
                               className="booking-code"
@@ -5038,6 +8955,31 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               {r.code}
                             </button>
                             <small>{r.reason}</small>
+                            {r.call_notes_latest ? (
+                              <small>Call note: {r.call_notes_latest}</small>
+                            ) : null}
+                            {(() => {
+                              const cb = chargebackStatusLabel(
+                                parseChargebackStatus(r.reason) ||
+                                  parseChargebackStatus(r.call_notes_latest),
+                              );
+                              return cb ? <small>{cb}</small> : null;
+                            })()}
+                          </td>
+                          <td>
+                            {(() => {
+                              const due = refundFollowUpDueOn(r.due_on);
+                              if (!due) return <span className="muted">—</span>;
+                              const label = refundFollowUpUrgencyLabel(
+                                refundFollowUpUrgency(due, today),
+                              );
+                              return (
+                                <>
+                                  {dateLabel(due)}
+                                  {label ? <small>{label}</small> : null}
+                                </>
+                              );
+                            })()}
                           </td>
                           <td>{r.customer}</td>
                           {canRefunds && (
@@ -5049,9 +8991,31 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                               </td>
                             </>
                           )}
+                          <td>{customerRefundStatusLabel(customerRefundStatus(r))}</td>
                           <td className="money">{money(r.customer_due)}</td>
                           <td className="money">{money(r.paid)}</td>
-                          <td>
+                          <td className="payments-actions">
+                            <button
+                              type="button"
+                              className="btn small ghost"
+                              onClick={async () => {
+                                const path = workspaceRecordUrl('refund', r.id);
+                                await navigator.clipboard.writeText(
+                                  `${window.location.origin}${path}`,
+                                );
+                                setFocusRefundId(r.id);
+                                setFocusPaymentId(null);
+                                setFilter('All');
+                                setToast('Refund link copied');
+                                if (typeof window !== 'undefined') {
+                                  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                                  if (current !== path)
+                                    window.history.replaceState(null, '', path);
+                                }
+                              }}
+                            >
+                              Copy link
+                            </button>
                             {canRefunds && (
                               <>
                                 <button
@@ -5061,7 +9025,24 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                   onClick={() => action('receive_refund', { refund_id: r.id })}
                                 >
                                   Receive
-                                </button>{' '}
+                                </button>
+                                <button
+                                  className="btn small"
+                                  hidden={Number(r.received) >= Number(r.supplier_expected)}
+                                  disabled={!canAction('receive_refund')}
+                                  onClick={() =>
+                                    action('receive_refund', {
+                                      refund_id: r.id,
+                                      form: SUPPLIER_REFUND_DENIED_FORM,
+                                      amount: Math.max(
+                                        0,
+                                        Number(r.supplier_expected) - Number(r.received),
+                                      ),
+                                    })
+                                  }
+                                >
+                                  Deny supplier
+                                </button>
                                 <button
                                   className="btn small"
                                   hidden={
@@ -5072,6 +9053,19 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                   onClick={() => action('pay_refund', { refund_id: r.id })}
                                 >
                                   Pay customer
+                                </button>
+                                <button
+                                  className="btn small"
+                                  disabled={!canAction('note')}
+                                  onClick={() =>
+                                    action('note', {
+                                      call_note: true,
+                                      record_type: 'refund',
+                                      record_id: r.id,
+                                    })
+                                  }
+                                >
+                                  Call note
                                 </button>
                               </>
                             )}
@@ -5110,7 +9104,144 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           components={s.travelComponents ?? []}
           today={today}
           open={(id) => openRecord('booking', id)}
+          copyLink={async (id) => {
+            const path = calendarBookingSharePath(id);
+            if (!path) return;
+            await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+            setToast('Link copied');
+            if (typeof window !== 'undefined') {
+              const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+              if (current !== path) window.history.replaceState(null, '', path);
+            }
+          }}
         />
+      </>
+    );
+  } else if (page === 'To-do') {
+    const planTodos = planTodosAll;
+    const filteredTodos = filterPlanTodoList(planTodos, todoCategory).filter((item) =>
+      planTodoMatchesSearch(item, todoQuery),
+    );
+    const categoryCounts = (Object.keys(PLAN_TODO_CATEGORY_LABELS) as PlanTodoCategory[]).map(
+      (cat) => ({
+        cat,
+        count: planTodos.filter((i) => i.category === cat).length,
+      }),
+    );
+    view = (
+      <>
+        {heading(
+          'To-do',
+          'Refunds due, pending price matches, commissions, expiring credits, missing cost, unpaid balances.',
+          newButton('New task', 'task'),
+        )}
+        <div className="toolbar transactions-toolbar" role="group" aria-label="To-do category">
+          <button
+            type="button"
+            className={`btn ${todoCategory === 'All' ? 'primary' : ''}`}
+            onClick={() => setTodoCategory('All')}
+          >
+            All ({planTodos.length})
+          </button>
+          {categoryCounts
+            .filter((c) => c.count > 0 || c.cat !== 'other')
+            .map(({ cat, count }) => (
+              <button
+                type="button"
+                key={cat}
+                className={`btn ${todoCategory === cat ? 'primary' : ''}`}
+                onClick={() => setTodoCategory(cat)}
+              >
+                {PLAN_TODO_CATEGORY_LABELS[cat]}
+                {count ? ` (${count})` : ''}
+              </button>
+            ))}
+          <button type="button" className="btn ghost" onClick={() => go('Attention')}>
+            Needs attention <Badge tone="amber">{s.attention.length}</Badge>
+          </button>
+          <button type="button" className="btn ghost" onClick={() => go('Tasks')}>
+            Team tasks
+          </button>
+          <button type="button" className="btn ghost" onClick={() => go('Follow-up')}>
+            Operational views
+          </button>
+        </div>
+        <div className="toolbar directory-toolbar">
+          <label className="directory-search" htmlFor="todo-search">
+            {' '}
+            <input
+              id="todo-search"
+              type="search"
+              aria-label="Search to-do"
+              placeholder="Search title, detail or booking…"
+              value={todoQuery}
+              onChange={(e) => setTodoQuery(e.target.value)}
+            />
+          </label>
+        </div>
+        <Card title="To-do" count={filteredTodos.length}>
+          {!filteredTodos.length ? (
+            <Empty>Nothing in this To-do view right now.</Empty>
+          ) : (
+            <ul className="plain-list dashboard-todo-list">
+              {filteredTodos.map((item) => (
+                <li key={item.id} className="dashboard-todo-item">
+                  <button
+                    type="button"
+                    className="dashboard-todo-main"
+                    onClick={() => {
+                      if (item.booking_id) void openRecord('booking', item.booking_id);
+                      else if (item.record_type && item.record_id)
+                        void openRecord(item.record_type, item.record_id);
+                      else if (item.kind === 'task') go('Tasks');
+                      else {
+                        setFollowupSelected('Needs Attention');
+                        go('Follow-up');
+                      }
+                    }}
+                  >
+                    <strong>{item.title}</strong>
+                    <small>{PLAN_TODO_CATEGORY_LABELS[item.category]}</small>
+                    {item.detail ? <small>{item.detail}</small> : null}
+                    {item.due_on ? <small>Due {dateLabel(item.due_on)}</small> : null}
+                  </button>
+                  {planTodoRecordUrl(item) ? (
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const path = planTodoRecordUrl(item);
+                        if (!path) return;
+                        await navigator.clipboard.writeText(
+                          `${window.location.origin}${path}`,
+                        );
+                        setToast('Link copied');
+                        if (typeof window !== 'undefined') {
+                          const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                          if (current !== path)
+                            window.history.replaceState(null, '', path);
+                        }
+                      }}
+                    >
+                      Copy link
+                    </button>
+                  ) : null}
+                  {item.kind === 'task' && item.task_id ? (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      disabled={busy}
+                      onClick={() => action('complete_task', { task_id: item.task_id })}
+                    >
+                      Done
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
       </>
     );
   } else if (page === 'Follow-up') {
@@ -5126,6 +9257,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               r.booking_id ?? r.record_id,
             )
           }
+          copyLink={copyWorkspacePath}
         />
       </>
     );
@@ -5154,53 +9286,164 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           </button>
         </div>
         {page === 'Attention' ? (
-          <Card title="Open exceptions">
-            {s.attention.length ? (
-              attentionRows(s.attention)
-            ) : (
-              <Empty>All current exceptions have been resolved.</Empty>
-            )}
-          </Card>
+          <>
+            <div className="toolbar directory-toolbar">
+              <label className="directory-search" htmlFor="attention-search">
+                {' '}
+                <input
+                  id="attention-search"
+                  type="search"
+                  aria-label="Search attention"
+                  placeholder="Search title, detail or booking…"
+                  value={attentionQuery}
+                  onChange={(e) => setAttentionQuery(e.target.value)}
+                />
+              </label>
+            </div>
+            {(() => {
+              const filteredAttention = (s.attention as R[]).filter((a) =>
+                followupRowMatchesSearch(a, attentionQuery),
+              );
+              return (
+                <Card title="Open exceptions" count={filteredAttention.length}>
+                  {filteredAttention.length ? (
+                    attentionRows(filteredAttention)
+                  ) : (
+                    <Empty>
+                      {attentionQuery.trim()
+                        ? 'No exceptions match this search.'
+                        : 'All current exceptions have been resolved.'}
+                    </Empty>
+                  )}
+                </Card>
+              );
+            })()}
+          </>
         ) : (
-          <Card title="Team tasks" count={s.tasks.filter((t: R) => t.status === 'Open').length}>
-            {s.tasks.map((t: R) => (
-              <div className="attention-row" key={t.id}>
-                <button
-                  className="icon-button"
-                  disabled={t.status === 'Done' || busy}
-                  aria-label={
-                    t.status === 'Done' ? `Completed task: ${t.title}` : `Complete task: ${t.title}`
-                  }
-                  onClick={() => action('complete_task', { task_id: t.id })}
-                >
-                  <CheckCircle2 size={20} color={t.status === 'Done' ? '#69977b' : '#c6d0c9'} />
-                </button>
-                <div className="attention-text">
-                  <strong style={{ textDecoration: t.status === 'Done' ? 'line-through' : '' }}>
-                    {t.title}
-                  </strong>
-                  <small>
-                    {t.due_on ? `Due ${dateLabel(t.due_on)}` : 'No due date'} · {t.status}
-                    {t.assignee_id &&
-                      ` · ${s.staff.find((person: R) => person.id === t.assignee_id)?.name ?? 'Inactive staff member'}`}
-                    {t.notes && ` · ${t.notes}`}
-                  </small>
-                </div>
-                <Badge tone={t.priority === 'Normal' ? 'gray' : 'amber'}>{t.priority}</Badge>
-                <button
-                  className="btn ghost"
-                  onClick={() => action('update_task', { ...t, task_id: t.id })}
-                >
-                  Edit
-                </button>
-                {t.record_type === 'booking' && (
-                  <button className="btn ghost" onClick={() => openRecord('booking', t.record_id)}>
-                    Booking <ChevronRight size={12} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </Card>
+          <>
+            <div className="toolbar directory-toolbar">
+              <label className="directory-search" htmlFor="tasks-search">
+                {' '}
+                <input
+                  id="tasks-search"
+                  type="search"
+                  aria-label="Search team tasks"
+                  placeholder="Search title, notes or assignee…"
+                  value={taskQuery}
+                  onChange={(e) => setTaskQuery(e.target.value)}
+                />
+              </label>
+            </div>
+            {(() => {
+              const filteredTasks = (s.tasks as R[]).filter((t) =>
+                teamTaskMatchesSearch(
+                  {
+                    ...t,
+                    assignee_name: t.assignee_id
+                      ? (s.staff.find((person: R) => person.id === t.assignee_id)?.name ??
+                        'Inactive staff member')
+                      : null,
+                  },
+                  taskQuery,
+                ),
+              );
+              const openCount = filteredTasks.filter((t) => t.status === 'Open').length;
+              return (
+                <Card title="Team tasks" count={openCount}>
+                  {!filteredTasks.length ? (
+                    <Empty>No team tasks match this search.</Empty>
+                  ) : (
+                    filteredTasks.map((t: R) => (
+                      <div className="attention-row" key={t.id}>
+                        <button
+                          className="icon-button"
+                          disabled={t.status === 'Done' || busy}
+                          aria-label={
+                            t.status === 'Done'
+                              ? `Completed task: ${t.title}`
+                              : `Complete task: ${t.title}`
+                          }
+                          onClick={() => action('complete_task', { task_id: t.id })}
+                        >
+                          <CheckCircle2
+                            size={20}
+                            color={t.status === 'Done' ? '#69977b' : '#c6d0c9'}
+                          />
+                        </button>
+                        <div className="attention-text">
+                          <strong
+                            style={{
+                              textDecoration: t.status === 'Done' ? 'line-through' : '',
+                            }}
+                          >
+                            {t.title}
+                          </strong>
+                          <small>
+                            {t.due_on ? `Due ${dateLabel(t.due_on)}` : 'No due date'} · {t.status}
+                            {t.assignee_id &&
+                              ` · ${s.staff.find((person: R) => person.id === t.assignee_id)?.name ?? 'Inactive staff member'}`}
+                            {t.notes && ` · ${t.notes}`}
+                          </small>
+                        </div>
+                        <Badge tone={t.priority === 'Normal' ? 'gray' : 'amber'}>
+                          {t.priority}
+                        </Badge>
+                        <button
+                          className="btn ghost"
+                          onClick={() => action('update_task', { ...t, task_id: t.id })}
+                        >
+                          Edit
+                        </button>
+                        {(() => {
+                          const sharePath = planTodoRecordUrl({
+                            booking_id:
+                              t.record_type === 'booking' ? t.record_id : undefined,
+                            record_type: t.record_type,
+                            record_id: t.record_id,
+                          });
+                          if (!sharePath) return null;
+                          return (
+                            <>
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                onClick={() =>
+                                  void openRecord(
+                                    t.record_type === 'booking' ? 'booking' : t.record_type,
+                                    t.record_id,
+                                  )
+                                }
+                              >
+                                {t.record_type === 'booking' ? 'Booking' : 'Open'}{' '}
+                                <ChevronRight size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                className="btn small ghost"
+                                onClick={async () => {
+                                  await navigator.clipboard.writeText(
+                                    `${window.location.origin}${sharePath}`,
+                                  );
+                                  setToast('Link copied');
+                                  if (typeof window !== 'undefined') {
+                                    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                                    if (current !== sharePath)
+                                      window.history.replaceState(null, '', sharePath);
+                                  }
+                                }}
+                              >
+                                Copy link
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    ))
+                  )}
+                </Card>
+              );
+            })()}
+          </>
         )}
         {page === 'Attention' && s.travelerReview && (
           <Card title="Traveler source review" count={s.travelerReview.remaining}>
@@ -5367,11 +9610,22 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
     const cash = s.cashMovements
       .filter((m: R) => m.effective_on.slice(0, 7) === month)
       .reduce((a: number, m: R) => a + Number(m.amount), 0);
+    const reportYear = Number(month.slice(0, 4)) || new Date().getFullYear();
+    const profitByMonth = canTotalProfit
+      ? buildProfitByMonth(
+          bks.map((b) => ({
+            booked_on: b.booked_on,
+            created_at: b.created_at,
+            profit: b.profit == null ? null : Number(b.profit),
+            reservation_status: b.reservation_status,
+          })),
+        )
+      : [];
     view = (
       <>
         {heading(
           'Accounting & profit',
-          'Current booking economics and dated financial movements.',
+          'On-demand reports. Company totals are Owner-only.',
           <input
             aria-label="Reporting month"
             type="month"
@@ -5399,6 +9653,106 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 <p className="subtitle">Actual receipts less actual payments</p>
               </div>
             </div>
+            {canTotalProfit && (
+              <>
+                <Card
+                  title="Profit by month"
+                  action={
+                    <button
+                      className="btn ghost"
+                      onClick={() =>
+                        downloadCSV(
+                          yearEndFileNames(reportYear).profit_by_month,
+                          profitByMonth.map((r) => ({ ...r })),
+                        )
+                      }
+                    >
+                      <Download size={13} />
+                      Export CSV
+                    </button>
+                  }
+                >
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Month</th>
+                          <th className="money">Bookings</th>
+                          <th className="money">Confirmed profit</th>
+                          <th className="money">Incomplete</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {profitByMonth.map((r) => (
+                          <tr key={r.month}>
+                            <td>{r.month}</td>
+                            <td className="money">{r.booking_count}</td>
+                            <td className="money">
+                              {r.confirmed_profit_usd === 'incomplete'
+                                ? 'Incomplete'
+                                : `$${r.confirmed_profit_usd}`}
+                            </td>
+                            <td className="money">{r.incomplete_bookings}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {!profitByMonth.length && (
+                    <Empty>No booked months with profit data yet.</Empty>
+                  )}
+                  <p className="subtitle" style={{ marginTop: 10 }}>
+                    Incomplete months keep Unknown profit — never shown as $0.
+                  </p>
+                </Card>
+                <Card
+                  title={`Year-end accountant pack · ${reportYear}`}
+                  action={
+                    <button
+                      className="btn ghost"
+                      onClick={() => {
+                        const pack = buildYearEndExportPack({
+                          year: reportYear,
+                          bookings: bks,
+                          payments: s.payments ?? [],
+                          commissions: s.commissions ?? [],
+                          referrals: s.referrals ?? [],
+                          referralPayments: s.referralPayments ?? [],
+                        });
+                        const names = yearEndFileNames(reportYear);
+                        const files: [string, Record<string, string>[]][] = [
+                          [names.bookings, pack.bookings],
+                          [names.payments, pack.payments],
+                          [names.commissions, pack.commissions],
+                          [names.referrer_payments, pack.referrer_payments],
+                        ];
+                        for (const [name, rows] of files) {
+                          if (rows.length) downloadCSV(name, rows);
+                          else
+                            downloadText(
+                              name,
+                              rowsToCsv([
+                                {
+                                  note: `No ${name.replace(`padova-${reportYear}-`, '').replace('.csv', '')} rows for ${reportYear}`,
+                                },
+                              ]),
+                            );
+                        }
+                        setToast(`Downloaded ${reportYear} accountant CSVs (open in Excel).`);
+                      }}
+                    >
+                      <Download size={13} />
+                      Download CSVs
+                    </button>
+                  }
+                >
+                  <p className="subtitle">
+                    Bookings, payments, commissions, and referrer payments for the year of the
+                    month picker. CSV opens in Excel. Staff accounts do not see this pack.
+                  </p>
+                </Card>
+              </>
+            )}
             <Card
               title="Monthly financial movements"
               action={
@@ -5488,28 +9842,75 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           'Activity history',
           'Attributed, chronological events. Financial history is append-only.',
         )}
+        <div className="toolbar directory-toolbar">
+          <label className="directory-search" htmlFor="activity-search">
+            {' '}
+            <input
+              id="activity-search"
+              type="search"
+              aria-label="Search activity"
+              placeholder="Search summary, actor or source…"
+              value={activityQuery}
+              onChange={(e) => {
+                setActivityQuery(e.target.value);
+                setTablePage(1);
+              }}
+            />
+          </label>
+        </div>
         {(() => {
-          const activityPager = pageSlice<R>(s.audit, tablePage, 12);
+          const filteredAudit = (s.audit as R[]).filter((a) =>
+            auditMatchesSearch(a, activityQuery),
+          );
+          const activityPager = pageSlice<R>(filteredAudit, tablePage, 12);
           return (
             <div className="list-block">
-              <Card title="Recent events" count={s.audit.length}>
+              <Card title="Recent events" count={filteredAudit.length}>
                 {activityPager.items.map((a: R) => (
                   <div className="activity" key={a.id}>
                     <span className="activity-dot" />
                     <div>
                       <strong>{a.summary || pretty(a.kind)}</strong>
                       <p>
-                        {new Date(a.created_at).toLocaleString()} · {a.actor_name ?? a.actor}
+                        {dateTimeLabel(a.created_at)} · {a.actor_name ?? a.actor}
+                        {a.source_label ? (
+                          <>
+                            {' · '}
+                            <Badge
+                              tone={
+                                a.source_channel === 'whatsapp' || a.source_channel === 'email'
+                                  ? 'blue'
+                                  : a.source_channel === 'import'
+                                    ? 'amber'
+                                    : 'gray'
+                              }
+                            >
+                              {a.source_label}
+                            </Badge>
+                          </>
+                        ) : null}
                       </p>
-                      {bks.some((b) => b.id === a.record_id) && (
-                        <button
-                          className="btn ghost"
-                          style={{ marginTop: 8 }}
-                          onClick={() => openRecord('booking', a.record_id)}
-                        >
-                          Open booking <ArrowRight size={12} />
-                        </button>
-                      )}
+                      {bks.some((b) => b.id === a.record_id) ? (
+                        <div className="activity-actions" style={{ marginTop: 8 }}>
+                          <button
+                            className="btn ghost"
+                            onClick={() => openRecord('booking', a.record_id)}
+                          >
+                            Open booking <ArrowRight size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn small ghost"
+                            aria-label="Copy shareable link"
+                            onClick={() => {
+                              const path = calendarBookingSharePath(a.record_id);
+                              if (path) void copyWorkspacePath(path);
+                            }}
+                          >
+                            Copy link
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -5605,6 +10006,45 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         )}
         {can('manage_settings') && (
           <div className="detail-section" style={{ marginTop: 22 }}>
+            <Card title="Card fee defaults">
+              <div className="section-body">
+                <ul className="plain-list">
+                  <li>
+                    Customer card fee:{' '}
+                    {(Number(s.feeSettings?.customer_card_fee_bps ?? 290) / 100).toFixed(2)}%
+                    pass-through
+                  </li>
+                  <li>
+                    Padova card cost:{' '}
+                    {(Number(s.feeSettings?.padova_card_fee_bps ?? 270) / 100).toFixed(2)}% +{' '}
+                    {money(s.feeSettings?.padova_card_fee_flat_cents ?? 30)}
+                  </li>
+                  {!s.feeSettingsEnabled && (
+                    <li>
+                      Using Plan defaults in this workspace until the fee-settings extension is
+                      installed. Values still guide booking Card fee suggestions.
+                    </li>
+                  )}
+                </ul>
+                <button
+                  className="btn"
+                  disabled={!s.feeSettingsEnabled}
+                  onClick={() =>
+                    action('update_fee_settings', {
+                      customer_card_fee_bps: s.feeSettings?.customer_card_fee_bps ?? 290,
+                      padova_card_fee_bps: s.feeSettings?.padova_card_fee_bps ?? 270,
+                      padova_card_fee_flat_cents: s.feeSettings?.padova_card_fee_flat_cents ?? 30,
+                    })
+                  }
+                >
+                  Edit card fee defaults
+                </button>
+              </div>
+            </Card>
+          </div>
+        )}
+        {can('manage_settings') && (
+          <div className="detail-section" style={{ marginTop: 22 }}>
             <Card title="Workspace & backup administration">
               <div className="section-body">
                 <button className="btn" onClick={() => action('payment_account')}>
@@ -5671,8 +10111,8 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
         {nav
           .filter(([name]) =>
             [
-              'Dashboard',
               'Bookings',
+              'Dashboard',
               'People & Families',
               'Companies',
               'Suppliers',
@@ -5687,11 +10127,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               onClick={() => go(name)}
             >
               <I />
-              {name === 'Bookings'
-                ? 'Transactions'
-                : name === 'People & Families'
-                  ? 'People'
-                  : name}
+              {name === 'People & Families' ? 'Customers' : name}
             </button>
           ))}
         <div className="nav-label">FINANCE & OPERATIONS</div>
@@ -5711,28 +10147,30 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               ].includes(name),
           )
           .filter(([name]) =>
-            name === 'Travel Assets'
-              ? canAssets
-              : name === 'Commissions'
-                ? canCommissions
-                : name === 'Refunds'
-                  ? canRefunds
-                  : name === 'Accounting'
-                    ? finance || canTotalProfit
-                    : true,
+            name === 'Tasks'
+              ? false
+              : name === 'Travel Assets'
+                ? false
+                : name === 'Credits & points' || name === 'Trade desk'
+                  ? canAssets
+                  : name === 'Expected commissions'
+                    ? canCommissions
+                    : name === 'Refunds'
+                      ? canRefunds
+                      : name === 'Accounting'
+                        ? finance || canTotalProfit
+                        : true,
           )
           .map(([name, I]) => (
             <button
               key={name}
-              className={`nav-item ${page === name ? 'active' : ''}`}
+              className={`nav-item ${page === name || (name === 'To-do' && page === 'Tasks') ? 'active' : ''}`}
               onClick={() => go(name)}
             >
               <I />
               {name}
-              {name === 'Tasks' && taskRows.filter((t: R) => t.status === 'Open').length > 0 && (
-                <span className="nav-count">
-                  {taskRows.filter((t: R) => t.status === 'Open').length}
-                </span>
+              {name === 'To-do' && planTodosAll.length > 0 && (
+                <span className="nav-count">{planTodosAll.length}</span>
               )}
             </button>
           ))}
@@ -5786,11 +10224,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             <b>
               {selected
                 ? 'Record details'
-                : page === 'Bookings'
-                  ? 'Transactions'
-                  : page === 'People & Families'
-                    ? 'People'
-                    : page}
+                : page === 'People & Families'
+                  ? 'Customers'
+                  : page}
             </b>
           </div>
           <div className="top-right">
@@ -5798,7 +10234,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               <Search size={15} color="#9ca69f" />
               <input
                 aria-label="Global search"
-                placeholder="Search people, bookings, PNRs…"
+                placeholder="Search customers, bookings, PNRs, tickets…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -5820,11 +10256,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                     section={
                       selected
                         ? 'Record details'
-                        : page === 'Bookings'
-                          ? 'Transactions'
-                          : page === 'People & Families'
-                            ? 'People'
-                            : page
+                        : page === 'People & Families'
+                          ? 'Customers'
+                          : page
                     }
                     booking={detail?.booking?.code ?? detail?.code ?? selected?.id ?? ''}
                   />
@@ -5847,7 +10281,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                   setDetail(null);
                   setModal(null);
                   setQuery('');
-                  setPage('Dashboard');
+                  setPage(WORKSPACE_HOME_PAGE);
                 }}
               >
                 <LogOut size={16} />
@@ -5906,6 +10340,55 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
               </span>
             </div>
           )}
+          {recoveryOffer && !(modal?.kind === 'booking' && modal?.key === recoveryOffer.commandKey) ? (
+            <div className="demo-banner recovery-offer-banner" role="status">
+              <strong>Unfinished booking on this device</strong>
+              <span>
+                Not opened automatically (Plan). Continue when ready
+                {recoveryOffer.hasPaste ? ' — paste is still saved' : ''}. Discard clears only this
+                device draft — nothing was posted.
+              </span>
+              <div className="recovery-offer-actions">
+                <button
+                  type="button"
+                  className="btn primary small"
+                  onClick={() => {
+                    const draft = readBookingRecovery(s.actor.id);
+                    if (!draft || draft.commandKey !== recoveryOffer.commandKey) {
+                      setRecoveryOffer(null);
+                      return;
+                    }
+                    setModal({
+                      kind: 'booking',
+                      key: draft.commandKey,
+                      defaults: bookingRecoveryContinueDefaults(draft),
+                    });
+                  }}
+                >
+                  Continue
+                </button>
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={async () => {
+                    const ok = await askConfirm({
+                      title: 'Discard unfinished booking?',
+                      message:
+                        'Clears the draft saved on this device only. Nothing was posted to the books.',
+                      confirmLabel: 'Discard',
+                    });
+                    if (!ok) return;
+                    clearBookingRecovery(s.actor.id);
+                    clearBookingRecoverySnooze(s.actor.id);
+                    setRecoveryOffer(null);
+                    setToast('Unfinished booking discarded on this device.');
+                  }}
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
           {view}
@@ -5943,7 +10426,6 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                 type="button"
                 className="icon-button"
                 aria-label="Close intake draft"
-                disabled={intakeBusy}
                 onClick={() => closeIntake()}
               >
                 <X size={16} />
@@ -5962,7 +10444,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             ? `Reading ${intakeFile.name}…`
                             : 'Working…'}
                       </strong>
-                      <span>Escape is disabled until this finishes</span>
+                      <span>Press Escape to cancel</span>
                     </div>
                   )}
                   <div className="intake-preview-left">
@@ -6096,7 +10578,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                             const remapping = intakeRemapRow === row.id;
                             const remapped = selected !== undefined;
                             const required = INTAKE_REQUIRED_ROWS.has(row.id);
-                            const needsAttention = row.status === 'missing' && required;
+                            const needsAttention =
+                              (row.status === 'missing' || row.status === 'confirm') &&
+                              required;
                             return (
                               <li
                                 key={row.id}
@@ -6111,7 +10595,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                       ) : null}
                                     </strong>
                                     {(row.sourceLabel || row.sourceHint) &&
-                                    row.status === 'found' ? (
+                                    (row.status === 'found' || row.status === 'confirm') ? (
                                       <small>
                                         {row.sourceLabel ? `from “${row.sourceLabel}”` : ''}
                                         {row.sourceLabel && row.sourceHint ? ' · ' : ''}
@@ -6123,11 +10607,9 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
                                     <span className="intake-preview-value">{row.value}</span>
                                     <span
                                       className="intake-preview-mark"
-                                      aria-label={
-                                        row.status === 'found' ? 'Found' : 'Missing'
-                                      }
+                                      aria-label={intakePreviewMarkLabel(row.status)}
                                     >
-                                      {row.status === 'found' ? '✓' : '!'}
+                                      {intakePreviewMark(row.status)}
                                     </span>
                                     <button
                                       type="button"
@@ -6541,12 +11023,212 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
           </div>
         </div>
       )}
+      {invoicePreview && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setInvoicePreview(null)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Invoice preview"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <h2>Invoice preview · {invoicePreview.preview.customer_name}</h2>
+              <button type="button" className="btn" onClick={() => setInvoicePreview(null)}>
+                Close
+              </button>
+            </div>
+            <p className="note">
+              Save as draft for Owner approve → mark sent. Nothing emails the customer
+              automatically. Owner sample layout still ☐ open.
+            </p>
+            {invoicePreview.preview.incomplete && (
+              <p className="note">Some line amounts are unknown — total is incomplete.</p>
+            )}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Line</th>
+                    <th className="money">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoicePreview.preview.lines.map((line, i) => (
+                    <tr key={`${line.kind}-${i}`}>
+                      <td>
+                        {line.kind === 'total' ? <strong>{line.label}</strong> : line.label}
+                      </td>
+                      <td className="money">
+                        {line.amount_cents == null ? 'Unknown' : money(line.amount_cents)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {invoicePreview.preview.payment && (
+              <div className="note" style={{ marginTop: 12 }}>
+                <div className="detail-label">Payment receipt</div>
+                {formatInvoicePaymentReceiptLines(invoicePreview.preview.payment).map((row) => (
+                  <div key={row}>{row}</div>
+                ))}
+              </div>
+            )}
+            <div className="modal-actions" style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={invoiceBusy || !can('view_sale_price')}
+                onClick={() => {
+                  void (async () => {
+                    setInvoiceBusy(true);
+                    try {
+                      await command('invoice_draft', {
+                        customer_id: invoicePreview.customer_id,
+                        customer_name: invoicePreview.preview.customer_name,
+                        lines: invoicePreview.preview.lines,
+                        total_cents: invoicePreview.preview.total_cents,
+                        incomplete: invoicePreview.preview.incomplete,
+                        note: '',
+                      });
+                      setInvoicePreview(null);
+                      setToast('Invoice draft saved. Owner can approve, then mark sent.');
+                      await refresh();
+                      if (selected) await openRecord(selected.type, selected.id);
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setInvoiceBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {invoiceBusy ? 'Saving…' : 'Save draft'}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await navigator.clipboard.writeText(
+                        formatInvoicePreviewPlainText(invoicePreview.preview),
+                      );
+                      setToast('Invoice text copied — paste into WhatsApp or email yourself.');
+                    } catch {
+                      setToast('Could not copy invoice text.');
+                    }
+                  })();
+                }}
+              >
+                Copy text
+              </button>
+              <button type="button" className="btn" onClick={() => setInvoicePreview(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {statementPreview && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setStatementPreview(null)}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-label="Customer statement preview"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <h2>Statement · {statementPreview.customer_name}</h2>
+              <button type="button" className="btn" onClick={() => setStatementPreview(null)}>
+                Close
+              </button>
+            </div>
+            <p className="note">
+              On-demand statement across bookings and payments as of{' '}
+              {dateLabel(statementPreview.as_of)}. Preview only — nothing emails automatically.
+              Owner sample layout still ☐ open.
+            </p>
+            {statementPreview.incomplete && (
+              <p className="note">Some amounts are unknown — statement is incomplete.</p>
+            )}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th className="money">Charge</th>
+                    <th className="money">Payment</th>
+                    <th className="money">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statementPreview.lines.map((line, i) => (
+                    <tr key={`${line.date}-${i}`}>
+                      <td>{line.date ? dateLabel(line.date) : '—'}</td>
+                      <td>{line.label}</td>
+                      <td className="money">
+                        {line.charge_cents == null ? '—' : money(line.charge_cents)}
+                      </td>
+                      <td className="money">
+                        {line.payment_cents == null ? '—' : money(line.payment_cents)}
+                      </td>
+                      <td className="money">
+                        {line.balance_cents == null ? 'Unknown' : money(line.balance_cents)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="statement-balance" style={{ marginTop: 12 }}>
+              <span>Closing balance</span>
+              <span>
+                {statementPreview.closing_balance_cents == null
+                  ? 'Unknown'
+                  : money(statementPreview.closing_balance_cents)}
+              </span>
+            </div>
+            <div className="modal-actions" style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await navigator.clipboard.writeText(
+                        formatCustomerStatementPlainText(statementPreview),
+                      );
+                      setToast('Statement text copied — paste into WhatsApp or email yourself.');
+                    } catch {
+                      setToast('Could not copy statement text.');
+                    }
+                  })();
+                }}
+              >
+                Copy text
+              </button>
+              <button type="button" className="btn" onClick={() => setStatementPreview(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {modal && (
         <CommandForm
           key={modal.key}
           config={modal}
           state={s}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            setModal(null);
+            refreshRecoveryOffer();
+          }}
           onCreateParty={async (data: R, key: string) => {
             // Party create merges into booking local state — skip full /api/state wait.
             return command('party', data, key);
@@ -6561,6 +11243,7 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
             const r = await command(modal.kind, data, modal.key);
             await refresh();
             setModal(null);
+            refreshRecoveryOffer();
             if (modal.kind === 'booking') {
               await openRecord('booking', r.id);
               if (canAction('commission')) {
@@ -6589,6 +11272,15 @@ export default function Workspace({ synthetic = false }: { synthetic?: boolean }
   );
 }
 
+function downloadText(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function downloadCSV(name: string, rows: R[]) {
   if (!rows.length) return;
   const keys = Object.keys(rows[0]),
@@ -6597,10 +11289,5 @@ function downloadCSV(name: string, rows: R[]) {
     keys.map(cell).join(','),
     ...rows.map((r) => keys.map((k) => cell(r[k])).join(',')),
   ].join('\r\n');
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadText(name, text);
 }

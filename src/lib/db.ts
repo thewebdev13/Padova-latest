@@ -205,6 +205,12 @@ export async function migrate(db: Database) {
       '022_partnership_refresh',
       '023_hotel_directory',
       '024_commission_iata_partner',
+      '025_fee_settings',
+      '026_invoice_drafts',
+      '027_held_reservation_status',
+      '028_booking_relations',
+      '029_referral_payable_confirmed',
+      '030_invoice_send_fields',
     ]) {
       if (
         !(await tx.query('SELECT version FROM schema_migrations WHERE version=$1', [version])).rows

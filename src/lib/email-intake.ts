@@ -19,6 +19,7 @@ import {
   refreshGmailAccessToken,
   refreshTokenForMailbox,
 } from './email-gmail';
+import { BOOKING_DRAFT_SOFT_DELETED_SQL } from './booking-draft-soft-delete';
 import { execute } from './finance';
 import type { Actor } from './permissions';
 
@@ -246,7 +247,8 @@ export async function resolveEmailIntakeActor(
 
 async function draftExistsForGmailMessage(db: Database, messageId: string) {
   const filename = `email:${messageId}`;
-  // Soft-deleted drafts (booking_draft_delete) do not block a fresh poll.
+  // Soft-deleted drafts (latest command = booking_draft_delete) do not block a fresh poll.
+  // Restored drafts block again (Plan: remove-from-view undo).
   const row = (
     await db.query(
       `SELECT d.id FROM booking_drafts d
@@ -254,11 +256,7 @@ async function draftExistsForGmailMessage(db: Database, messageId: string) {
            entry->'intake_provenance'->>'filename' = $1
            OR entry->'intake_provenance'->>'filename' LIKE $2
          )
-         AND NOT EXISTS(
-           SELECT 1 FROM commands c
-           WHERE c.kind='booking_draft_delete' AND c.result IS NOT NULL
-             AND c.payload->>'draft_id'=d.id::text
-         )
+         AND NOT (${BOOKING_DRAFT_SOFT_DELETED_SQL})
        LIMIT 1`,
       [filename, `${filename}:%`],
     )

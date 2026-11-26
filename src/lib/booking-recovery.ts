@@ -88,16 +88,48 @@ export function isBookingRecoveryAutoOpenSnoozed(actorId: string, storage?: Stor
 }
 
 /**
- * Auto-open on load only for unfinished *new* bookings.
- * Skip server Continue Draft rows (re-open from Drafts) and same-tab Cancel snooze.
+ * Plan v1: unfinished booking must NOT auto-popup on load.
+ * Recovery data may still exist for an explicit Continue action; Drafts list is the reopen path.
  */
 export function shouldAutoOpenBookingRecovery(
-  actorId: string,
-  draft: BookingRecovery | null,
-  session?: Store,
+  _actorId: string,
+  _draft: BookingRecovery | null,
+  _session?: Store,
 ): boolean {
-  if (!draft || draft.actorId !== actorId) return false;
-  if (isServerDraftRecovery(draft)) return false;
-  if (isBookingRecoveryAutoOpenSnoozed(actorId, session)) return false;
-  return true;
+  return false;
+}
+
+export type LocalBookingRecoveryOffer = {
+  commandKey: string;
+  savedAt: string;
+  hasPaste: boolean;
+};
+
+/**
+ * Plan Do-now: never auto-open; surface a Continue/Discard offer for local unfinished
+ * recovery only. Server drafts (`draft_id`) stay on the Drafts list — not this banner.
+ */
+export function localBookingRecoveryOffer(
+  actorId: string,
+  draft: BookingRecovery | null | undefined,
+): LocalBookingRecoveryOffer | null {
+  if (!draft || draft.actorId !== actorId) return null;
+  if (isServerDraftRecovery(draft)) return null;
+  if (!draft.commandKey) return null;
+  return {
+    commandKey: draft.commandKey,
+    savedAt: String(draft.savedAt || ''),
+    hasPaste: Boolean(String(draft.paste || '').trim()),
+  };
+}
+
+/** Defaults for Continue unfinished — never invents booking money fields. */
+export function bookingRecoveryContinueDefaults(draft: BookingRecovery): Data {
+  return {
+    ...draft.values,
+    components: draft.components,
+    pending_traveler: draft.traveler,
+    recovery_paste: draft.paste,
+    resume_recovery: true,
+  };
 }

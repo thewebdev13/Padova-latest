@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BOOKING_DOCUMENT_KINDS } from './booking-documents';
 import { flightSegment, pricingSchema } from './v1-entry';
 
 const uuid = z.string().uuid();
@@ -31,6 +32,16 @@ export const entryComponent = z.object({
   quantity: cents.positive().optional(),
   unit: z.enum(['money', 'points', 'count']).default('money'),
   cost: cents.optional(),
+  /** Plan: USD not final (e.g. hotel billed in EUR later). Does not post as confirmed cost. */
+  cost_is_estimate: z.boolean().optional(),
+  /** Plan: other currency note — information only; never changes profit math. */
+  other_currency: z
+    .object({
+      code: z.string().trim().min(1).max(12),
+      amount: z.string().trim().max(40).optional(),
+      rate: z.string().trim().max(40).optional(),
+    })
+    .optional(),
   paid: cents.optional(),
   method: label.optional(),
   account_id: uuid.nullish(),
@@ -91,6 +102,47 @@ export const operationalEntry = z.object({
     })
     .optional(),
   draft_id: uuid.optional(),
+  /** Plan Held PNR ticketing deadline (YYYY-MM-DD). */
+  ticketing_deadline: z.iso.date().optional().nullable(),
+  /** Plan v1 How-booked preset (drives cost fields; Cap1 portal card may omit Padova card). */
+  how_booked: z
+    .enum([
+      'Cash / GDS',
+      'Capital One',
+      'Points (Padova-owned)',
+      'Outside seller',
+      'Hotel with commission',
+      'Voucher / credit',
+      'Hotel at program rate (FHR)',
+      'Other',
+    ])
+    .optional(),
+  /** FHR / program-rate hotel: program name (e.g. FHR) — More only; never invent. */
+  program_rate_name: z.string().trim().max(200).optional(),
+  /** FHR / program-rate hotel: short perks note (breakfast, credit, upgrade). */
+  program_perks: z.string().trim().max(500).optional(),
+  /**
+   * FHR More: Amex credit or points gained (default none).
+   * Information only — never counted as Padova income.
+   */
+  program_benefit_gained: z.string().trim().max(500).optional(),
+  /**
+   * Optional per-traveler / per-flight price note (Plan).
+   * One booking keeps one customer total — this never splits sale or invents dollars.
+   * Blank = omit; never required or shown by default.
+   */
+  price_breakdown_note: z.string().trim().max(1000).optional(),
+  /** Plan: hotel with commission — how the hotel is paid (four ways). */
+  hotel_paid_by: z
+    .enum([
+      'Padova card',
+      'Customer card (Padova prepays)',
+      'Customer pays at checkout',
+      'Split',
+    ])
+    .optional(),
+  /** Plan Cash / GDS: fare commissionable yes/no (drives 50/50 vs optional $50 PNR). */
+  gds_commissionable: z.enum(['Yes', 'No', 'Unknown']).optional(),
   /** How the booking was captured: whatsapp | email | staff_paste | staff_upload | manual. */
   intake_source: z
     .enum(['whatsapp', 'email', 'staff_paste', 'staff_upload', 'instinct', 'manual'])
@@ -143,6 +195,99 @@ export const operationalEntry = z.object({
     .optional(),
   // Partnership org with accepted agreement + accounting party — creates Commission Payable in one place.
   referring_organization_id: uuid.nullish(),
+  /** Plan standing deals seeded from customer/partner (expected Money Back; amount may be Unknown). */
+  standing_deals: z
+    .array(
+      z.object({
+        deal_id: z.string().trim().min(1).max(64),
+        label: label,
+        rate_bps: z.number().int().min(0).max(10000),
+        basis: z.enum(['sale_ex_tax', 'sale']),
+        amount_cents: cents.nullish(),
+        payer_party_id: uuid.nullish(),
+        notes: note,
+      }),
+    )
+    .max(20)
+    .optional(),
+  /** Plan Money Back voids (append-only). Voided ≠ denied. */
+  money_back_voids: z
+    .array(
+      z.object({
+        target_kind: z.enum([
+          'expected_primary',
+          'expected_secondary',
+          'standing_deal',
+          'commission',
+          'referral',
+          'price_match',
+        ]),
+        target_id: z.string().trim().min(1).max(200),
+        reason: z.string().trim().min(1).max(2000),
+        voided_at: z.string().trim().min(1).max(64),
+        voided_by: uuid.optional(),
+        command_id: uuid.optional(),
+      }),
+    )
+    .max(200)
+    .optional(),
+  /** Plan Money Back denials (append-only). Issuer/payer refused — ≠ voided. */
+  money_back_denials: z
+    .array(
+      z.object({
+        target_kind: z.enum([
+          'expected_primary',
+          'expected_secondary',
+          'standing_deal',
+          'commission',
+          'referral',
+          'price_match',
+        ]),
+        target_id: z.string().trim().min(1).max(200),
+        reason: z.string().trim().min(1).max(2000),
+        denied_at: z.string().trim().min(1).max(64),
+        denied_by: uuid.optional(),
+        command_id: uuid.optional(),
+      }),
+    )
+    .max(200)
+    .optional(),
+  /** Plan Money Back deductions (append-only). Paid less / remittance deducted — ≠ overwrite gross. */
+  money_back_deductions: z
+    .array(
+      z.object({
+        target_kind: z.literal('commission'),
+        target_id: z.string().trim().min(1).max(200),
+        amount_cents: z.number().int().positive().max(9_000_000_000_000),
+        how_received: z.literal('deducted'),
+        reason: z.string().trim().min(1).max(2000),
+        deducted_at: z.string().trim().min(1).max(64),
+        deducted_by: uuid.optional(),
+        command_id: uuid.optional(),
+      }),
+    )
+    .max(200)
+    .optional(),
+  /**
+   * Plan More: document links (itinerary / screenshot / PDF) — metadata only, never invent files.
+   * Same shape as booking_document append; hide flags allowed for history continuity.
+   */
+  document_links: z
+    .array(
+      z.object({
+        id: uuid,
+        label: label,
+        kind: z.enum(BOOKING_DOCUMENT_KINDS),
+        url: z.string().trim().max(2000).optional(),
+        note: z.string().trim().max(2000).optional(),
+        added_on: z.iso.date(),
+        hidden: z.boolean().optional(),
+        hidden_at: z.string().trim().max(64).optional(),
+        hidden_reason: z.string().trim().max(2000).optional(),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 export const sourceMethodSchema = z.object({

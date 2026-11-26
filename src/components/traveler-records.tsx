@@ -1,20 +1,27 @@
 'use client';
 import ChoiceInput from './choice-input';
-import { LOYALTY_PROGRAMS } from '@/lib/entry-options';
+import {
+  LOYALTY_PROGRAM_OTHER,
+  mergeLoyaltyProgramOptions,
+} from '@/lib/entry-options';
 type R = Record<string, any>;
 export default function TravelerRecords({
   memberships,
   documents,
   onMemberships,
   onDocuments,
+  programExtras = [],
 }: {
   memberships: R[];
   documents: R[];
   onMemberships: (rows: R[]) => void;
   onDocuments: (rows: R[]) => void;
+  /** Extra program names already in use (programs table / asset issuers). */
+  programExtras?: Array<string | null | undefined>;
 }) {
   const edit = (rows: R[], index: number, key: string, value: string) =>
     rows.map((r, i) => (i === index ? { ...r, [key]: value } : r));
+  const programOptions = mergeLoyaltyProgramOptions(programExtras);
   return (
     <>
       {memberships.length > 0 && (
@@ -28,11 +35,24 @@ export default function TravelerRecords({
                   id={`member-${index}-program`}
                   label={`Membership ${index + 1} program`}
                   required
-                  options={LOYALTY_PROGRAMS}
+                  options={programOptions}
                   value={row.program ?? ''}
                   onChange={(v) => onMemberships(edit(memberships, index, 'program', v))}
                 />
               </div>
+              {(row.program === LOYALTY_PROGRAM_OTHER || row.program === 'Other') && (
+                <div className="form-field">
+                  <label htmlFor={`member-${index}-program-custom`}>New program name *</label>
+                  <input
+                    id={`member-${index}-program-custom`}
+                    required
+                    value={row.program_custom ?? ''}
+                    onChange={(e) =>
+                      onMemberships(edit(memberships, index, 'program_custom', e.target.value))
+                    }
+                  />
+                </div>
+              )}
               <button
                 type="button"
                 className="btn small"

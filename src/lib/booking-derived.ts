@@ -5,11 +5,12 @@ export function derivedTravel(v: Values, provider = '') {
   const multi = v.product === 'Flight' && v.trip_type === 'Multi-City';
   const segments: Values[] = multi ? (v.segments ?? []) : [];
   const start = multi ? segments[0]?.date : v.travel_start;
+  // Never invent checkout/return from start — missing stays missing (Plan Do-now).
   const end = multi
     ? segments.at(-1)?.date
     : v.product === 'Flight' && v.trip_type === 'One Way'
       ? start
-      : v.travel_end || start;
+      : v.travel_end || undefined;
   const route = multi
     ? segments.map((s) => [s.origin, s.destination].filter(Boolean).join('–')).join(' / ')
     : v.route || [v.origin, v.destination].filter(Boolean).join('–');
@@ -38,6 +39,32 @@ export function travelDateLabels(product: string, tripType = 'One Way') {
       : product === 'Car'
         ? { start: 'Pickup date', end: 'Drop-off date' }
         : { start: 'Start date', end: 'End date (optional)' };
+}
+
+/**
+ * Plan Do-now: hotel needs check-out; round trip needs return; car needs drop-off.
+ * One Way / Multi-City / Other do not invent an end date.
+ */
+export function bookingTravelEndRequired(v: {
+  product?: string | null;
+  trip_type?: string | null;
+}): boolean {
+  const product = String(v.product || '');
+  if (product === 'Hotel' || product === 'Car') return true;
+  return product === 'Flight' && String(v.trip_type || '') === 'Round Trip';
+}
+
+/** Missing end date message — never treat blank as complete. */
+export function bookingTravelEndMissingMessage(v: {
+  product?: string | null;
+  trip_type?: string | null;
+  travel_end?: string | null;
+}): string | null {
+  if (!bookingTravelEndRequired(v)) return null;
+  if (String(v.travel_end || '').trim()) return null;
+  const labels = travelDateLabels(String(v.product || 'Other'), String(v.trip_type || 'One Way'));
+  const endLabel = labels.end || 'end date';
+  return `Enter ${endLabel}, or use Save Draft.`;
 }
 
 /** Client/server-shared: end before start. Returns staff-facing message or null. */

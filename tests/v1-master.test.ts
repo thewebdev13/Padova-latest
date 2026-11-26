@@ -5,12 +5,21 @@ import { financialDatabase, financialEmployee, testOwner } from './helpers';
 import { execute, economics } from '../src/lib/finance';
 import { snapshot } from '../src/lib/queries';
 import { existingFixture } from './padova-fixture';
-import { percentagePrice, validateSegments, latestCreditRequests } from '../src/lib/v1-entry';
+import {
+  fixedMarginPrice,
+  percentagePrice,
+  PLAN_PRICING_METHODS,
+  validateSegments,
+  latestCreditRequests,
+} from '../src/lib/v1-entry';
 import { parseQuickPaste, quickPasteExample, exactPointCost } from '../src/lib/quick-paste';
 
 test('V1 exact pricing, segments and external AI protocol preserve unknowns', () => {
   assert.equal(percentagePrice(200000, 800), 184000);
   assert.equal(percentagePrice(101, 5000), 51);
+  assert.equal(fixedMarginPrice(85000, 10000), 95000);
+  assert.ok(PLAN_PRICING_METHODS.includes('Same as Cost'));
+  assert.ok(PLAN_PRICING_METHODS.includes('Fixed Margin'));
   assert.equal(exactPointCost(13000, '1.30', 'cents per point'), 16900);
   const pasted = parseQuickPaste(quickPasteExample);
   assert.equal(pasted.fields.points_quantity, '13000');

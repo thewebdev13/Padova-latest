@@ -15,6 +15,7 @@ import { bookingItinerary, itineraryEntryKeys } from './booking-itinerary';
 import { businessDate } from './business-date';
 import { refundQuantityUnit } from './asset-units';
 import { isDirectBookingChannel } from './entry-options';
+import { cap1PortalCardAllowsMissingAccount } from './how-booked';
 import { effectiveAsset } from './asset-revisions';
 import { operationalEntry, sourceMethodSchema, draftSchema } from './booking-entry';
 import {
@@ -23,6 +24,52 @@ import {
   validateSegments,
   latestCreditRequests,
 } from './v1-entry';
+import { cardFeeSettingsSchema } from './card-fees';
+import {
+  canApproveInvoice,
+  canMarkInvoiceSent,
+  canVoidInvoice,
+  invoiceBookingIds,
+} from './invoice-preview';
+import { cardFeeChargesCents, cardFeeRefundReasonSuffix } from './refund-card-fee';
+import { formatRefundCallNoteBody } from './refund-call-notes';
+import { withChargebackInText } from './customer-refund-status';
+import {
+  defaultRefundVoucherName,
+  REFUND_CUSTOMER_SETTLED_SQL,
+  REFUND_HOW_GIVEN,
+  REFUND_VOUCHER_FORM,
+} from './refund-how-given';
+import { SUPPLIER_REFUND_DENIED_FORM } from './supplier-refund-status';
+import {
+  appendBookingDocument,
+  BOOKING_DOCUMENT_KINDS,
+  hideBookingDocument,
+} from './booking-documents';
+import { applyCustomerTaxAmount } from './booking-customer-taxes';
+import { shouldActivateHeld } from './held-pnr';
+import { toStoredReservationStatus } from './booking-status';
+import { BOOKING_RELATION_KINDS } from './booking-relations';
+import {
+  buildTradeBuyPayload,
+  buildTradeSellPayload,
+  tradeToComplete,
+} from './trade-desk';
+import {
+  appendMoneyBackDeduction,
+  moneyBackDeductedCents,
+} from './money-back-deduct';
+import { appendMoneyBackDenial, isMoneyBackDenied } from './money-back-deny';
+import { appendMoneyBackVoid } from './money-back-void';
+import {
+  heldCustomerCreditCents,
+  planCustomerCreditReturn,
+  unallocatedCustomerSlices,
+  type WalletPayment,
+} from './customer-wallet';
+import { BOOKING_EXTRA_CATEGORIES, bookingExtraChargeKind, bookingExtraLabel } from './booking-extras';
+import { appendTripSharedCharge, tripSharedExtraLabel } from './trip-shared-charges';
+import { isTravelerLockedVoucher } from './voucher-traveler-lock';
 import { assertBookingProductData, taxesCreateFunding } from './booking-entry-state';
 import { requirePartyRole, providerRole, validatePaymentAccount } from './directory-eligibility';
 import { sanitizeOperationalInput } from './operational-redaction';
@@ -31,6 +78,8 @@ import { exactPointCost } from './quick-paste';
 import { validateTravelerDecision } from './traveler-review';
 import { validateHistoricalDraftReview } from './historical-draft-review';
 import { hasPayableTerms, payableStates, requirePayableTerms } from './commission-payables';
+import { encodeExpiryRuleInRestrictions } from './expiry-rules';
+import { encodePointsBatchSourceInRestrictions } from './points-batch-source';
 import {
   fulfillmentSchemas,
   unitSchema,
@@ -50,6 +99,14 @@ const money = z.number().int().min(0).max(9_000_000_000_000);
 const positive = money.positive();
 const text = z.string().trim().min(1).max(2000);
 const optionalID = id.nullish();
+/** Plan UI may send Active/Completed; persist Booked/Traveled. */
+const reservationStatus = z.preprocess(
+  (v) => {
+    if (v == null || v === '') return v;
+    return toStoredReservationStatus(String(v)) ?? v;
+  },
+  z.enum(['Held', 'Booked', 'Traveled', 'Cancelled', 'Refund Pending']),
+);
 const fundingInput = z.object({
   travel_index: z.number().int().min(0).max(29).optional(),
   kind: text,
@@ -80,6 +137,18 @@ const schemas = {
   /** Remove an unposted booking_draft only — never touches live bookings or money. */
   booking_draft_delete: z.object({
     draft_id: id,
+  }),
+  /** Plan: restore a soft-deleted booking_draft (remove-from-view undo). Never invents money. */
+  booking_draft_restore: z.object({
+    draft_id: id,
+  }),
+  /** Plan: hide a note from view — never UPDATE/DELETE notes rows. */
+  note_hide: z.object({
+    note_id: id,
+  }),
+  /** Plan: restore a soft-hidden note. */
+  note_restore: z.object({
+    note_id: id,
   }),
   revise_travel: fulfillmentSchemas.travel_component.extend({
     travel_component_id: id,
@@ -128,6 +197,13 @@ const schemas = {
     details: z.record(z.string(), z.unknown()).default({}),
     reason: text,
   }),
+  /** Plan Do-now: one record per person — fold duplicate into keep (merged-into). */
+  merge_party: z.object({
+    keep_id: id,
+    merge_id: id,
+    reason: text,
+    date: day,
+  }),
   relationship: z.object({
     person_id: id,
     group_id: id,
@@ -152,6 +228,30 @@ const schemas = {
       .string()
       .regex(/^\d{4}$/)
       .optional(),
+  }),
+  /** Plan v1 Phase 4 — editable customer / Padova card-fee defaults. */
+  update_fee_settings: cardFeeSettingsSchema,
+  /** Plan v1 Phase 4 — save invoice draft from preview (no send). */
+  invoice_draft: z.object({
+    customer_id: id,
+    customer_name: text,
+    lines: z.array(z.record(z.string(), z.unknown())).min(1),
+    total_cents: z.number().int().nullable(),
+    incomplete: z.boolean().default(false),
+    note: z.string().max(2000).default(''),
+  }),
+  invoice_approve: z.object({ invoice_id: id }),
+  invoice_mark_sent: z.object({
+    invoice_id: id,
+    note: z.string().max(2000).default(''),
+    /** Plan sent_to — customer email when system-sent; blank for manual mark-sent. */
+    sent_to: z.string().trim().max(320).optional(),
+    /** Owner prepared WhatsApp clipboard copy (helper never sends). */
+    whatsapp_copy_noted: z.boolean().optional(),
+  }),
+  invoice_void: z.object({
+    invoice_id: id,
+    reason: text,
   }),
   transfer_asset: z.object({
     sending_asset_id: id,
@@ -245,12 +345,45 @@ const schemas = {
       })
       .optional(),
     itinerary: bookingItinerary.default({}),
+    /** Plan: Held = unpaid hold with ticketing deadline on itinerary. */
+    reservation_status: reservationStatus.default('Booked'),
   }),
   charge: z.object({
     booking_id: id,
     amount: z.number().int().min(-9_000_000_000_000).max(9_000_000_000_000),
     kind: text,
     date: day,
+  }),
+  /** Plan: seats/bags/other extras — customer price and cost both optional. */
+  booking_extra: z.object({
+    booking_id: id,
+    category: z.enum(BOOKING_EXTRA_CATEGORIES),
+    description: z.string().max(500).default(''),
+    customer_amount: money.optional(),
+    cost_amount: money.optional(),
+    payee_id: optionalID,
+    reference: z.string().max(200).default(''),
+    date: day,
+    reason: text.optional(),
+    /** Plan: enter once at trip level; money stays on this booking; family view lists it. */
+    trip_shared: z.boolean().default(false),
+  }),
+  /**
+   * Plan: dated Change on the same booking (optional dates/summary + optional airline/customer fees).
+   * Full Edit booking remains `revise`.
+   */
+  booking_change: z.object({
+    booking_id: id,
+    date: day,
+    reason: text,
+    summary: text.optional(),
+    travel_start: day.optional(),
+    travel_end: day.optional(),
+    change_seller_id: optionalID,
+    fare_difference: money.default(0),
+    supplier_change_fee: money.default(0),
+    padova_change_fee: money.default(0),
+    additional_customer_charge: money.default(0),
   }),
   confirm_sale: z.object({ booking_id: id, total: money, date: day, reason: text }),
   payment: z.object({
@@ -275,6 +408,19 @@ const schemas = {
       .array(z.object({ booking_id: id, amount: positive, obligation_id: optionalID }))
       .default([]),
     commission_allocations: z.array(z.object({ commission_id: id, amount: positive })).default([]),
+    /** Plan: separate customer card-fee charge line (0 = none). */
+    customer_card_fee: money.default(0),
+    /** Padova processor cost for display/audit only — not a second customer charge. */
+    padova_card_cost: money.default(0),
+  }),
+  return_customer_credit: z.object({
+    party_id: id,
+    amount: positive,
+    date: day,
+    method: text,
+    reference: z.string().max(200).default(''),
+    account_id: optionalID,
+    reason: text,
   }),
   allocate: z.object({
     payment_id: id,
@@ -302,9 +448,21 @@ const schemas = {
     cost: money.nullish(),
     date: day,
     expires_on: day.optional(),
+    /**
+     * Plan Points: owner-extensible expiry-rule label (lists the owner can add).
+     * Encoded into restrictions; expires_on stays the actual date (never invent).
+     */
+    expiry_rule: z.string().trim().max(80).optional(),
+    /**
+     * Plan Points batch source: purchase | transfer with bonus | sold on.
+     * Encoded into restrictions — never invents cost.
+     */
+    points_source: z.string().trim().max(40).optional(),
     seller_id: optionalID,
     holder_id: optionalID,
     source_booking_id: optionalID,
+    /** Plan: Cap1 credits lock to an account profile (~3). Required when kind is Capital One credit. */
+    profile_id: optionalID,
     ownership: z.enum(['Padova', 'External', 'Customer']).default('Padova'),
     restrictions: z.string().max(2000).default(''),
     reference: z.string().max(200).default(''),
@@ -316,6 +474,7 @@ const schemas = {
       name: text,
       issuer: text,
       expires_on: day.optional(),
+      expiry_rule: z.string().trim().max(80).optional(),
       restrictions: z.string().max(2000).default(''),
       reference: z.string().max(200).default(''),
       date: day,
@@ -339,11 +498,61 @@ const schemas = {
     amount: positive,
     date: day,
     kind: text.default('Capital One credit'),
+    /** Plan: Cap1 credit locked to account profile (~3). Form requires; falls back to booking source profile. */
+    profile_id: id.optional(),
     expires_on: day.optional(),
     original_rate: money.optional(),
     original_rate_reason: text.optional(),
     final_rate: money.optional(),
     reference: z.string().max(200).default(''),
+  }),
+  /** Plan Cap1: void unused credit (cancel after price match) — append-only, no popup required. */
+  void_credit: z.object({
+    asset_id: id,
+    date: day,
+    reason: text,
+  }),
+  /** Plan Money Back: void expected/confirmed line (not received). Append-only on booking. */
+  void_money_back: z.object({
+    booking_id: id,
+    target_kind: z.enum([
+      'expected_primary',
+      'expected_secondary',
+      'standing_deal',
+      'commission',
+      'referral',
+      'price_match',
+    ]),
+    target_id: z.string().min(1).max(200),
+    date: day,
+    reason: text,
+  }),
+  /** Plan Money Back: issuer/payer denied (≠ void). Append-only on booking. */
+  deny_money_back: z.object({
+    booking_id: id,
+    target_kind: z.enum([
+      'expected_primary',
+      'expected_secondary',
+      'standing_deal',
+      'commission',
+      'referral',
+      'price_match',
+    ]),
+    target_id: z.string().min(1).max(200),
+    date: day,
+    reason: text,
+  }),
+  /**
+   * Plan Money Back: remittance deducted / paid less against a posted commission receivable.
+   * Append-only; does not overwrite commissions.gross/retained.
+   */
+  deduct_money_back: z.object({
+    booking_id: id,
+    target_kind: z.literal('commission'),
+    target_id: id,
+    amount: positive,
+    date: day,
+    reason: text,
   }),
   price_match_event: z.object({
     booking_id: id,
@@ -403,7 +612,7 @@ const schemas = {
           rate_bps: z.number().int().min(0).max(10000).default(0),
           fixed_amount: money.default(0),
           due_on: day.optional(),
-          after_receipt: z.boolean().default(true),
+          after_receipt: z.boolean().default(false),
           cancellation_rule: z
             .enum(['Realized economics', 'Retain agreed amount'])
             .default('Realized economics'),
@@ -418,10 +627,11 @@ const schemas = {
               'When earned',
               'After travel',
               'After customer paid',
+              'After commission confirmed',
               'After commission received',
               'On date',
             ])
-            .optional(),
+            .default('After commission confirmed'),
         })
         .optional(),
     })
@@ -472,7 +682,8 @@ const schemas = {
     fixed_amount: money.default(0),
     due_on: day,
     date: day,
-    after_receipt: z.boolean().default(true),
+    /** Legacy flag; Plan default is confirmed (not receipt). Kept for old rows. */
+    after_receipt: z.boolean().default(false),
     cancellation_rule: z
       .enum(['Realized economics', 'Retain agreed amount'])
       .default('Realized economics'),
@@ -487,10 +698,11 @@ const schemas = {
         'When earned',
         'After travel',
         'After customer paid',
+        'After commission confirmed',
         'After commission received',
         'On date',
       ])
-      .optional(),
+      .default('After commission confirmed'),
   }),
   revise_referral: z.object({
     referral_id: id,
@@ -511,6 +723,7 @@ const schemas = {
       'When earned',
       'After travel',
       'After customer paid',
+      'After commission confirmed',
       'After commission received',
       'On date',
     ]),
@@ -542,9 +755,18 @@ const schemas = {
     supplier_expected: money,
     customer_due: money,
     charge_reduction: money.optional(),
+    /** Plan: card fee refunded? Default no — retained fee stays booking profit. */
+    refund_card_fee: z.boolean().default(false),
     due_on: day,
     date: day,
     reason: text,
+    /** Plan: chase / call notes on the refund follow-up (append-only note). */
+    call_notes: z.string().max(4000).optional(),
+    /** Plan rare chargeback outcome on the refund-type line (stored in reason text). */
+    chargeback_status: z
+      .enum(['disputed', 'won', 'lost', ''])
+      .optional()
+      .transform((v) => (v ? v : undefined)),
   }),
   reconcile_supplier_return: z.object({
     booking_id: id,
@@ -572,9 +794,14 @@ const schemas = {
     refund_id: id,
     amount: positive,
     date: day,
-    method: text,
+    /** Plan: original method, customer credit, voucher, or other. */
+    how_given: z.enum(REFUND_HOW_GIVEN).default('original_method'),
+    method: text.optional(),
     reference: z.string().default(''),
     override_reason: z.string().optional(),
+    /** Optional voucher label / expiry when how_given = voucher. */
+    voucher_name: z.string().trim().max(200).optional(),
+    voucher_expires_on: day.optional(),
   }),
   revise: z.object({
     booking_id: id,
@@ -594,13 +821,65 @@ const schemas = {
     padova_change_fee: money.default(0),
     additional_customer_charge: money.default(0),
     itinerary: bookingItinerary.default({}),
-    reservation_status: z
-      .enum(['Booked', 'Traveled', 'Cancelled', 'Refund Pending'])
-      .default('Booked'),
+    reservation_status: reservationStatus.default('Booked'),
     confirmation_status: text.default('Confirmed'),
     document_status: text.default('Not prepared'),
   }),
   note: z.object({ record_type: text, record_id: id, body: text }),
+  /** Plan: related bookings family tree (money stays per booking). */
+  link_booking: z.object({
+    from_booking_id: id,
+    to_booking_id: id,
+    kind: z.enum(BOOKING_RELATION_KINDS),
+    note: z.string().max(2000).default(''),
+  }),
+  unlink_booking: z.object({
+    relation_id: id,
+    reason: text,
+  }),
+  /** Plan: booking documents (links) — itineraries / screenshots / PDFs. */
+  booking_document: z.object({
+    booking_id: id,
+    label: text,
+    kind: z.enum(BOOKING_DOCUMENT_KINDS),
+    url: z.string().trim().max(2000).optional(),
+    note: z.string().max(2000).default(''),
+    date: day,
+  }),
+  booking_document_hide: z.object({
+    booking_id: id,
+    document_id: id,
+    reason: text,
+  }),
+  /** Plan: set/clear customer sale-side taxes (part of price; not a new charge). */
+  booking_taxes: z.object({
+    booking_id: id,
+    /** Omit / blank = clear tax amount (Unknown). Never invent $0. */
+    tax_amount: money.optional(),
+    date: day,
+    reason: z.string().max(2000).default(''),
+  }),
+  /** Plan trading desk — thin wrapper; posts via acquire_asset / sell_asset. */
+  trade: z.object({
+    side: z.enum(['Buy', 'Sell']),
+    /** Built-in or owner-added kind (Plan: drop-down the owner can extend). */
+    what: z.string().trim().min(1).max(80),
+    /** Points/count as whole units; monetary face as integer cents. */
+    amount_units: positive,
+    price_cents: money,
+    counterparty_id: optionalID,
+    date: day,
+    expires_on: day.optional(),
+    notes: z.string().max(2000).default(''),
+    stock_mode: z.enum(['for_booking', 'hold_in_stock']).default('for_booking'),
+    booking_id: optionalID,
+    asset_id: optionalID,
+    paid: z.boolean().default(false),
+    method: text.default('Zelle'),
+    reference: z.string().max(200).default(''),
+    /** Plan: offered | agreed | paid | delivered. */
+    status: z.enum(['offered', 'agreed', 'paid', 'delivered']).default('agreed'),
+  }),
   task: z.object({
     title: text,
     record_type: z.enum(['booking', 'party', 'asset', 'commission', 'refund']).optional(),
@@ -686,6 +965,27 @@ async function insert(tx: SQL, table: string, data: Row) {
         : data[k],
     ),
   );
+}
+
+/** Plan: Held → Active (Booked) when paid + ticketed (never invent payment or auto-cancel). */
+async function activateHeldIfReady(tx: SQL, booking_id: string) {
+  const b = await economics(tx, booking_id);
+  if (
+    !shouldActivateHeld({
+      reservation_status: b.reservation_status,
+      confirmation_status: b.confirmation_status,
+      sale: b.sale == null ? null : Number(b.sale),
+      paid: b.paid == null ? null : Number(b.paid),
+      customer_balance: b.customer_balance == null ? null : Number(b.customer_balance),
+    })
+  )
+    return null;
+  return (
+    await tx.query(
+      `UPDATE bookings SET reservation_status='Booked', revision=revision+1 WHERE id=$1 AND reservation_status='Held' RETURNING *`,
+      [booking_id],
+    )
+  ).rows[0];
 }
 async function line(
   tx: SQL,
@@ -807,7 +1107,7 @@ export async function economics(
         (commissionTerms.amount === undefined && commissionTerms.percentage_bps === undefined)));
   const customerRefundPaid = await one(
     tx,
-    "SELECT COALESCE(sum(m.amount),0) amount FROM refund_movements m JOIN refunds r ON r.id=m.refund_id WHERE r.booking_id=$1 AND m.kind='customer_paid'",
+    `SELECT COALESCE(sum(m.amount),0) amount FROM refund_movements m JOIN refunds r ON r.id=m.refund_id WHERE r.booking_id=$1 AND m.kind IN (${REFUND_CUSTOMER_SETTLED_SQL})`,
     [booking_id],
   );
   const payableCredits = await one(
@@ -951,6 +1251,10 @@ async function createAsset(tx: SQL, command_id: string, d: Row) {
   if (d.ownership === 'Customer' && (!d.holder_id || d.cost !== 0))
     throw new Error('Customer-owned value requires its customer owner and zero Padova cost');
   const instrument = await validateAssetInstrument(tx, d);
+  const restrictions = encodePointsBatchSourceInRestrictions(
+    d.points_source,
+    encodeExpiryRuleInRestrictions(d.expiry_rule, d.restrictions ?? ''),
+  );
   const asset = await insert(tx, 'assets', {
     name: d.name,
     kind: d.kind,
@@ -961,7 +1265,7 @@ async function createAsset(tx: SQL, command_id: string, d: Row) {
     seller_id: d.seller_id,
     ownership: d.ownership ?? 'Padova',
     expires_on: d.expires_on,
-    restrictions: d.restrictions ?? '',
+    restrictions,
     reference: d.reference ?? '',
     ...(tx.storage === 'padova'
       ? { opening_quantity: d.quantity, opening_cost: d.cost ?? null }
@@ -1175,6 +1479,80 @@ async function assetSourceProfile(tx: SQL, asset_id: string) {
         .rows[0]?.profile_id
     : undefined;
 }
+/** Shared by revise + booking_change — airline costs and customer change fees. */
+async function postBookingChangeFees(
+  tx: SQL,
+  command_id: string,
+  input: {
+    booking_id: string;
+    customer_id: string;
+    supplier_id?: string | null;
+    change_seller_id?: string | null;
+    fare_difference: number;
+    supplier_change_fee: number;
+    padova_change_fee: number;
+    additional_customer_charge: number;
+    reason: string;
+  },
+  date: string,
+) {
+  const changeSources = (
+    await tx.query(
+      "SELECT DISTINCT seller_id FROM funding_components f WHERE booking_id=$1 AND seller_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM commands c WHERE c.kind IN ('revise_fulfillment','reverse_fulfillment') AND c.result->>'reversed_funding_id'=f.id::text)",
+      [input.booking_id],
+    )
+  ).rows;
+  const changeSeller =
+    input.change_seller_id ??
+    (changeSources.length === 1 ? changeSources[0].seller_id : input.supplier_id);
+  for (const [kind, amount] of [
+    ['Fare difference', input.fare_difference],
+    ['Supplier change fee', input.supplier_change_fee],
+  ] as const) {
+    if (amount)
+      await postFunding(
+        tx,
+        command_id,
+        {
+          booking_id: input.booking_id,
+          kind,
+          face_amount: amount,
+          cost: amount,
+          seller_id: changeSeller,
+          reference: input.reason,
+          settled: false,
+        },
+        date,
+      );
+  }
+  for (const [kind, amount] of [
+    [
+      'Change fare / customer adjustment',
+      input.additional_customer_charge - input.padova_change_fee,
+    ],
+    ['Padova change fee', input.padova_change_fee],
+  ] as const) {
+    if (!amount) continue;
+    await insert(tx, 'charges', {
+      booking_id: input.booking_id,
+      kind,
+      amount,
+      effective_on: date,
+      command_id,
+    });
+    await line(
+      tx,
+      command_id,
+      date,
+      'customer_receivable',
+      'booking_revenue',
+      amount,
+      input.booking_id,
+      input.customer_id,
+    );
+  }
+}
+
 async function postFunding(tx: SQL, command_id: string, d: Row, date: string) {
   if (
     d.asset_id &&
@@ -1235,6 +1613,23 @@ async function postFunding(tx: SQL, command_id: string, d: Row, date: string) {
         throw new Error(
           'Customer-owned value must belong to this customer, traveler or authorized payer',
         );
+    }
+    // Plan: Padova voucher locked to a traveler — booking must include that person.
+    if (isTravelerLockedVoucher(a)) {
+      const linked =
+        a.holder_id === b.customer_id ||
+        (
+          await tx.query(
+            'SELECT 1 FROM booking_travelers WHERE booking_id=$1 AND person_id=$2 AND status=$3 UNION ALL SELECT 1 FROM booking_payers WHERE booking_id=$1 AND party_id=$2',
+            [d.booking_id, a.holder_id, 'Active'],
+          )
+        ).rows.length;
+      if (!linked) {
+        const holder = await one(tx, 'SELECT name FROM parties WHERE id=$1', [a.holder_id]);
+        throw new Error(
+          `Voucher is locked to ${holder.name}; booking must include that traveler`,
+        );
+      }
     }
     if (external && (d.cost === undefined || !a.seller_id))
       throw new Error('Seller-funded points require exact cost and a seller');
@@ -1591,6 +1986,12 @@ async function postFulfillment(tx: SQL, command_id: string, d: Row, date: string
 async function postCommissionReceipt(tx: SQL, command_id: string, d: Row, date: string) {
   const c = await one(tx, 'SELECT * FROM commissions WHERE id=$1', [d.commission_id]);
   const p = await one(tx, 'SELECT * FROM payment_balances WHERE id=$1', [d.payment_id]);
+  const booking = await one(tx, 'SELECT itinerary FROM bookings WHERE id=$1', [c.booking_id]);
+  const deducted = moneyBackDeductedCents(
+    booking.itinerary?.operational_entry,
+    'commission',
+    String(c.id),
+  );
   const received = await one(
     tx,
     'SELECT COALESCE(sum(amount),0) amount FROM commission_allocations WHERE commission_id=$1',
@@ -1600,7 +2001,7 @@ async function postCommissionReceipt(tx: SQL, command_id: string, d: Row, date: 
     p.direction !== 'commission' ||
     p.party_id !== (c.collector_id ?? c.payer_id) ||
     d.amount > n(p.current_amount) - n(p.commission_allocated) ||
-    d.amount > n(c.gross) - n(c.retained) - n(received.amount)
+    d.amount > n(c.gross) - n(c.retained) - n(received.amount) - deducted
   )
     throw new Error('Invalid commission receipt allocation');
   const result = await insert(tx, 'commission_allocations', {
@@ -1979,11 +2380,45 @@ async function postPayment(tx: SQL, command_id: string, d: Row, date: string) {
   const touched = new Set<string>();
   if (!['customer', 'supplier', 'commission'].includes(d.direction))
     throw new Error('Use the dedicated linked workflow for this payment direction');
-  const { date: _, allocations, commission_allocations, ...values } = d;
+  const {
+    date: _,
+    allocations,
+    commission_allocations,
+    customer_card_fee = 0,
+    padova_card_cost = 0,
+    ...values
+  } = d;
   if (d.direction !== 'commission' && commission_allocations.length)
     throw new Error('Commission allocations require a commission receipt');
   if (d.direction === 'commission' && allocations.length)
     throw new Error('Select commission receivables instead of booking payment allocations');
+  if (customer_card_fee && d.direction !== 'customer')
+    throw new Error('Card fee lines apply only to customer receipts');
+  if (customer_card_fee && allocations.length !== 1)
+    throw new Error('Allocate the card payment to exactly one booking when posting a card fee');
+  // Charge fee first so receivable includes it before this remittance settles.
+  if (customer_card_fee > 0) {
+    const booking_id = allocations[0].booking_id;
+    const b = await economics(tx, booking_id);
+    await insert(tx, 'charges', {
+      booking_id,
+      kind: 'Card fee',
+      amount: customer_card_fee,
+      effective_on: date,
+      command_id,
+    });
+    await line(
+      tx,
+      command_id,
+      date,
+      'customer_receivable',
+      'booking_revenue',
+      customer_card_fee,
+      booking_id,
+      b.customer_id,
+    );
+    touched.add(booking_id);
+  }
   result = await insert(tx, 'payments', { ...values, paid_on: date });
   const incoming = ['customer', 'commission', 'supplier_refund', 'asset_sale'].includes(
     d.direction,
@@ -2028,7 +2463,13 @@ async function postPayment(tx: SQL, command_id: string, d: Row, date: string) {
     );
     touched.add(posted.booking_id);
   }
-  return { result, bookings: [...touched] };
+  if (d.direction === 'customer') {
+    for (const booking_id of touched) await activateHeldIfReady(tx, booking_id);
+  }
+  return {
+    result: { ...result, customer_card_fee, padova_card_cost },
+    bookings: [...touched],
+  };
 }
 
 async function appendTravelReferences(tx: SQL, command_id: string, travel: Row) {
@@ -2081,6 +2522,24 @@ async function postOperationalComponent(
 ) {
   requirePermission(actor, 'manage_funding');
   if (c.seller_id) await requirePartyRole(tx, c.seller_id, 'seller');
+  // Plan: estimate / other-currency note is info until real USD is entered — never post as confirmed cost.
+  if (c.cost_is_estimate) {
+    if (c.paid)
+      throw new Error(
+        'Cannot record payment against a cost estimate — enter the real USD amount first',
+      );
+    await insert(tx, 'notes', {
+      record_type: 'booking',
+      record_id: booking.id,
+      actor: actor.id,
+      body: `Cost estimate (not posted): ${c.type}${c.other_currency?.code ? ` · ${c.other_currency.code}${c.other_currency.amount ? ` ${c.other_currency.amount}` : ''}` : ''}${c.cost != null ? ` · provisional USD kept as estimate only` : ''}. ${c.notes || ''}`.trim(),
+    });
+    return;
+  }
+  if (c.type === 'Outside seller' && c.rebate_expected)
+    throw new Error(
+      'Outside seller rebate belongs to the seller — Padova records agreed cost only (no expected rebate income).',
+    );
   if (c.bp_gross_points !== undefined) {
     if (
       c.type !== 'Outside seller' ||
@@ -2117,8 +2576,14 @@ async function postOperationalComponent(
   }
   if (c.supplied === 'Certificate / Award' && c.unit === 'points')
     throw new Error('Certificate cannot contain stale points quantity');
-  if (c.type === 'Padova payment' || c.paid)
-    await validatePaymentAccount(tx, c.account_id, c.method);
+  if (c.type === 'Padova payment' || c.paid) {
+    const cap1Portal = cap1PortalCardAllowsMissingAccount({
+      howBooked: booking.itinerary?.operational_entry?.how_booked,
+      channel: booking.channel,
+    });
+    if (!(cap1Portal && c.method === 'Card' && !c.account_id))
+      await validatePaymentAccount(tx, c.account_id, c.method);
+  }
   if (c.program_id) {
     const program = await one(tx, 'SELECT * FROM programs WHERE id=$1', [c.program_id]);
     if (c.supplied === 'Points / Miles' && !['Airline', 'Hotel', 'Bank'].includes(program.category))
@@ -2296,7 +2761,11 @@ async function postOperationalComponent(
   }
   if (c.type === 'Padova payment') {
     if (!c.cost) throw new Error('An actual Padova payment must be positive');
-    if (!c.method || (c.method === 'Card' && !c.account_id))
+    const cap1Portal = cap1PortalCardAllowsMissingAccount({
+      howBooked: booking.itinerary?.operational_entry?.how_booked,
+      channel: booking.channel,
+    });
+    if (!c.method || (c.method === 'Card' && !c.account_id && !cap1Portal))
       throw new Error('Select payment method and saved card/account');
     if (c.seller_id || c.asset_id || c.new_asset)
       throw new Error('Direct Padova payment must not fabricate a seller/asset');
@@ -2320,7 +2789,13 @@ async function postOperationalComponent(
       role: 'Core',
       unit: 'money',
       quantity: c.cost || 1,
-      terms: { ...terms, direct_payment: true },
+      terms: {
+        ...terms,
+        direct_payment: true,
+        ...(cap1Portal && c.method === 'Card' && !c.account_id
+          ? { cap1_portal_charge: true }
+          : {}),
+      },
       command_id,
     });
   }
@@ -2398,6 +2873,61 @@ export async function execute(
   const permission = commandPermission(kind);
   requirePermission(actor, permission);
   const d: Row = schemas[kind].parse(sanitizeOperationalInput(command.data));
+  // Plan trading desk → existing ledgers (acquire_asset / sell_asset).
+  if (kind === 'trade') {
+    const what = String(d.what || '').trim();
+    if (!what || what === 'Other…' || what === 'Other')
+      throw new Error('Enter the trade What kind (owner-added names are allowed)');
+    if (d.side === 'Buy') {
+      // Plan: layer-1 alone may save; missing booking stays on "to complete" (hold until linked).
+      const to_complete = tradeToComplete({
+        side: 'Buy',
+        stock_mode: d.stock_mode,
+        booking_id: d.booking_id,
+        counterparty_id: d.counterparty_id,
+        expires_on: d.expires_on,
+        what,
+      });
+      const stock_mode =
+        d.stock_mode === 'for_booking' && !d.booking_id ? 'hold_in_stock' : d.stock_mode;
+      return execute(db, actor, {
+        ...command,
+        kind: 'acquire_asset',
+        data: buildTradeBuyPayload({
+          what,
+          amount_units: d.amount_units,
+          price_cents: d.price_cents,
+          counterparty_id: d.counterparty_id,
+          date: d.date,
+          expires_on: d.expires_on,
+          notes: d.notes,
+          booking_id: d.booking_id,
+          stock_mode,
+          reference: d.reference,
+          status: d.status,
+          to_complete,
+        }),
+      });
+    }
+    if (!d.asset_id) throw new Error('Select the asset / batch to sell');
+    if (!d.counterparty_id) throw new Error('Select the buyer for this sale');
+    return execute(db, actor, {
+      ...command,
+      kind: 'sell_asset',
+      data: buildTradeSellPayload({
+        asset_id: d.asset_id,
+        amount_units: d.amount_units,
+        price_cents: d.price_cents,
+        counterparty_id: d.counterparty_id,
+        date: d.date,
+        paid: d.paid,
+        method: d.method,
+        reference: d.reference,
+        what,
+        status: d.status,
+      }),
+    });
+  }
   const historicalOpening = kind === 'acquire_asset' && d.historical_opening === true;
   const historicalRefund = kind === 'payment' && d.historical_refund_settlement === true;
   const historicalUndated = kind === 'booking' && d.historical_undated_booking === true;
@@ -2603,13 +3133,49 @@ export async function execute(
       throw new Error('Only the Owner can attach unreviewed historical source payloads');
     if (kind === 'booking' && ['Confirmed', 'No supplier cost'].includes(d.itinerary.cost_status))
       requirePermission(actor, 'manage_funding');
-    if (kind === 'revise') {
+    if (kind === 'booking_extra') {
+      const customerCents = d.customer_amount == null ? null : n(d.customer_amount);
+      const costCents = d.cost_amount == null ? null : n(d.cost_amount);
+      if (
+        !(customerCents != null && customerCents > 0) &&
+        !(costCents != null && costCents > 0) &&
+        !String(d.description || '').trim()
+      )
+        throw new Error(
+          'Add a customer price, a cost, or a description for this seat/bag/extra line',
+        );
+      if (customerCents != null && customerCents > 0)
+        requirePermission(actor, 'edit_customer_charges');
+      if (costCents != null && costCents > 0) {
+        requirePermission(actor, 'manage_funding');
+        if (!d.payee_id) throw new Error('Choose who Padova pays for this extra cost');
+        await requirePartyRole(tx, d.payee_id, 'seller');
+      }
+    }
+    if (kind === 'booking_change' || kind === 'revise') {
       if (d.fare_difference || d.supplier_change_fee) requirePermission(actor, 'manage_funding');
       if (d.change_seller_id) await requirePartyRole(tx, d.change_seller_id, 'seller');
       if (d.additional_customer_charge || d.padova_change_fee)
         requirePermission(actor, 'edit_customer_charges');
       if (d.padova_change_fee > d.additional_customer_charge)
         throw new Error('The total additional customer charge must include the Padova fee');
+    }
+    if (kind === 'booking_change') {
+      const hasFees =
+        n(d.fare_difference) > 0 ||
+        n(d.supplier_change_fee) > 0 ||
+        n(d.padova_change_fee) > 0 ||
+        n(d.additional_customer_charge) > 0;
+      const hasEnvelope =
+        Boolean(d.summary?.trim()) || Boolean(d.travel_start) || Boolean(d.travel_end);
+      if (!hasFees && !hasEnvelope && !String(d.reason || '').trim())
+        throw new Error('Record a reason, fee, or date/summary change');
+      if ((d.travel_start && !d.travel_end) || (!d.travel_start && d.travel_end))
+        throw new Error('Travel start and end are both required when changing dates');
+      if (d.travel_start && d.travel_end && d.travel_end < d.travel_start)
+        throw new Error('Travel end date is before start date. Fix the dates before saving.');
+    }
+    if (kind === 'revise') {
       const previous = await one(tx, 'SELECT itinerary FROM bookings WHERE id=$1', [d.booking_id]);
       if (
         d.itinerary.historical_sources !== undefined &&
@@ -2677,6 +3243,11 @@ export async function execute(
         'link_fulfillment',
         'confirm_travel_no_cost',
         'cancellation_cost',
+        'booking_extra',
+        'booking_change',
+        'booking_document',
+        'booking_document_hide',
+        'booking_taxes',
       ].includes(kind)
     ) {
       const booking = await one(
@@ -2793,17 +3364,54 @@ export async function execute(
         ).rows[0];
         if (posted)
           throw new Error('This draft was already used for a live booking and cannot be deleted');
-        const already = (
+        const latest = (
+          await tx.query(
+            `SELECT kind FROM commands
+             WHERE kind IN ('booking_draft_delete','booking_draft_restore')
+               AND result IS NOT NULL
+               AND payload->>'draft_id'=$1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            [d.draft_id],
+          )
+        ).rows[0] as { kind?: string } | undefined;
+        if (latest?.kind === 'booking_draft_delete')
+          throw new Error('This draft was already deleted');
+        result = { id: d.draft_id, deleted: true, draft: true };
+        break;
+      }
+      case 'booking_draft_restore': {
+        // Plan: soft-delete is remove-from-view; restore brings the draft back.
+        const draft = await one(tx, 'SELECT id, created_by FROM booking_drafts WHERE id=$1', [
+          d.draft_id,
+        ]);
+        if (draft.created_by !== actor.id)
+          throw new Error('Draft not found or not owned by this staff user');
+        const posted = (
           await tx.query(
             `SELECT 1 AS hit FROM commands
-             WHERE kind='booking_draft_delete' AND result IS NOT NULL
-               AND payload->>'draft_id'=$1
+             WHERE kind='booking' AND result IS NOT NULL
+               AND payload->'operational'->>'draft_id'=$1
              LIMIT 1`,
             [d.draft_id],
           )
         ).rows[0];
-        if (already) throw new Error('This draft was already deleted');
-        result = { id: d.draft_id, deleted: true, draft: true };
+        if (posted)
+          throw new Error('This draft was already used for a live booking and cannot be restored');
+        const latest = (
+          await tx.query(
+            `SELECT kind FROM commands
+             WHERE kind IN ('booking_draft_delete','booking_draft_restore')
+               AND result IS NOT NULL
+               AND payload->>'draft_id'=$1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            [d.draft_id],
+          )
+        ).rows[0] as { kind?: string } | undefined;
+        if (latest?.kind !== 'booking_draft_delete')
+          throw new Error('This draft is not deleted');
+        result = { id: d.draft_id, restored: true, draft: true };
         break;
       }
       case 'expected_event': {
@@ -3367,6 +3975,152 @@ export async function execute(
           [d.party_id, d.name, d.email, d.phone, d.roles, JSON.stringify(d.details)],
         );
         break;
+      case 'merge_party': {
+        if (d.keep_id === d.merge_id) throw new Error('Choose two different people to merge');
+        const keep = await one(tx, 'SELECT * FROM parties WHERE id=$1 FOR UPDATE', [d.keep_id]);
+        const merge = await one(tx, 'SELECT * FROM parties WHERE id=$1 FOR UPDATE', [d.merge_id]);
+        if (keep.archived_at) throw new Error('Keep person is already archived');
+        if (merge.archived_at || merge.details?.merged_into)
+          throw new Error('Duplicate is already merged or archived');
+        if (keep.kind !== merge.kind)
+          throw new Error('Merge only within the same kind (person with person)');
+        if (keep.kind !== 'person')
+          throw new Error('v1 Merge is for people records (customer/traveler duplicates)');
+        before = { keep, merge };
+        const roles = [...new Set([...(keep.roles ?? []), ...(merge.roles ?? [])])];
+        const keepDetails = {
+          ...(keep.details ?? {}),
+          merge_history: [
+            ...((keep.details?.merge_history as Row[]) ?? []),
+            {
+              merged_id: merge.id,
+              merged_name: merge.name,
+              command_id,
+              date,
+              reason: d.reason,
+              actor: actor.id,
+            },
+          ],
+        };
+        // Prefer keep contact facts; fill blanks from merge without inventing.
+        const email = keep.email || merge.email || '';
+        const phone = keep.phone || merge.phone || '';
+        await one(
+          tx,
+          'UPDATE parties SET roles=$2,email=$3,phone=$4,details=$5 WHERE id=$1 RETURNING id',
+          [keep.id, roles, email, phone, JSON.stringify(keepDetails)],
+        );
+        // Remap primary people links via insert/update patterns the adapter allows.
+        await tx.query('UPDATE bookings SET customer_id=$1 WHERE customer_id=$2', [
+          keep.id,
+          merge.id,
+        ]);
+        await tx.query('UPDATE bookings SET supplier_id=$1 WHERE supplier_id=$2', [
+          keep.id,
+          merge.id,
+        ]);
+        const travelerLinks = await tx.query(
+          'SELECT booking_id, person_id, status FROM booking_travelers WHERE person_id=$1',
+          [merge.id],
+        );
+        for (const link of travelerLinks.rows) {
+          const already = await tx.query(
+            'SELECT 1 AS ok FROM booking_travelers WHERE booking_id=$1 AND person_id=$2',
+            [link.booking_id, keep.id],
+          );
+          if (!already.rows.length) {
+            await insert(tx, 'booking_travelers', {
+              booking_id: link.booking_id,
+              person_id: keep.id,
+              status: link.status || 'Active',
+            });
+          }
+          await tx.query(
+            'UPDATE booking_travelers SET status=$3 WHERE booking_id=$1 AND person_id=$2',
+            [link.booking_id, merge.id, 'Cancelled'],
+          );
+        }
+        const payerLinks = await tx.query(
+          'SELECT booking_id, party_id, reason, command_id FROM booking_payers WHERE party_id=$1',
+          [merge.id],
+        );
+        for (const link of payerLinks.rows) {
+          const already = await tx.query(
+            'SELECT 1 AS ok FROM booking_payers WHERE booking_id=$1 AND party_id=$2',
+            [link.booking_id, keep.id],
+          );
+          if (!already.rows.length) {
+            await insert(tx, 'booking_payers', {
+              booking_id: link.booking_id,
+              party_id: keep.id,
+              reason: link.reason || 'Merged from duplicate person',
+              command_id,
+            });
+          }
+        }
+        const memberships = await tx.query(
+          'SELECT person_id, group_id, relationship, rules FROM party_relationships WHERE person_id=$1',
+          [merge.id],
+        );
+        for (const link of memberships.rows) {
+          const already = await tx.query(
+            'SELECT 1 AS ok FROM party_relationships WHERE person_id=$1 AND group_id=$2 AND relationship=$3',
+            [keep.id, link.group_id, link.relationship],
+          );
+          if (!already.rows.length) {
+            await insert(tx, 'party_relationships', {
+              person_id: keep.id,
+              group_id: link.group_id,
+              relationship: link.relationship,
+              rules: link.rules ?? {},
+            });
+          }
+        }
+        const heldAssets = await tx.query('SELECT * FROM assets WHERE holder_id=$1', [merge.id]);
+        for (const asset of heldAssets.rows) {
+          await tx.query(
+            `UPDATE assets SET holder_id=$2, name=$3, kind=$4, issuer=$5, seller_id=$6,
+             source_booking_id=$7, ownership=$8, expires_on=$9, restrictions=$10, reference=$11,
+             opening_quantity=$12, opening_cost=$13
+             WHERE id=$1`,
+            [
+              asset.id,
+              keep.id,
+              asset.name,
+              asset.kind,
+              asset.issuer,
+              asset.seller_id,
+              asset.source_booking_id,
+              asset.ownership,
+              asset.expires_on,
+              asset.restrictions,
+              asset.reference,
+              asset.opening_quantity,
+              asset.opening_cost,
+            ],
+          );
+        }
+        const mergeDetails = {
+          ...(merge.details ?? {}),
+          merged_into: keep.id,
+          merged_at: date,
+          merged_by: actor.id,
+          merge_reason: d.reason,
+          merge_command_id: command_id,
+        };
+        result = await one(
+          tx,
+          'UPDATE parties SET archived_at=now(), details=$2 WHERE id=$1 RETURNING *',
+          [merge.id, JSON.stringify(mergeDetails)],
+        );
+        await insert(tx, 'notes', {
+          record_type: 'party',
+          record_id: keep.id,
+          actor: actor.id,
+          body: `Merged duplicate “${merge.name}” (${merge.id}) into this record. Reason: ${d.reason}`,
+        });
+        break;
+      }
       case 'relationship': {
         const p = await one(tx, 'SELECT * FROM parties WHERE id=$1', [d.person_id]);
         if (p.kind !== 'person') throw new Error('Membership requires a canonical person');
@@ -3421,6 +4175,138 @@ export async function execute(
             body: JSON.stringify({ issuer, owner_id, notes }),
             actor: actor.id,
           });
+        break;
+      }
+      case 'update_fee_settings': {
+        const rel =
+          tx.storage === 'padova' ? 'padova.fee_settings' : 'public.fee_settings';
+        if (!(await tx.query('SELECT to_regclass($1) AS name', [rel])).rows[0]?.name)
+          throw new Error(
+            'Card fee settings extension is not installed in this workspace; no records were changed',
+          );
+        const updated = await tx.query(
+          `UPDATE fee_settings SET
+            customer_card_fee_bps=$1,
+            padova_card_fee_bps=$2,
+            padova_card_fee_flat_cents=$3,
+            updated_at=now(),
+            updated_by=$4
+           WHERE id=true
+           RETURNING *`,
+          [
+            d.customer_card_fee_bps,
+            d.padova_card_fee_bps,
+            d.padova_card_fee_flat_cents,
+            actor.id,
+          ],
+        );
+        if (!updated.rows[0]) {
+          await insert(tx, 'fee_settings', {
+            id: true,
+            customer_card_fee_bps: d.customer_card_fee_bps,
+            padova_card_fee_bps: d.padova_card_fee_bps,
+            padova_card_fee_flat_cents: d.padova_card_fee_flat_cents,
+            updated_by: actor.id,
+          });
+        }
+        // Singleton settings row uses boolean PK; audit expects a UUID record_id.
+        result = {
+          id: command_id,
+          customer_card_fee_bps: d.customer_card_fee_bps,
+          padova_card_fee_bps: d.padova_card_fee_bps,
+          padova_card_fee_flat_cents: d.padova_card_fee_flat_cents,
+        };
+        break;
+      }
+      case 'invoice_draft': {
+        const rel =
+          tx.storage === 'padova' ? 'padova.invoice_drafts' : 'public.invoice_drafts';
+        if (!(await tx.query('SELECT to_regclass($1) AS name', [rel])).rows[0]?.name)
+          throw new Error(
+            'Invoice drafts extension is not installed in this workspace; no records were changed',
+          );
+        await one(tx, 'SELECT id FROM parties WHERE id=$1', [d.customer_id]);
+        const booking_ids = invoiceBookingIds(d.lines as any);
+        result = await insert(tx, 'invoice_drafts', {
+          customer_id: d.customer_id,
+          status: 'draft',
+          customer_name: d.customer_name,
+          // jsonb: insert() only stringifies plain objects, not arrays
+          lines: JSON.stringify(d.lines),
+          total_cents: d.total_cents,
+          incomplete: d.incomplete,
+          booking_ids,
+          created_by: actor.id,
+          note: d.note || '',
+        });
+        break;
+      }
+      case 'invoice_approve': {
+        if (actor.role !== 'OWNER')
+          throw new Error('Only an Owner can approve invoices for customer send');
+        const inv = await one(tx, 'SELECT * FROM invoice_drafts WHERE id=$1 FOR UPDATE', [
+          d.invoice_id,
+        ]);
+        if (!canApproveInvoice(inv.status))
+          throw new Error(`Invoice status ${inv.status} cannot be approved`);
+        result = (
+          await tx.query(
+            `UPDATE invoice_drafts SET status='approved', approved_by=$2, approved_at=now(), updated_at=now()
+             WHERE id=$1 RETURNING *`,
+            [d.invoice_id, actor.id],
+          )
+        ).rows[0];
+        break;
+      }
+      case 'invoice_mark_sent': {
+        if (actor.role !== 'OWNER')
+          throw new Error('Only an Owner can mark an invoice sent');
+        const inv = await one(tx, 'SELECT * FROM invoice_drafts WHERE id=$1 FOR UPDATE', [
+          d.invoice_id,
+        ]);
+        if (!canMarkInvoiceSent(inv.status))
+          throw new Error(
+            'Mark previewed first; customer email is Owner-only and never automatic',
+          );
+        const sentTo = String(d.sent_to || '').trim();
+        if (sentTo && !sentTo.includes('@'))
+          throw new Error('sent_to must be an email address when provided');
+        const hasSendCols = Object.prototype.hasOwnProperty.call(inv, 'sent_to');
+        result = (
+          await tx.query(
+            hasSendCols
+              ? `UPDATE invoice_drafts SET status='sent', sent_by=$2, sent_at=now(),
+                  sent_to=COALESCE(NULLIF($4,''), sent_to),
+                  whatsapp_copy_noted_at=CASE WHEN $5 THEN now() ELSE whatsapp_copy_noted_at END,
+                  note=CASE WHEN $3='' THEN note ELSE trim(both from note || E'\n' || $3) END,
+                  updated_at=now()
+                 WHERE id=$1 RETURNING *`
+              : `UPDATE invoice_drafts SET status='sent', sent_by=$2, sent_at=now(),
+                  note=CASE WHEN $3='' THEN note ELSE trim(both from note || E'\n' || $3) END,
+                  updated_at=now()
+                 WHERE id=$1 RETURNING *`,
+            hasSendCols
+              ? [d.invoice_id, actor.id, d.note || '', sentTo, Boolean(d.whatsapp_copy_noted)]
+              : [d.invoice_id, actor.id, d.note || ''],
+          )
+        ).rows[0];
+        break;
+      }
+      case 'invoice_void': {
+        if (actor.role !== 'OWNER') throw new Error('Only an Owner can void invoices');
+        const inv = await one(tx, 'SELECT * FROM invoice_drafts WHERE id=$1 FOR UPDATE', [
+          d.invoice_id,
+        ]);
+        if (!canVoidInvoice(inv.status))
+          throw new Error(`Invoice status ${inv.status} cannot be voided`);
+        result = (
+          await tx.query(
+            `UPDATE invoice_drafts SET status='voided', voided_by=$2, voided_at=now(),
+              note=trim(both from note || E'\nVoid: ' || $3), updated_at=now()
+             WHERE id=$1 RETURNING *`,
+            [d.invoice_id, actor.id, d.reason],
+          )
+        ).rows[0];
         break;
       }
       case 'transfer_asset': {
@@ -3496,6 +4382,8 @@ export async function execute(
           date,
           expires_on: d.expires_on,
           restrictions: d.restrictions,
+          points_source:
+            d.kind && /point|mile/i.test(String(d.kind)) ? 'transfer with bonus' : undefined,
           reference: d.reference,
           ownership: 'Padova',
           holder_id: source.holder_id,
@@ -3657,6 +4545,16 @@ export async function execute(
         } = d;
         if (historical_undated_booking)
           values.itinerary = { ...values.itinerary, travel_dates_unknown: true };
+        {
+          const deadline =
+            values.itinerary?.ticketing_deadline || operational?.ticketing_deadline || null;
+          if (values.reservation_status === 'Held' && !deadline)
+            throw new Error('Held PNR requires a ticketing deadline date');
+          if (deadline) {
+            values.itinerary = { ...values.itinerary, ticketing_deadline: deadline };
+            if (operational) operational.ticketing_deadline = deadline;
+          }
+        }
         if (operational) {
           await requirePartyRole(tx, d.customer_id, 'customer');
           for (const traveler of traveler_ids) await requirePartyRole(tx, traveler, 'traveler');
@@ -3692,6 +4590,17 @@ export async function execute(
             const calculated = percentagePrice(pricing.comparable_price, pricing.discount_bps);
             if (!pricing.manual_override && sale !== calculated)
               throw new Error('Customer price differs from the percentage calculation');
+            requirePermission(actor, 'edit_customer_charges');
+          }
+          if (operational.pricing?.method === 'Same as Cost') {
+            if (!operational.sale_known)
+              throw new Error('Same as Cost requires a known customer price matching booked cost');
+            requirePermission(actor, 'edit_customer_charges');
+          }
+          if (operational.pricing?.method === 'Fixed Margin') {
+            const pricing = operational.pricing;
+            if (pricing.margin_cents === undefined || !operational.sale_known)
+              throw new Error('Fixed Margin requires margin and final customer price');
             requirePermission(actor, 'edit_customer_charges');
           }
           if (
@@ -4167,6 +5076,107 @@ export async function execute(
         );
         break;
       }
+      case 'booking_extra': {
+        // Plan: seats/bags — optional customer price + optional cost; omit side = Unknown.
+        // trip_shared: enter once at trip level; money stays on this booking.
+        const b = await economics(tx, d.booking_id);
+        touched.add(d.booking_id);
+        const customerCents =
+          d.customer_amount == null || n(d.customer_amount) <= 0 ? null : n(d.customer_amount);
+        const costCents = d.cost_amount == null || n(d.cost_amount) <= 0 ? null : n(d.cost_amount);
+        const kindLabel = bookingExtraChargeKind(d.category);
+        const baseLabel = bookingExtraLabel({
+          category: d.category,
+          description: d.description,
+        });
+        const label = d.trip_shared ? tripSharedExtraLabel(baseLabel) : baseLabel;
+        let charge_id: string | undefined;
+        let funding_id: string | undefined;
+        if (customerCents != null) {
+          if (n(b.sale) + customerCents < 0) throw new Error('Charges cannot become negative');
+          const charge = await insert(tx, 'charges', {
+            booking_id: d.booking_id,
+            kind: kindLabel,
+            amount: customerCents,
+            effective_on: date,
+            command_id,
+          });
+          charge_id = charge.id;
+          await line(
+            tx,
+            command_id,
+            date,
+            'customer_receivable',
+            'booking_revenue',
+            customerCents,
+            d.booking_id,
+            b.customer_id,
+          );
+        }
+        if (costCents != null) {
+          const funding = await postFunding(
+            tx,
+            command_id,
+            {
+              booking_id: d.booking_id,
+              kind: kindLabel,
+              face_amount: costCents,
+              cost: costCents,
+              seller_id: d.payee_id,
+              reference: d.reference || label,
+              settled: false,
+            },
+            date,
+          );
+          funding_id = funding.id;
+        }
+        if (d.trip_shared) {
+          const locked = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+            d.booking_id,
+          ]);
+          const sharedId = randomUUID();
+          const operational = appendTripSharedCharge(locked.itinerary?.operational_entry, {
+            id: sharedId,
+            label,
+            customer_amount_cents: customerCents,
+            cost_amount_cents: costCents,
+            posted_booking_id: d.booking_id,
+            posted_booking_code: String(locked.code || ''),
+            ...(charge_id ? { charge_id } : {}),
+            ...(funding_id ? { funding_id } : {}),
+            effective_on: date,
+            ...(d.reason ? { note: String(d.reason).trim().slice(0, 2000) } : {}),
+          });
+          await tx.query('UPDATE bookings SET itinerary=$2, revision=revision+1 WHERE id=$1', [
+            d.booking_id,
+            JSON.stringify({
+              ...(locked.itinerary && typeof locked.itinerary === 'object' ? locked.itinerary : {}),
+              operational_entry: operational,
+            }),
+          ]);
+        }
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `${d.trip_shared ? 'Trip shared charge' : 'Extra'} (${label})${
+            customerCents != null ? ` · customer ${customerCents}¢` : ' · customer Unknown'
+          }${costCents != null ? ` · cost ${costCents}¢` : ' · cost Unknown'}${
+            d.reason ? `: ${String(d.reason).trim()}` : ''
+          }`,
+          actor: actor.id,
+        });
+        result = {
+          id: d.booking_id,
+          category: d.category,
+          label,
+          customer_amount: customerCents,
+          cost_amount: costCents,
+          charge_id,
+          funding_id,
+          trip_shared: Boolean(d.trip_shared),
+        };
+        break;
+      }
       case 'confirm_sale': {
         before = await one(tx, 'SELECT * FROM bookings WHERE id=$1', [d.booking_id]);
         if (before.itinerary?.sale_known !== false)
@@ -4269,6 +5279,8 @@ export async function execute(
               ),
             ),
           };
+        if (Number(d.customer_card_fee) > 0)
+          requirePermission(actor, 'edit_customer_charges');
         const posted = await postPayment(tx, command_id, d, date);
         result = posted.result;
         for (const booking_id of posted.bookings) touched.add(booking_id);
@@ -4295,6 +5307,72 @@ export async function execute(
             d.booking_id,
             p.party_id,
           );
+        break;
+      }
+      case 'return_customer_credit': {
+        // Plan: return held deposit/credit as payment out (customer_credit → cash).
+        await requirePartyRole(tx, d.party_id, 'customer');
+        const balances = (
+          await tx.query(
+            `SELECT id, party_id, direction, paid_on, current_amount, allocated, commission_allocated, reference, method
+             FROM payment_balances WHERE party_id=$1 AND direction='customer'`,
+            [d.party_id],
+          )
+        ).rows.map((r) => ({
+          id: String(r.id),
+          party_id: r.party_id == null ? null : String(r.party_id),
+          direction: r.direction == null ? undefined : String(r.direction),
+          paid_on: r.paid_on == null ? null : String(r.paid_on),
+          current_amount: r.current_amount,
+          allocated: r.allocated,
+          commission_allocated: r.commission_allocated,
+          reference: r.reference == null ? null : String(r.reference),
+          method: r.method == null ? null : String(r.method),
+        })) as WalletPayment[];
+        const held = heldCustomerCreditCents(balances, d.party_id);
+        if (d.amount > held)
+          throw new Error(
+            `Return exceeds held customer credit (${held} cents available; requested ${d.amount})`,
+          );
+        const plan = planCustomerCreditReturn(
+          unallocatedCustomerSlices(balances, d.party_id),
+          d.amount,
+        );
+        const payout = await insert(tx, 'payments', {
+          direction: 'customer_refund',
+          account_id: d.account_id,
+          party_id: d.party_id,
+          amount: d.amount,
+          paid_on: date,
+          method: d.method,
+          reference: d.reference || d.reason,
+        });
+        await line(
+          tx,
+          command_id,
+          date,
+          'customer_credit',
+          'cash',
+          d.amount,
+          undefined,
+          d.party_id,
+        );
+        for (const step of plan) {
+          await insert(tx, 'payment_adjustments', {
+            payment_id: step.payment_id,
+            delta: -step.reduce_by,
+            reason: `Returned held customer credit: ${d.reason}`,
+            command_id,
+          });
+        }
+        result = {
+          id: payout.id,
+          party_id: d.party_id,
+          amount: d.amount,
+          held_before: held,
+          held_after: held - d.amount,
+          adjusted_payments: plan,
+        };
         break;
       }
       case 'correct_payment': {
@@ -4390,13 +5468,25 @@ export async function execute(
           name: d.name,
           issuer: d.issuer,
           expires_on: d.expires_on ?? null,
-          restrictions: d.restrictions,
+          restrictions: encodeExpiryRuleInRestrictions(d.expiry_rule, d.restrictions),
           reference: d.reference,
           edit_version: d.expected_version + 1,
         };
         break;
       }
       case 'acquire_asset': {
+        // Plan: Cap1 credits lock to one of ~3 account profiles — never invent a profile.
+        let cap1ProfileId: string | null = null;
+        if (d.kind === 'Capital One credit') {
+          if (!d.profile_id)
+            throw new Error('Choose the Cap1 account profile that holds this credit');
+          const profile = await one(tx, 'SELECT * FROM booking_source_profiles WHERE id=$1', [
+            d.profile_id,
+          ]);
+          if (String(profile.status || '') !== 'Active')
+            throw new Error('Cap1 account profile must be Active');
+          cap1ProfileId = String(profile.id);
+        }
         if (historicalOpening) {
           await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
             `historical-voucher:${d.issuer}:${d.reference}`,
@@ -4411,6 +5501,12 @@ export async function execute(
           )
             throw new Error('This historical voucher already exists; reuse its original asset');
           result = await createAsset(tx, command_id, { ...d, movement_kind: 'historical_opening' });
+          if (cap1ProfileId) {
+            await insert(tx, 'source_profile_assets', {
+              asset_id: result.id,
+              profile_id: cap1ProfileId,
+            });
+          }
           await line(
             tx,
             command_id,
@@ -4434,6 +5530,12 @@ export async function execute(
         if (d.ownership === 'External' && d.cost !== 0)
           throw new Error('External points are paid on use; opening Padova cost must be zero');
         result = await createAsset(tx, command_id, d);
+        if (cap1ProfileId) {
+          await insert(tx, 'source_profile_assets', {
+            asset_id: result.id,
+            profile_id: cap1ProfileId,
+          });
+        }
         if (d.ownership === 'Padova')
           await line(
             tx,
@@ -4505,11 +5607,7 @@ export async function execute(
         break;
       }
       case 'benefit': {
-        const source = await one(tx, 'SELECT itinerary FROM bookings WHERE id=$1', [d.booking_id]);
-        if (source.itinerary.operational_entry?.source_profile_id)
-          throw new Error(
-            'Use the account-linked credit request Received workflow for this booking',
-          );
+        const source = await one(tx, 'SELECT * FROM bookings WHERE id=$1', [d.booking_id]);
         if (
           d.reference &&
           (source.itinerary.price_match_history ?? []).some(
@@ -4526,17 +5624,39 @@ export async function execute(
           throw new Error('Enter both original and final rate, or leave both blank');
         if (d.original_rate !== undefined && d.original_rate - d.final_rate !== d.amount)
           throw new Error('Generated credit must equal original rate minus final confirmed rate');
+        const profileId =
+          d.profile_id || source.itinerary.operational_entry?.source_profile_id || null;
+        // Plan: Cap1 credits lock to an account profile. UI requires it; reject Cap1 bookings that
+        // already have a source method but no profile (never invent a profile).
+        const methodId = source.itinerary.operational_entry?.source_method_id;
+        if (!profileId && methodId)
+          throw new Error('Choose the Cap1 account profile that holds this credit');
+        if (profileId) {
+          const profile = await one(tx, 'SELECT * FROM booking_source_profiles WHERE id=$1', [
+            profileId,
+          ]);
+          if (methodId && profile.source_method_id !== methodId)
+            throw new Error('Credit receiving profile must match the booking source');
+        }
         result = await createAsset(tx, command_id, {
           name: d.name,
           kind: d.kind,
           issuer: 'Capital One',
+          ownership: 'Padova',
           source_booking_id: d.booking_id,
           quantity: d.amount,
           cost: d.amount,
           date,
           expires_on: d.expires_on,
           movement_kind: 'earned_credit',
+          reference: d.reference || undefined,
         });
+        if (profileId) {
+          await insert(tx, 'source_profile_assets', {
+            asset_id: result.id,
+            profile_id: profileId,
+          });
+        }
         await movement(tx, command_id, date, 'earned_credit', d.amount, d.booking_id);
         await line(
           tx,
@@ -4549,9 +5669,276 @@ export async function execute(
         );
         await appendPriceMatch(tx, actor, command_id, {
           ...d,
+          profile_id: profileId || undefined,
           status: 'Verified available',
           asset_id: result.id,
         });
+        break;
+      }
+      case 'void_credit': {
+        const asset = await one(tx, 'SELECT * FROM assets WHERE id=$1 FOR UPDATE', [d.asset_id]);
+        if (asset.kind !== 'Capital One credit')
+          throw new Error('Only Capital One credits use Void credit');
+        const priorVoid = await one(
+          tx,
+          `SELECT count(*)::int AS n FROM asset_movements
+           WHERE asset_id=$1 AND kind IN ('void','credit_void')`,
+          [d.asset_id],
+        );
+        if (Number(priorVoid.n) > 0) throw new Error('This credit is already voided');
+        const bal = await one(tx, 'SELECT balance FROM asset_balances WHERE id=$1', [d.asset_id]);
+        const remaining = n(bal.balance);
+        if (remaining <= 0) throw new Error('Nothing left to void on this credit');
+        const used = await consume(tx, command_id, d.asset_id, remaining, date, 'void');
+        // Cap1 face = inventory; reverse earned credit income for unused face (append-only).
+        const voidFace = remaining;
+        await movement(tx, command_id, date, 'credit_void', -voidFace, asset.source_booking_id);
+        await line(
+          tx,
+          command_id,
+          date,
+          'credit_benefit_income',
+          'travel_inventory',
+          voidFace,
+          asset.source_booking_id || undefined,
+        );
+        if (d.reason?.trim()) {
+          await insert(tx, 'notes', {
+            record_type: 'asset',
+            record_id: d.asset_id,
+            body: `Credit voided: ${d.reason.trim()}`,
+            actor: actor.id,
+          });
+        }
+        result = {
+          id: d.asset_id,
+          quantity: voidFace,
+          basis: used.basis,
+          status: 'voided',
+        };
+        break;
+      }
+      case 'void_money_back': {
+        const booking = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+          d.booking_id,
+        ]);
+        if (d.target_kind === 'commission') {
+          const c = await one(tx, 'SELECT * FROM commissions WHERE id=$1', [d.target_id]);
+          if (c.booking_id !== d.booking_id)
+            throw new Error('Commission does not belong to this booking');
+          const received = await one(
+            tx,
+            'SELECT COALESCE(sum(amount),0)::bigint AS amount FROM commission_allocations WHERE commission_id=$1',
+            [d.target_id],
+          );
+          if (Number(received.amount) > 0)
+            throw new Error(
+              'Cannot void a commission that already has receipts; reverse the receipt first',
+            );
+          const deducted = moneyBackDeductedCents(
+            booking.itinerary?.operational_entry,
+            'commission',
+            String(d.target_id),
+          );
+          if (deducted > 0)
+            throw new Error(
+              'Cannot void a commission that already has deductions; record remaining as deduction instead',
+            );
+        }
+        if (d.target_kind === 'referral') {
+          const r = await one(tx, 'SELECT * FROM referrals WHERE id=$1', [d.target_id]);
+          if (r.booking_id !== d.booking_id)
+            throw new Error('Referral does not belong to this booking');
+          const paid = await one(
+            tx,
+            'SELECT COALESCE(sum(amount),0)::bigint AS amount FROM referral_payments WHERE referral_id=$1',
+            [d.target_id],
+          );
+          if (Number(paid.amount) > 0)
+            throw new Error(
+              'Cannot void a referrer share that already has payouts; reverse the payout first',
+            );
+        }
+        const priorOp = booking.itinerary?.operational_entry ?? {};
+        if (isMoneyBackDenied(priorOp, d.target_kind, d.target_id))
+          throw new Error('This Money Back line is already denied; void is a separate Padova cancel');
+        // Ensure operational_entry exists with Plan version when voiding Money Back on a booking
+        // that only has price-match history (no How-booked entry yet).
+        const baseOp =
+          priorOp && typeof priorOp === 'object' && (priorOp as Row).version === 1
+            ? (priorOp as Row)
+            : { version: 1 as const, sale_known: booking.itinerary?.sale_known !== false };
+        const operational = appendMoneyBackVoid(baseOp, {
+          target_kind: d.target_kind,
+          target_id: d.target_id,
+          reason: d.reason.trim(),
+          voided_at: new Date().toISOString(),
+          voided_by: actor.id,
+          command_id,
+        });
+        await tx.query('UPDATE bookings SET itinerary=$2 WHERE id=$1', [
+          d.booking_id,
+          JSON.stringify({
+            ...booking.itinerary,
+            operational_entry: operational,
+          }),
+        ]);
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `Money Back voided (${d.target_kind}/${d.target_id}): ${d.reason.trim()}`,
+          actor: actor.id,
+        });
+        result = {
+          id: d.booking_id,
+          target_kind: d.target_kind,
+          target_id: d.target_id,
+          status: 'voided',
+        };
+        break;
+      }
+      case 'deny_money_back': {
+        const booking = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+          d.booking_id,
+        ]);
+        if (d.target_kind === 'commission') {
+          const c = await one(tx, 'SELECT * FROM commissions WHERE id=$1', [d.target_id]);
+          if (c.booking_id !== d.booking_id)
+            throw new Error('Commission does not belong to this booking');
+          const received = await one(
+            tx,
+            'SELECT COALESCE(sum(amount),0)::bigint AS amount FROM commission_allocations WHERE commission_id=$1',
+            [d.target_id],
+          );
+          if (Number(received.amount) > 0)
+            throw new Error(
+              'Cannot deny a commission that already has receipts; reverse the receipt first',
+            );
+          const deducted = moneyBackDeductedCents(
+            booking.itinerary?.operational_entry,
+            'commission',
+            String(d.target_id),
+          );
+          if (deducted > 0)
+            throw new Error(
+              'Cannot deny a commission that already has deductions; deduct remaining instead',
+            );
+        }
+        if (d.target_kind === 'referral') {
+          const r = await one(tx, 'SELECT * FROM referrals WHERE id=$1', [d.target_id]);
+          if (r.booking_id !== d.booking_id)
+            throw new Error('Referral does not belong to this booking');
+          const paid = await one(
+            tx,
+            'SELECT COALESCE(sum(amount),0)::bigint AS amount FROM referral_payments WHERE referral_id=$1',
+            [d.target_id],
+          );
+          if (Number(paid.amount) > 0)
+            throw new Error(
+              'Cannot deny a referrer share that already has payouts; reverse the payout first',
+            );
+        }
+        const priorOp = booking.itinerary?.operational_entry ?? {};
+        const baseOp =
+          priorOp && typeof priorOp === 'object' && (priorOp as Row).version === 1
+            ? (priorOp as Row)
+            : { version: 1 as const, sale_known: booking.itinerary?.sale_known !== false };
+        const operational = appendMoneyBackDenial(baseOp, {
+          target_kind: d.target_kind,
+          target_id: d.target_id,
+          reason: d.reason.trim(),
+          denied_at: new Date().toISOString(),
+          denied_by: actor.id,
+          command_id,
+        });
+        await tx.query('UPDATE bookings SET itinerary=$2 WHERE id=$1', [
+          d.booking_id,
+          JSON.stringify({
+            ...booking.itinerary,
+            operational_entry: operational,
+          }),
+        ]);
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `Money Back denied (${d.target_kind}/${d.target_id}): ${d.reason.trim()}`,
+          actor: actor.id,
+        });
+        result = {
+          id: d.booking_id,
+          target_kind: d.target_kind,
+          target_id: d.target_id,
+          status: 'denied',
+        };
+        break;
+      }
+      case 'deduct_money_back': {
+        const booking = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+          d.booking_id,
+        ]);
+        const c = await one(tx, 'SELECT * FROM commissions WHERE id=$1 FOR UPDATE', [d.target_id]);
+        if (c.booking_id !== d.booking_id)
+          throw new Error('Commission does not belong to this booking');
+        const received = await one(
+          tx,
+          'SELECT COALESCE(sum(amount),0)::bigint AS amount FROM commission_allocations WHERE commission_id=$1',
+          [d.target_id],
+        );
+        const priorOp = booking.itinerary?.operational_entry ?? {};
+        const alreadyDeducted = moneyBackDeductedCents(priorOp, 'commission', String(d.target_id));
+        const outstanding =
+          n(c.gross) - n(c.retained) - n(received.amount) - alreadyDeducted;
+        if (d.amount > outstanding)
+          throw new Error(
+            'Deduction exceeds outstanding commission (after receipts and prior deductions)',
+          );
+        const baseOp =
+          priorOp && typeof priorOp === 'object' && (priorOp as Row).version === 1
+            ? (priorOp as Row)
+            : { version: 1 as const, sale_known: booking.itinerary?.sale_known !== false };
+        const operational = appendMoneyBackDeduction(baseOp, {
+          target_kind: 'commission',
+          target_id: String(d.target_id),
+          amount_cents: d.amount,
+          how_received: 'deducted',
+          reason: d.reason.trim(),
+          deducted_at: new Date().toISOString(),
+          deducted_by: actor.id,
+          command_id,
+        });
+        await tx.query('UPDATE bookings SET itinerary=$2 WHERE id=$1', [
+          d.booking_id,
+          JSON.stringify({
+            ...booking.itinerary,
+            operational_entry: operational,
+          }),
+        ]);
+        // Reverse accrual for the deducted net (never rewrite commissions.gross/retained).
+        await movement(tx, command_id, date, 'commission_accrual', -d.amount, d.booking_id);
+        await line(
+          tx,
+          command_id,
+          date,
+          'commission_revenue',
+          'commission_receivable',
+          d.amount,
+          d.booking_id,
+        );
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `Money Back deducted (${d.target_kind}/${d.target_id}): ${d.amount}¢ — ${d.reason.trim()}`,
+          actor: actor.id,
+        });
+        result = {
+          id: d.booking_id,
+          target_kind: d.target_kind,
+          target_id: d.target_id,
+          amount: d.amount,
+          how_received: 'deducted',
+          status: outstanding === d.amount ? 'received' : 'confirmed',
+        };
+        touched.add(d.booking_id);
         break;
       }
       case 'price_match_event': {
@@ -4794,7 +6181,7 @@ export async function execute(
               agreed_basis: d.referral.agreed_basis,
               earned: d.referral.earned ?? true,
               earned_on: (d.referral.earned ?? true) ? date : undefined,
-              payable_when: d.referral.payable_when ?? 'After travel',
+              payable_when: d.referral.payable_when ?? 'After commission confirmed',
               due_on: referralDue,
               cancellation_rule: d.referral.cancellation_rule,
               reason: d.referral.reason,
@@ -4844,7 +6231,7 @@ export async function execute(
             agreed_basis: d.agreed_basis,
             earned: d.earned ?? true,
             earned_on: (d.earned ?? true) ? date : undefined,
-            payable_when: d.payable_when ?? 'After travel',
+            payable_when: d.payable_when ?? 'After commission confirmed',
             due_on: d.due_on,
             cancellation_rule: d.cancellation_rule,
             reason: d.reason,
@@ -5083,6 +6470,17 @@ export async function execute(
               ? null
               : proportional(n(component.cost), d.supplier_expected, n(component.face_amount))
             : d.supplier_expected;
+        const cardFeeCharges = (
+          await tx.query(
+            `SELECT kind, amount::bigint AS amount FROM charges WHERE booking_id=$1 AND amount>0`,
+            [b.id],
+          )
+        ).rows as { kind: string; amount: number }[];
+        const retainedCard = d.refund_card_fee ? 0 : cardFeeChargesCents(cardFeeCharges);
+        const reason = withChargebackInText(
+          `${d.reason.trim()}\n${cardFeeRefundReasonSuffix(Boolean(d.refund_card_fee), retainedCard)}`.trim(),
+          d.chargeback_status,
+        );
         result = await insert(tx, 'refunds', {
           booking_id: b.id,
           traveler_id: d.traveler_id,
@@ -5093,10 +6491,22 @@ export async function execute(
           ...(quantityUnit === 'count' ? { quantity_unit: 'count' } : {}),
           customer_due: d.customer_due,
           due_on: d.due_on,
-          reason: d.reason,
+          reason,
           command_id,
         });
+        result.refund_card_fee = Boolean(d.refund_card_fee);
+        result.retained_card_fee_cents = retainedCard;
         if (d.travel_component_id) result.travel_component_id = d.travel_component_id;
+        const callNoteBody = formatRefundCallNoteBody(String(d.call_notes || ''));
+        if (callNoteBody) {
+          await insert(tx, 'notes', {
+            record_type: 'refund',
+            record_id: result.id,
+            actor: actor.id,
+            body: callNoteBody,
+          });
+          result.call_notes_latest = callNoteBody.replace(/^call note\s*:\s*/i, '').trim();
+        }
         if (reduction) {
           await insert(tx, 'charges', {
             booking_id: b.id,
@@ -5242,6 +6652,29 @@ export async function execute(
         );
         if (d.amount > n(r.supplier_expected) - n(received.amount))
           throw new Error('Refund receipt exceeds expected amount');
+        if (d.form === SUPPLIER_REFUND_DENIED_FORM) {
+          // Plan: supplier status denied — close expected follow-up; never invent recovery.
+          if (d.asset_id || d.original_movement_id || d.new_asset || d.account_id)
+            throw new Error('Denied supplier return cannot restore inventory or post cash');
+          const reason = String(d.reference || '').trim();
+          if (!reason) throw new Error('Denied supplier return requires a reference / reason');
+          result = await insert(tx, 'refund_movements', {
+            refund_id: r.id,
+            kind: 'supplier_received',
+            form: SUPPLIER_REFUND_DENIED_FORM,
+            amount: d.amount,
+            recognized_basis: 0,
+            effective_on: date,
+            command_id,
+          });
+          await insert(tx, 'notes', {
+            record_type: 'booking',
+            record_id: r.booking_id,
+            body: `Supplier refund denied (${d.amount}¢ of expected closed; $0 recovered): ${reason}`,
+            actor: actor.id,
+          });
+          break;
+        }
         let basis = d.amount,
           debitAccount = 'travel_inventory';
         const payableCredit = d.form === 'Supplier payable credit';
@@ -5503,41 +6936,169 @@ export async function execute(
         touched.add(b.id);
         const totals = await one(
           tx,
-          "SELECT COALESCE(sum(amount) FILTER (WHERE kind='supplier_received' AND form='cash'),0) received,COALESCE(sum(amount) FILTER (WHERE kind IN ('customer_paid','customer_credit_handed_over')),0) paid FROM refund_movements WHERE refund_id=$1",
+          `SELECT COALESCE(sum(amount) FILTER (WHERE kind='supplier_received' AND form='cash'),0) cash_received,COALESCE(sum(amount) FILTER (WHERE kind='supplier_received'),0) supplier_settled,COALESCE(sum(amount) FILTER (WHERE kind IN (${REFUND_CUSTOMER_SETTLED_SQL})),0) paid FROM refund_movements WHERE refund_id=$1`,
           [r.id],
         );
         if (d.amount > n(r.customer_due) - n(totals.paid))
           throw new Error('Refund payout exceeds liability');
-        if (n(totals.received) < n(r.supplier_expected) && !d.override_reason?.trim())
+        // Plan: wait for supplier cash unless expected is closed (received or denied) or override.
+        if (
+          n(totals.supplier_settled) < n(r.supplier_expected) &&
+          n(totals.cash_received) < n(r.supplier_expected) &&
+          !d.override_reason?.trim()
+        )
           throw new Error('Wait for supplier cash refund or record an explicit handling override');
-        const p = await insert(tx, 'payments', {
-          direction: 'customer_refund',
-          account_id: d.account_id,
-          party_id: b.customer_id,
-          amount: d.amount,
-          paid_on: date,
-          method: d.method,
-          reference: d.reference,
-        });
-        result = await insert(tx, 'refund_movements', {
-          refund_id: r.id,
-          kind: 'customer_paid',
-          form: 'cash',
-          amount: d.amount,
-          payment_id: p.id,
-          effective_on: date,
-          command_id,
-        });
-        await line(
-          tx,
-          command_id,
-          date,
-          'customer_receivable',
-          'cash',
-          d.amount,
-          b.id,
-          b.customer_id,
-        );
+        const how = d.how_given || 'original_method';
+        if (how === 'customer_credit') {
+          // Plan: refund kept as Padova-held credit (wallet). Not a cash payout.
+          const creditPayment = await insert(tx, 'payments', {
+            direction: 'customer',
+            account_id: d.account_id,
+            party_id: b.customer_id,
+            amount: d.amount,
+            paid_on: date,
+            method: String(d.method || '').trim() || 'Customer credit',
+            reference: d.reference || `Refund credit from ${r.id}`,
+          });
+          result = await insert(tx, 'refund_movements', {
+            refund_id: r.id,
+            kind: 'customer_credit_handed_over',
+            form: 'Customer credit',
+            amount: d.amount,
+            payment_id: creditPayment.id,
+            effective_on: date,
+            command_id,
+          });
+          await line(
+            tx,
+            command_id,
+            date,
+            'customer_receivable',
+            'customer_credit',
+            d.amount,
+            b.id,
+            b.customer_id,
+          );
+          await insert(tx, 'notes', {
+            record_type: 'booking',
+            record_id: b.id,
+            body: `Refund kept as customer credit (${d.amount}¢) — apply to a booking or return from the person wallet`,
+            actor: actor.id,
+          });
+        } else if (how === 'voucher') {
+          // Plan: refund given as customer voucher (Padova cost 0 on customer-owned asset).
+          // Settles via existing customer_paid kind + form Voucher (DB constraint / adapter safe).
+          const voucher = await createAsset(tx, command_id, {
+            name: String(d.voucher_name || '').trim() || defaultRefundVoucherName(b.code),
+            kind: 'Voucher',
+            issuer: b.channel || 'Refund',
+            source_booking_id: b.id,
+            holder_id: b.customer_id,
+            ownership: 'Customer',
+            quantity: d.amount,
+            cost: 0,
+            date,
+            expires_on: d.voucher_expires_on,
+            movement_kind: 'voucherization',
+            reference: d.reference || `Refund voucher from ${r.id}`,
+          });
+          result = await insert(tx, 'refund_movements', {
+            refund_id: r.id,
+            kind: 'customer_paid',
+            form: REFUND_VOUCHER_FORM,
+            amount: d.amount,
+            asset_id: voucher.id,
+            effective_on: date,
+            command_id,
+          });
+          await line(
+            tx,
+            command_id,
+            date,
+            'customer_receivable',
+            'voucherization_liability',
+            d.amount,
+            b.id,
+            b.customer_id,
+          );
+          await insert(tx, 'notes', {
+            record_type: 'booking',
+            record_id: b.id,
+            body: `Refund issued as customer voucher ${voucher.name} (${d.amount}¢ face; Padova cost $0 on customer-owned voucher)`,
+            actor: actor.id,
+          });
+        } else if (how === 'other') {
+          // Plan: other settlement — record payout + clear receivable; never invent method.
+          const reason = String(d.reference || d.override_reason || '').trim();
+          if (!reason)
+            throw new Error('Other refund settlement requires a reference or handling note');
+          const method = String(d.method || '').trim() || 'ACH';
+          const p = await insert(tx, 'payments', {
+            direction: 'customer_refund',
+            account_id: d.account_id,
+            party_id: b.customer_id,
+            amount: d.amount,
+            paid_on: date,
+            method,
+            reference: reason,
+          });
+          result = await insert(tx, 'refund_movements', {
+            refund_id: r.id,
+            kind: 'customer_paid',
+            form: 'other',
+            amount: d.amount,
+            payment_id: p.id,
+            effective_on: date,
+            command_id,
+          });
+          await line(
+            tx,
+            command_id,
+            date,
+            'customer_receivable',
+            d.account_id ? 'cash' : 'customer_credit',
+            d.amount,
+            b.id,
+            b.customer_id,
+          );
+          await insert(tx, 'notes', {
+            record_type: 'booking',
+            record_id: b.id,
+            body: `Refund settled as other (${d.amount}¢): ${reason}`,
+            actor: actor.id,
+          });
+        } else {
+          if (!String(d.method || '').trim())
+            throw new Error('Refund payment method is required when paying the original method');
+          const p = await insert(tx, 'payments', {
+            direction: 'customer_refund',
+            account_id: d.account_id,
+            party_id: b.customer_id,
+            amount: d.amount,
+            paid_on: date,
+            method: d.method,
+            reference: d.reference,
+          });
+          result = await insert(tx, 'refund_movements', {
+            refund_id: r.id,
+            kind: 'customer_paid',
+            form: 'cash',
+            amount: d.amount,
+            payment_id: p.id,
+            effective_on: date,
+            command_id,
+          });
+          await line(
+            tx,
+            command_id,
+            date,
+            'customer_receivable',
+            'cash',
+            d.amount,
+            b.id,
+            b.customer_id,
+          );
+        }
         break;
       }
       case 'revise': {
@@ -5559,6 +7120,10 @@ export async function execute(
             );
         }
         if (d.travel_end < d.travel_start) throw new Error('Travel end date is before start date. Fix the dates before saving.');
+        const reviseDeadline =
+          d.itinerary?.ticketing_deadline ?? before.itinerary?.ticketing_deadline ?? null;
+        if (d.reservation_status === 'Held' && !reviseDeadline)
+          throw new Error('Held PNR requires a ticketing deadline date');
         result = await one(
           tx,
           'UPDATE bookings SET summary=$2,travel_start=$3,travel_end=$4,itinerary=$5,reservation_status=$6,confirmation_status=$7,document_status=$8,product=COALESCE($9,product),channel=COALESCE($10,channel),supplier_id=COALESCE($11,supplier_id),revision=revision+1 WHERE id=$1 RETURNING *',
@@ -5569,6 +7134,7 @@ export async function execute(
             d.travel_end,
             JSON.stringify({
               ...d.itinerary,
+              ticketing_deadline: reviseDeadline,
               price_match_history: before.itinerary.price_match_history,
               historical_sources: before.itinerary.historical_sources,
             }),
@@ -5626,63 +7192,307 @@ export async function execute(
           },
           actor: actor.id,
         });
-        const changeSources = (
-          await tx.query(
-            "SELECT DISTINCT seller_id FROM funding_components f WHERE booking_id=$1 AND seller_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM commands c WHERE c.kind IN ('revise_fulfillment','reverse_fulfillment') AND c.result->>'reversed_funding_id'=f.id::text)",
-            [d.booking_id],
-          )
-        ).rows;
-        const changeSeller =
-          d.change_seller_id ??
-          (changeSources.length === 1 ? changeSources[0].seller_id : before.supplier_id);
-        for (const [kind, amount] of [
-          ['Fare difference', d.fare_difference],
-          ['Supplier change fee', d.supplier_change_fee],
-        ] as const) {
-          if (amount)
-            await postFunding(
-              tx,
-              command_id,
-              {
-                booking_id: d.booking_id,
-                kind,
-                face_amount: amount,
-                cost: amount,
-                seller_id: changeSeller,
-                reference: d.reason,
-                settled: false,
-              },
-              date,
-            );
-        }
-        for (const [kind, amount] of [
-          ['Change fare / customer adjustment', d.additional_customer_charge - d.padova_change_fee],
-          ['Padova change fee', d.padova_change_fee],
-        ] as const) {
-          if (!amount) continue;
-          await insert(tx, 'charges', {
+        await postBookingChangeFees(
+          tx,
+          command_id,
+          {
             booking_id: d.booking_id,
-            kind,
-            amount,
-            effective_on: date,
-            command_id,
+            customer_id: before.customer_id,
+            supplier_id: before.supplier_id,
+            change_seller_id: d.change_seller_id,
+            fare_difference: d.fare_difference,
+            supplier_change_fee: d.supplier_change_fee,
+            padova_change_fee: d.padova_change_fee,
+            additional_customer_charge: d.additional_customer_charge,
+            reason: d.reason,
+          },
+          date,
+        );
+        {
+          const activated = await activateHeldIfReady(tx, d.booking_id);
+          if (activated) result = activated;
+        }
+        break;
+      }
+      case 'booking_change': {
+        // Plan: dated Change — optional envelope + optional airline/customer fees; history via commands.
+        before = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [d.booking_id]);
+        touched.add(d.booking_id);
+        const hasFees =
+          n(d.fare_difference) > 0 ||
+          n(d.supplier_change_fee) > 0 ||
+          n(d.padova_change_fee) > 0 ||
+          n(d.additional_customer_charge) > 0;
+        const nextSummary = d.summary?.trim() ? d.summary.trim() : before.summary;
+        const nextStart = d.travel_start ?? before.travel_start;
+        const nextEnd = d.travel_end ?? before.travel_end;
+        const envelopeChanged =
+          nextSummary !== before.summary ||
+          String(nextStart) !== String(before.travel_start) ||
+          String(nextEnd) !== String(before.travel_end);
+        if (envelopeChanged) {
+          if (await hasFulfillmentSchema(tx)) {
+            const trips = await effectiveTravelComponents(tx, d.booking_id);
+            if (
+              trips.filter((t) => !['Cancelled', 'Refund Pending'].includes(t.status)).length > 1 &&
+              (String(nextStart) !== String(before.travel_start) ||
+                String(nextEnd) !== String(before.travel_end) ||
+                nextSummary !== before.summary)
+            )
+              throw new Error(
+                'This booking contains several trips. Change the individual flight or stay so each trip keeps the correct dates.',
+              );
+          }
+          result = await one(
+            tx,
+            'UPDATE bookings SET summary=$2,travel_start=$3,travel_end=$4,revision=revision+1 WHERE id=$1 RETURNING *',
+            [d.booking_id, nextSummary, nextStart, nextEnd],
+          );
+          const travelerIds = (
+            await tx.query('SELECT person_id,status FROM booking_travelers WHERE booking_id=$1', [
+              d.booking_id,
+            ])
+          ).rows;
+          const confirmationRefs = (
+            await tx.query('SELECT reference FROM confirmations WHERE booking_id=$1', [
+              d.booking_id,
+            ])
+          ).rows;
+          await insert(tx, 'itinerary_revisions', {
+            booking_id: d.booking_id,
+            revision: result.revision,
+            snapshot: {
+              ...result,
+              travelers: travelerIds,
+              confirmations: confirmationRefs.map((r) => r.reference),
+            },
+            actor: actor.id,
           });
-          await line(
+        } else {
+          result = before;
+        }
+        if (hasFees) {
+          await postBookingChangeFees(
             tx,
             command_id,
+            {
+              booking_id: d.booking_id,
+              customer_id: before.customer_id,
+              supplier_id: before.supplier_id,
+              change_seller_id: d.change_seller_id,
+              fare_difference: d.fare_difference,
+              supplier_change_fee: d.supplier_change_fee,
+              padova_change_fee: d.padova_change_fee,
+              additional_customer_charge: d.additional_customer_charge,
+              reason: d.reason,
+            },
             date,
-            'customer_receivable',
-            'booking_revenue',
-            amount,
-            d.booking_id,
-            before.customer_id,
           );
         }
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `Change: ${String(d.reason).trim()}`,
+          actor: actor.id,
+        });
+        {
+          const activated = await activateHeldIfReady(tx, d.booking_id);
+          if (activated) result = activated;
+        }
+        result = {
+          ...(result as Row),
+          envelope_changed: envelopeChanged,
+          fees_posted: hasFees,
+        };
         break;
       }
       case 'note':
         result = await insert(tx, 'notes', { ...d, actor: actor.id });
         break;
+      case 'note_hide': {
+        // notes rows are immutable (no UPDATE/DELETE). Hide via this command only.
+        await one(tx, 'SELECT id FROM notes WHERE id=$1', [d.note_id]);
+        const latest = (
+          await tx.query(
+            `SELECT kind FROM commands
+             WHERE kind IN ('note_hide','note_restore')
+               AND result IS NOT NULL
+               AND payload->>'note_id'=$1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            [d.note_id],
+          )
+        ).rows[0] as { kind?: string } | undefined;
+        if (latest?.kind === 'note_hide') throw new Error('This note is already hidden');
+        result = { id: d.note_id, hidden: true };
+        break;
+      }
+      case 'note_restore': {
+        await one(tx, 'SELECT id FROM notes WHERE id=$1', [d.note_id]);
+        const latest = (
+          await tx.query(
+            `SELECT kind FROM commands
+             WHERE kind IN ('note_hide','note_restore')
+               AND result IS NOT NULL
+               AND payload->>'note_id'=$1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            [d.note_id],
+          )
+        ).rows[0] as { kind?: string } | undefined;
+        if (latest?.kind !== 'note_hide') throw new Error('This note is not hidden');
+        result = { id: d.note_id, restored: true };
+        break;
+      }
+      case 'booking_taxes': {
+        const booking = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+          d.booking_id,
+        ]);
+        touched.add(d.booking_id);
+        // Sale lives on booking_balances (sum of charges), not the bookings row.
+        const eco = await economics(tx, d.booking_id);
+        const saleCents =
+          eco.sale == null || !Number.isFinite(Number(eco.sale)) ? null : Math.trunc(Number(eco.sale));
+        const taxCents =
+          d.tax_amount == null || d.tax_amount === undefined ? null : Math.trunc(Number(d.tax_amount));
+        if (taxCents != null && saleCents != null && taxCents > saleCents)
+          throw new Error('Tax amount cannot exceed the customer sale price');
+        const operational = applyCustomerTaxAmount(booking.itinerary?.operational_entry, {
+          tax_amount_cents: taxCents,
+          sale_cents: saleCents,
+        });
+        await tx.query('UPDATE bookings SET itinerary=$2, revision=revision+1 WHERE id=$1', [
+          d.booking_id,
+          JSON.stringify({
+            ...(booking.itinerary && typeof booking.itinerary === 'object' ? booking.itinerary : {}),
+            operational_entry: operational,
+          }),
+        ]);
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body:
+            taxCents == null
+              ? `Taxes cleared (Unknown)${d.reason ? `: ${d.reason}` : ''}`
+              : `Taxes set to ${taxCents}¢ (part of customer price)${d.reason ? `: ${d.reason}` : ''}`,
+          actor: actor.id,
+        });
+        result = {
+          id: d.booking_id,
+          booking_id: d.booking_id,
+          tax_amount: taxCents,
+          cleared: taxCents == null,
+        };
+        break;
+      }
+      case 'booking_document': {
+        const booking = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+          d.booking_id,
+        ]);
+        touched.add(d.booking_id);
+        const documentId = randomUUID();
+        const operational = appendBookingDocument(booking.itinerary?.operational_entry, {
+          id: documentId,
+          label: d.label,
+          kind: d.kind,
+          url: d.url,
+          note: d.note,
+          added_on: date,
+        });
+        await tx.query('UPDATE bookings SET itinerary=$2, revision=revision+1 WHERE id=$1', [
+          d.booking_id,
+          JSON.stringify({
+            ...(booking.itinerary && typeof booking.itinerary === 'object' ? booking.itinerary : {}),
+            operational_entry: operational,
+          }),
+        ]);
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `Document added (${d.kind}): ${d.label}${d.url ? ` · ${d.url}` : ''}`,
+          actor: actor.id,
+        });
+        result = { id: documentId, booking_id: d.booking_id, label: d.label, kind: d.kind };
+        break;
+      }
+      case 'booking_document_hide': {
+        const booking = await one(tx, 'SELECT * FROM bookings WHERE id=$1 FOR UPDATE', [
+          d.booking_id,
+        ]);
+        touched.add(d.booking_id);
+        const operational = hideBookingDocument(booking.itinerary?.operational_entry, d.document_id, {
+          hidden_at: new Date().toISOString(),
+          reason: d.reason,
+        });
+        await tx.query('UPDATE bookings SET itinerary=$2, revision=revision+1 WHERE id=$1', [
+          d.booking_id,
+          JSON.stringify({
+            ...(booking.itinerary && typeof booking.itinerary === 'object' ? booking.itinerary : {}),
+            operational_entry: operational,
+          }),
+        ]);
+        await insert(tx, 'notes', {
+          record_type: 'booking',
+          record_id: d.booking_id,
+          body: `Document hidden (${d.document_id}): ${d.reason}`,
+          actor: actor.id,
+        });
+        result = { id: d.document_id, booking_id: d.booking_id, hidden: true };
+        break;
+      }
+      case 'link_booking': {
+        const rel =
+          tx.storage === 'padova' ? 'padova.booking_relations' : 'public.booking_relations';
+        if (!(await tx.query('SELECT to_regclass($1) AS name', [rel])).rows[0]?.name)
+          throw new Error(
+            'Related bookings extension is not installed in this workspace; no records were changed',
+          );
+        if (d.from_booking_id === d.to_booking_id)
+          throw new Error('Link two different bookings');
+        await one(tx, 'SELECT id FROM bookings WHERE id=$1', [d.from_booking_id]);
+        await one(tx, 'SELECT id FROM bookings WHERE id=$1', [d.to_booking_id]);
+        const dup = await tx.query(
+          `SELECT id FROM booking_relations
+           WHERE voided_at IS NULL AND kind=$3
+             AND ((from_booking_id=$1 AND to_booking_id=$2) OR (from_booking_id=$2 AND to_booking_id=$1))
+           LIMIT 1`,
+          [d.from_booking_id, d.to_booking_id, d.kind],
+        );
+        if (dup.rows[0]) throw new Error('These bookings are already linked with that label');
+        result = await insert(tx, 'booking_relations', {
+          from_booking_id: d.from_booking_id,
+          to_booking_id: d.to_booking_id,
+          kind: d.kind,
+          note: d.note || '',
+          created_by: actor.id,
+        });
+        touched.add(d.from_booking_id);
+        touched.add(d.to_booking_id);
+        break;
+      }
+      case 'unlink_booking': {
+        const rel =
+          tx.storage === 'padova' ? 'padova.booking_relations' : 'public.booking_relations';
+        if (!(await tx.query('SELECT to_regclass($1) AS name', [rel])).rows[0]?.name)
+          throw new Error(
+            'Related bookings extension is not installed in this workspace; no records were changed',
+          );
+        const inv = await one(tx, 'SELECT * FROM booking_relations WHERE id=$1 FOR UPDATE', [
+          d.relation_id,
+        ]);
+        if (inv.voided_at) throw new Error('This booking link is already removed');
+        result = (
+          await tx.query(
+            `UPDATE booking_relations SET voided_at=now(), voided_by=$2,
+              note=trim(both from note || E'\nUnlinked: ' || $3)
+             WHERE id=$1 RETURNING *`,
+            [d.relation_id, actor.id, d.reason],
+          )
+        ).rows[0];
+        touched.add(result.from_booking_id);
+        touched.add(result.to_booking_id);
+        break;
+      }
       case 'task':
       case 'update_task': {
         if (Boolean(d.record_type) !== Boolean(d.record_id))
@@ -5847,7 +7657,7 @@ export async function execute(
           tx,
           `SELECT count(*) count FROM refunds r WHERE r.booking_id=$1 AND (
           r.supplier_expected>COALESCE((SELECT sum(amount) FROM refund_movements m WHERE m.refund_id=r.id AND m.kind='supplier_received'),0)
-          OR r.customer_due>COALESCE((SELECT sum(amount) FROM refund_movements m WHERE m.refund_id=r.id AND m.kind IN ('customer_paid','customer_credit_handed_over')),0))`,
+          OR r.customer_due>COALESCE((SELECT sum(amount) FROM refund_movements m WHERE m.refund_id=r.id AND m.kind IN (${REFUND_CUSTOMER_SETTLED_SQL})),0))`,
           [booking_id],
         );
         if (n(pending.count) === 0)
@@ -5868,6 +7678,10 @@ export async function execute(
           ? [result.id, before?.record_id]
           : []),
         d.booking_id ?? d.record_id ?? result.id ?? d.person_id,
+        d.from_booking_id,
+        d.to_booking_id,
+        result.from_booking_id,
+        result.to_booking_id,
         ...touched,
         d.party_id ?? result.party_id,
         d.customer_id ?? result.customer_id,

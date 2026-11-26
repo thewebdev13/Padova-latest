@@ -17,6 +17,7 @@ const bookingEntry = readFileSync('src/components/booking-entry.tsx', 'utf8');
 const travelerDetails = readFileSync('src/components/booking-traveler-details.tsx', 'utf8');
 const pnrInput = readFileSync('src/components/pnr-input.tsx', 'utf8');
 const workspace = readFileSync('src/app/workspace.tsx', 'utf8');
+const outsideSeller = readFileSync('src/lib/outside-seller.ts', 'utf8');
 
 test('1. Referring organization is a visible dropdown field (not permission-hidden only)', () => {
   assert.match(bookingEntry, /Referring organization \(affiliate\)/);
@@ -53,7 +54,10 @@ test('4. Points booking exposes type, cost/pt, taxes, tax card, email, Amex 100k
   assert.match(bookingEntry, /Taxes \/ fees on this booking/);
   assert.match(bookingEntry, /Credit card used for taxes/);
   assert.match(bookingEntry, /100k − 35% = 65k|100,000 − 35% = 65,000/);
-  assert.match(bookingEntry, /Amex Biz Plat/);
+  // Outside-seller BP math (Plan: info only; not Padova rebate income).
+  assert.match(bookingEntry, /OUTSIDE_SELLER_BP_LABEL/);
+  assert.match(outsideSeller, /Seller BP math/);
+  assert.match(outsideSeller, /Amex BP 35%/);
   // Math: 100000 − 35% = 65000
   const net = Math.round(100000 * (1 - 35 / 100));
   assert.equal(net, 65000);

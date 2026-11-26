@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import ListPager, { pageSlice } from '@/components/list-pager';
+import { planTodoRecordUrl } from '@/lib/dashboard-todo';
+import { followupRowMatchesSearch } from '@/lib/operational-views';
 
 type Row = Record<string, any>;
 const names = [
@@ -18,6 +20,7 @@ const PAGE_SIZE = 20;
 export default function OperationalViews({
   views,
   open,
+  copyLink,
   compact = false,
   initialSelected = 'Needs Attention',
   viewAll,
@@ -27,10 +30,13 @@ export default function OperationalViews({
   viewAll?: (selected: string) => void;
   views: Record<string, Row[]>;
   open: (item: Row) => void;
+  /** Plan shareable record URL — blank/unknown target → no button. */
+  copyLink?: (path: string) => void | Promise<void>;
 }) {
   const [selected, setSelected] = useState(initialSelected);
   const [page, setPage] = useState(1);
-  const rows = views[selected] ?? [];
+  const [query, setQuery] = useState('');
+  const rows = (views[selected] ?? []).filter((r) => followupRowMatchesSearch(r, query));
   const pager = pageSlice<Row>(rows, page, PAGE_SIZE);
   const labels: Record<string, string> = {
     'Needs Attention': 'Needs attention',
@@ -45,13 +51,18 @@ export default function OperationalViews({
 
   useEffect(() => {
     setPage(1);
-  }, [selected]);
+  }, [selected, query]);
 
   useEffect(() => {
     if (page > pager.totalPages) setPage(pager.totalPages);
   }, [page, pager.totalPages]);
 
-  const visible = compact ? rows.slice(0, 5) : pager.items;
+  const searching = Boolean(query.trim());
+  const visible = compact
+    ? searching
+      ? rows
+      : rows.slice(0, 5)
+    : pager.items;
 
   return (
     <div className="list-block">
@@ -77,8 +88,25 @@ export default function OperationalViews({
             </button>
           ))}
         </div>
+        <div className="toolbar directory-toolbar" style={{ padding: '0 16px 8px' }}>
+          <label className="directory-search" htmlFor="followup-search">
+            {' '}
+            <input
+              id="followup-search"
+              type="search"
+              aria-label="Search follow-up"
+              placeholder="Search booking #, title or detail…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+        </div>
         {!rows.length ? (
-          <p className="empty">No visible exceptions in {selected}.</p>
+          <p className="empty">
+            {query.trim()
+              ? `No matches in ${labels[selected] ?? selected}.`
+              : `No visible exceptions in ${selected}.`}
+          </p>
         ) : (
           <div className="table-wrap operational-followup-table">
             <table>
@@ -88,10 +116,13 @@ export default function OperationalViews({
                   <th>Follow-up</th>
                   <th>Amount / quantity</th>
                   <th>Status</th>
+                  {copyLink ? <th className="followup-share-col">Share</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {visible.map((r) => (
+                {visible.map((r) => {
+                  const sharePath = planTodoRecordUrl(r);
+                  return (
                   <tr
                     key={r.id ?? r.key ?? `${r.booking_id}-${r.kind}`}
                     className="clickable"
@@ -142,14 +173,32 @@ export default function OperationalViews({
                         {r.status ?? r.kind ?? labels[selected]}
                       </span>
                     </td>
+                    {copyLink ? (
+                      <td className="followup-share-col">
+                        {sharePath ? (
+                          <button
+                            type="button"
+                            className="btn small ghost"
+                            aria-label="Copy shareable link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void copyLink(sharePath);
+                            }}
+                          >
+                            Copy link
+                          </button>
+                        ) : null}
+                      </td>
+                    ) : null}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </section>
-      {compact && rows.length > 5 ? (
+      {compact && !searching && rows.length > 5 ? (
         <button className="btn ghost list-block-link" onClick={() => viewAll?.(selected)}>
           View all {rows.length}
         </button>

@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
 import ListPager, { pageSlice } from '@/components/list-pager';
+import { dateLabel } from '@/lib/display-date';
+import { buildPayReferralPaymentDefaults } from '@/lib/referrer-payout-defaults';
 type Row = Record<string, any>;
 const PAGE_SIZE = 12;
 const money = (v: any) =>
@@ -17,6 +19,9 @@ export default function CommissionPayables({
   canManage,
   enabled,
   action,
+  today,
+  openBooking,
+  copyBookingLink,
   embedded = false,
   hidePager = false,
   page: controlledPage,
@@ -28,7 +33,11 @@ export default function CommissionPayables({
   adjustments: Row[];
   canManage: boolean;
   enabled: boolean;
+  today?: string;
   action: (kind: string, defaults?: Row) => void;
+  openBooking?: (id: string) => void;
+  /** Plan shareable booking URL — blank id → no button. */
+  copyBookingLink?: (bookingId: string) => void | Promise<void>;
   embedded?: boolean;
   hidePager?: boolean;
   page?: number;
@@ -75,7 +84,19 @@ export default function CommissionPayables({
                 <tr key={r.id}>
                   <td>
                     {r.referrer}
-                    <small>{r.code}</small>
+                    {r.booking_id && openBooking ? (
+                      <small>
+                        <button
+                          type="button"
+                          className="booking-code"
+                          onClick={() => openBooking(String(r.booking_id))}
+                        >
+                          {r.code || 'Open booking'}
+                        </button>
+                      </small>
+                    ) : (
+                      <small>{r.code}</small>
+                    )}
                     <small>
                       Expected {money(r.expected_due)} · paid {money(r.paid)} · accrued{' '}
                       {money(r.accrued)}
@@ -87,7 +108,8 @@ export default function CommissionPayables({
                       : `${r.rate_bps / 100}% of ${String(r.percentage_basis || '').replaceAll('_', ' ')}`}
                     <small>{r.reason}</small>
                     <small>
-                      {r.payable_when} · earliest {r.due_on}
+                      {r.payable_when} · earliest{' '}
+                      {r.due_on ? dateLabel(r.due_on) : 'Unknown'}
                     </small>
                   </td>
                   <td
@@ -102,10 +124,37 @@ export default function CommissionPayables({
                       title={
                         r.hold_reason || 'Record an actual payment, including a partial payment'
                       }
-                      onClick={() => action('pay_referral', { referral_id: r.id })}
+                      onClick={() => {
+                        const seeded = buildPayReferralPaymentDefaults({
+                          referral_id: r.id,
+                          payable_now: r.payable_now,
+                          outstanding: r.outstanding,
+                          today,
+                        });
+                        action(
+                          'pay_referral',
+                          seeded
+                            ? {
+                                referral_id: seeded.referral_id,
+                                amount: seeded.amount,
+                                date: seeded.date,
+                              }
+                            : { referral_id: r.id },
+                        );
+                      }}
                     >
-                      Record payout
+                      Mark paid
                     </button>
+                    {copyBookingLink && r.booking_id ? (
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        aria-label="Copy shareable link"
+                        onClick={() => void copyBookingLink(String(r.booking_id))}
+                      >
+                        Copy link
+                      </button>
+                    ) : null}
                     {canManage && enabled && r.active !== false && (
                       <div className="row-more">
                         <button
@@ -156,8 +205,9 @@ export default function CommissionPayables({
                         .filter((p) => p.referral_id === r.id)
                         .map((p) => (
                           <p key={p.id}>
-                            {p.paid_on} · {p.method} · {p.reference || 'No reference'} · originally{' '}
-                            {money(p.amount)}, net {money(p.current_amount)}{' '}
+                            {p.paid_on ? dateLabel(p.paid_on) : 'Unknown date'} · {p.method} ·{' '}
+                            {p.reference || 'No reference'} · originally {money(p.amount)}, net{' '}
+                            {money(p.current_amount)}{' '}
                             {canManage && Number(p.current_amount) > 0 && (
                               <button
                                 className="btn small ghost"
@@ -177,7 +227,8 @@ export default function CommissionPayables({
                         .filter((h) => h.referral_id === r.id)
                         .map((h) => (
                           <p key={h.id}>
-                            {h.effective_on} · {h.actor_name} · terms {h.revision} · {h.reason}
+                            {h.effective_on ? dateLabel(h.effective_on) : 'Unknown date'} ·{' '}
+                            {h.actor_name} · terms {h.revision} · {h.reason}
                             {h.active === false ? ' · agreement reversed' : ''}
                           </p>
                         ))}
@@ -185,8 +236,8 @@ export default function CommissionPayables({
                         .filter((a) => a.referral_id === r.id)
                         .map((a) => (
                           <p key={a.id}>
-                            {a.effective_on} · {a.actor_name} · payout correction {money(a.delta)} ·{' '}
-                            {a.reason}
+                            {a.effective_on ? dateLabel(a.effective_on) : 'Unknown date'} ·{' '}
+                            {a.actor_name} · payout correction {money(a.delta)} · {a.reason}
                           </p>
                         ))}
                       <small>

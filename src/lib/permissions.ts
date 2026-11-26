@@ -35,7 +35,30 @@ export type Actor = {
   authVersion?: number;
 };
 export const OWNER_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
-export const EMPLOYEE_PERMISSIONS: Permission[] = ['operations', 'edit_payments'];
+/**
+ * Plan v1 staff default: daily booking/money work is allowed.
+ * Hide only company-wide / monthly profit totals and Owner admin surfaces.
+ */
+export const EMPLOYEE_PERMISSIONS: Permission[] = [
+  'operations',
+  'view_sale_price',
+  'view_supplier_cost',
+  'view_booking_profit',
+  'view_asset_basis',
+  'edit_payments',
+  'edit_customer_charges',
+  'manage_funding',
+  'view_refunds',
+  'issue_refunds',
+  'view_commissions',
+  'manage_commissions',
+  'manage_assets',
+  'view_traveler_sensitive',
+  'view_partnerships',
+  // Explicitly NOT included: view_total_profit, view_accounting, manage_users,
+  // manage_settings, view_audit, edit_completed_bookings (separate grant),
+  // manage_partnerships / import / outreach / AI.
+];
 export function hasPermission(actor: Actor, permission: Permission) {
   return actor.role === 'OWNER' || actor.permissions.includes(permission);
 }
@@ -53,27 +76,41 @@ export function commandPermission(kind: string): Permission {
     [
       'party',
       'edit_party',
+      'merge_party',
       'relationship',
       'booking',
       'booking_draft',
       'booking_draft_delete',
+      'booking_draft_restore',
       'booking_source_method',
       'booking_source_profile',
       'booking_source_profile_link',
       'program',
       'revise',
       'note',
+      'note_hide',
+      'note_restore',
       'task',
       'update_task',
       'complete_task',
       'resolve_attention',
       'travel_component',
       'revise_travel',
+      'link_booking',
+      'unlink_booking',
+      'booking_extra',
+      'booking_change',
+      'booking_document',
+      'booking_document_hide',
     ].includes(kind)
   )
     return 'operations';
   if (kind === 'traveler') return 'view_traveler_sensitive';
-  if (['payment', 'allocate', 'correct_payment', 'authorize_payer'].includes(kind))
+  if (
+    ['payment', 'allocate', 'correct_payment', 'authorize_payer', 'return_customer_credit'].includes(
+      kind,
+    )
+  )
     return 'edit_payments';
   if (
     [
@@ -84,6 +121,9 @@ export function commandPermission(kind: string): Permission {
       'revise_referral',
       'reverse_referral',
       'reverse_referral_payment',
+      'void_money_back',
+      'deny_money_back',
+      'deduct_money_back',
     ].includes(kind)
   )
     return 'manage_commissions';
@@ -102,18 +142,24 @@ export function commandPermission(kind: string): Permission {
     ].includes(kind)
   )
     return 'manage_funding';
-  if (['charge', 'confirm_sale'].includes(kind)) return 'edit_customer_charges';
-  if (['payment_account', 'instrument', 'program_account'].includes(kind)) return 'manage_settings';
+  if (['charge', 'confirm_sale', 'booking_taxes'].includes(kind)) return 'edit_customer_charges';
+  if (['payment_account', 'instrument', 'program_account', 'update_fee_settings'].includes(kind))
+    return 'manage_settings';
+  if (kind === 'invoice_draft') return 'view_sale_price';
+  if (['invoice_approve', 'invoice_mark_sent', 'invoice_void'].includes(kind))
+    return 'manage_settings';
   if (
     [
       'acquire_asset',
       'revise_asset',
       'sell_asset',
+      'trade',
       'benefit',
       'voucherize',
       'transfer_asset',
       'convert_asset',
       'expire_asset',
+      'void_credit',
       'receive_asset_sale',
       'pay_asset_purchase',
       'expected_event',

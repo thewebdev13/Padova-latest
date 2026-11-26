@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   applyIntakeFieldOverrides,
   buildIntakeMappingPreview,
+  intakePreviewMark,
   listIntakePasteLines,
   UNREAD_FILE_MESSAGE,
 } from '../src/lib/intake-preview';
@@ -67,6 +68,31 @@ Price: $200`,
   );
   assert.equal(withParty.rows.find((r) => r.id === 'customer')?.sourceHint, 'existing person');
   assert.equal(withParty.rows.find((r) => r.id === 'traveler')?.sourceHint, 'existing person');
+  assert.equal(intakePreviewMark('found'), '✓');
+  assert.equal(intakePreviewMark('confirm'), '?');
+  assert.equal(intakePreviewMark('missing'), '!');
+  const ambiguous = buildIntakeMappingPreview(
+    `Customer: Alex Morgan
+Guest: Minindy Quirona
+Product: Hotel
+Location: Miami
+Booking reference number: 123456003
+Price: $200`,
+    {
+      parties: [
+        { name: 'Alex Morgan' },
+        { name: 'Alex Morgan' },
+        { name: 'Minindy Quirona' },
+      ],
+    },
+  );
+  const ambCustomer = ambiguous.rows.find((r) => r.id === 'customer');
+  assert.equal(ambCustomer?.sourceHint, 'multiple matches, confirm');
+  assert.equal(ambCustomer?.status, 'confirm');
+  assert.equal(intakePreviewMark(ambCustomer!.status), '?');
+  assert.equal(ambiguous.rows.find((r) => r.id === 'traveler')?.status, 'found');
+  // Ambiguous person is not counted as a confident found.
+  assert.equal(ambiguous.found, withParty.found - 1);
 });
 
 test('unread preview uses client message and blocks inventing fields', () => {

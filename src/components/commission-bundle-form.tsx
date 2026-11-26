@@ -3,6 +3,17 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import SearchableSelect from './searchable-select';
 import { FieldError, FormAlert } from './form-feedback';
+import {
+  formatReferralRateLabel,
+  partyReferralRateBps,
+  suggestReferrerShareCents,
+} from '@/lib/referrer-defaults';
+import {
+  defaultCommissionIataPartner,
+  defaultHotelCommissionPayerId,
+  isHotelCommissionBooking,
+  suggestSruly9010RetainedDollars,
+} from '@/lib/hotel-commission-defaults';
 
 type R = Record<string, any>;
 
@@ -63,24 +74,53 @@ export default function CommissionBundleForm({
   const [date, setDate] = useState(
     String(config.defaults?.date || state.today || new Date().toISOString().slice(0, 10)),
   );
-  const [payers, setPayers] = useState<PayerRow[]>([
-    {
-      ...emptyPayer(),
-      is_iata_partner: true,
-      payer_id: String(config.defaults?.payer_id || ''),
-      gross:
-        config.defaults?.gross != null ? (Number(config.defaults.gross) / 100).toFixed(2) : '',
-    },
-  ]);
+  const selectedBooking = (state.bookings ?? []).find((b: R) => b.id === bookingId);
+  const hotelCommissionBooking = isHotelCommissionBooking(selectedBooking);
+  const srulyParty = (state.parties ?? []).find(
+    (p: R) =>
+      !p.archived_at &&
+      /sruly/i.test(String(p.name || '')) &&
+      (p.roles ?? []).some((r: string) =>
+        ['commission_payer', 'partner', 'seller', 'source'].includes(r),
+      ),
+  );
+  const [payers, setPayers] = useState<PayerRow[]>(() => {
+    const hotel = isHotelCommissionBooking(
+      (state.bookings ?? []).find((b: R) => b.id === String(config.defaults?.booking_id || '')),
+    );
+    return [
+      {
+        ...emptyPayer(),
+        // Plan Change: IATA off by default (hotel does not flip it on).
+        // Confirm-from-expected may set is_iata_partner explicitly (primary vs secondary).
+        is_iata_partner: defaultCommissionIataPartner(
+          config.defaults?.is_iata_partner as boolean | null | undefined,
+        ),
+        payer_id: defaultHotelCommissionPayerId({
+          hotelBooking: hotel,
+          explicitPayerId: config.defaults?.payer_id as string | null | undefined,
+          srulyPartyId: srulyParty?.id as string | null | undefined,
+        }),
+        gross:
+          config.defaults?.gross != null ? (Number(config.defaults.gross) / 100).toFixed(2) : '',
+        retained:
+          config.defaults?.retained != null
+            ? (Number(config.defaults.retained) / 100).toFixed(2)
+            : '',
+        due_on: String(config.defaults?.due_on || ''),
+        collector_id: String(config.defaults?.collector_id || ''),
+      },
+    ];
+  });
   const [referral, setReferral] = useState({
     referrer_id: String(config.defaults?.referrer_id || ''),
     basis: 'fixed' as 'percentage' | 'fixed',
-    rate_bps: '20',
+    rate_bps: '',
     fixed_amount: '',
     percentage_basis: 'profit',
     due_on: '',
     reason: 'Affiliate share on this booking',
-    payable_when: 'After travel',
+    payable_when: 'After commission confirmed',
     earned: true,
   });
 
@@ -90,7 +130,8 @@ export default function CommissionBundleForm({
     }
   }, [existingReferral]);
 
-  const parties = (state.parties ?? []).filter((p: R) => !p.archived_at);
+  const [extraParties, setExtraParties] = useState<R[]>([]);
+  const parties = [...(state.parties ?? []).filter((p: R) => !p.archived_at), ...extraParties];
   const partyOptions = parties.map((p: R) => ({ value: p.id, label: p.name }));
   const bookingOptions = (state.bookings ?? []).map((b: R) => ({
     value: b.id,
@@ -100,6 +141,11 @@ export default function CommissionBundleForm({
     value: r.accounting_party_id || r.id,
     label: `${r.name}${r.location ? ` · ${r.location}` : ''}`,
   }));
+  const referrerOptions = [
+    { value: '', label: 'None' },
+    ...(orgOptions.length ? orgOptions : []),
+    ...partyOptions.filter((o) => !orgOptions.some((g: { value: string }) => g.value === o.value)),
+  ];
 
   const clearFieldError = (key: string) =>
     setFieldErrors((prev) => {
@@ -111,13 +157,27 @@ export default function CommissionBundleForm({
 
   const updatePayer = (index: number, patch: Partial<PayerRow>) => {
     for (const key of Object.keys(patch)) clearFieldError(`payer_${index}_${key}`);
+    const current = payers[index];
+    const merged = current ? { ...current, ...patch } : null;
+    const seeded =
+      patch.gross !== undefined && merged
+        ? suggestSruly9010RetainedDollars({
+            shouldSeed: merged.is_iata_partner || hotelCommissionBooking,
+            grossRaw: merged.gross,
+            retainedRaw: merged.retained,
+          })
+        : null;
+    if (seeded) setShowMore(true);
     setPayers((rows) =>
       rows.map((row, i) => {
         if (i !== index) {
           if (patch.is_iata_partner === true) return { ...row, is_iata_partner: false };
           return row;
         }
-        return { ...row, ...patch };
+        const next = { ...row, ...patch };
+        // Sruly hotel / IATA partner: when gross entered, seed 10% retained if blank.
+        if (seeded) next.retained = seeded;
+        return next;
       }),
     );
   };
@@ -219,7 +279,7 @@ export default function CommissionBundleForm({
           payable_when: referral.payable_when,
           earned: referral.earned,
           cancellation_rule: 'Realized economics',
-          after_receipt: true,
+          after_receipt: referral.payable_when === 'After commission received',
         };
       }
       await onSubmit(payload);
@@ -243,7 +303,48 @@ export default function CommissionBundleForm({
       },
       crypto.randomUUID(),
     );
+    setExtraParties((rows) => [...rows.filter((p) => p.id !== created.id), created]);
     updatePayer(index, { payer_id: created.id });
+  };
+
+  const applyReferrerDefaults = (referrerId: string) => {
+    if (!referrerId) {
+      setReferral((r) => ({ ...r, referrer_id: '', rate_bps: '', fixed_amount: r.fixed_amount }));
+      return;
+    }
+    const party = parties.find((p: R) => p.id === referrerId);
+    const rate = partyReferralRateBps(party);
+    const profit =
+      selectedBooking?.profit == null ? null : Number(selectedBooking.profit);
+    const suggested = suggestReferrerShareCents(profit, rate);
+    setReferral((r) => ({
+      ...r,
+      referrer_id: referrerId,
+      rate_bps: rate == null ? '' : (rate / 100).toFixed(2),
+      percentage_basis: 'profit',
+      // Seed fixed amount only when blank so staff edits are preserved.
+      fixed_amount:
+        String(r.fixed_amount || '').trim() === '' && suggested != null
+          ? (suggested / 100).toFixed(2)
+          : r.fixed_amount,
+    }));
+  };
+
+  const addReferrerParty = async () => {
+    if (!onCreateParty) return;
+    const name = window.prompt('New referrer name');
+    if (!name?.trim()) return;
+    const created = await onCreateParty(
+      {
+        name: name.trim(),
+        kind: 'person',
+        roles: ['referrer'],
+        date: state.today,
+      },
+      crypto.randomUUID(),
+    );
+    setExtraParties((rows) => [...rows.filter((p) => p.id !== created.id), created]);
+    applyReferrerDefaults(created.id);
   };
 
   return (
@@ -291,6 +392,15 @@ export default function CommissionBundleForm({
               onChange={(id) => {
                 clearFieldError('booking_id');
                 setBookingId(id);
+                const booking = (state.bookings ?? []).find((b: R) => b.id === id);
+                if (!isHotelCommissionBooking(booking) || !srulyParty?.id) return;
+                setPayers((rows) =>
+                  rows.map((row, i) =>
+                    i === 0 && !String(row.payer_id || '').trim()
+                      ? { ...row, payer_id: String(srulyParty.id) }
+                      : row,
+                  ),
+                );
               }}
             />
             {attempted ? <FieldError>{fieldErrors.booking_id}</FieldError> : null}
@@ -298,10 +408,10 @@ export default function CommissionBundleForm({
 
           <p className="commission-model-hint">
             <strong>IATA partner</strong> = agency that keeps supplier commission and owes Padova
-            ~90% of profit (mark the checkbox). <strong>Secondary</strong> = another party that also
-            owes Padova on this booking (add another payer, leave IATA unchecked).{' '}
-            <strong>Referring org</strong> = Padova owes them, prefer booking affiliate field, not
-            a second payout here.
+            ~90% (checkbox off by default). <strong>Hotels</strong> default to Sruly ~90% Padova /
+            10% retained. <strong>Secondary</strong> = another party that also owes Padova (add
+            another payer, leave IATA unchecked). <strong>Referring org</strong> = Padova owes
+            them, prefer booking affiliate field, not a second payout here.
           </p>
 
           <div className="commission-payer-stack">
@@ -437,12 +547,29 @@ export default function CommissionBundleForm({
                   label="Referrer"
                   value={referral.referrer_id}
                   options={[
-                    { value: '', label: 'None' },
-                    ...(orgOptions.length ? orgOptions : partyOptions),
+                    ...referrerOptions,
+                    ...(onCreateParty
+                      ? [{ value: '__add_referrer__', label: '+ Add new referrer' }]
+                      : []),
                   ]}
-                  onChange={(id) => setReferral((r) => ({ ...r, referrer_id: id }))}
+                  onChange={(id) => {
+                    if (id === '__add_referrer__') void addReferrerParty();
+                    else applyReferrerDefaults(id);
+                  }}
                 />
               </label>
+              {referral.referrer_id && (
+                <p className="commission-note">
+                  Referrer default{' '}
+                  {referral.rate_bps
+                    ? `${formatReferralRateLabel(Math.round(Number(referral.rate_bps) * 100))} of profit`
+                    : 'rate Unknown'}
+                  {selectedBooking?.profit == null
+                    ? ' · booking profit incomplete — enter amount'
+                    : ''}
+                  . Edit person profile to change the stored %.
+                </p>
+              )}
               <label
                 className={`commission-field form-field ${attempted && fieldErrors.referral_amount ? 'has-error' : ''}`}
               >
@@ -468,7 +595,10 @@ export default function CommissionBundleForm({
                 {attempted && fieldErrors.referral_amount ? (
                   <FieldError>{fieldErrors.referral_amount}</FieldError>
                 ) : (
-                  <small>Saved as a Commission payable on the same booking.</small>
+                  <small>
+                    Saved as a Commission payable. Seeded from referrer % × confirmed profit when
+                    both are known.
+                  </small>
                 )}
               </label>
             </section>

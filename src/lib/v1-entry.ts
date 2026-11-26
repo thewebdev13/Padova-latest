@@ -29,10 +29,21 @@ export const flightSegment = z.object({
   date: z.iso.date(),
   flight_number: z.string().trim().max(100).optional(),
 });
+/** Plan Price: typed amount, same as cost, fixed margin, or percent off online. */
+export const PLAN_PRICING_METHODS = [
+  'Manual Customer Price',
+  'Same as Cost',
+  'Fixed Margin',
+  'Percentage Off Comparable Online Price',
+] as const;
+export type PlanPricingMethod = (typeof PLAN_PRICING_METHODS)[number];
+
 export const pricingSchema = z.object({
-  method: z.enum(['Manual Customer Price', 'Percentage Off Comparable Online Price']),
+  method: z.enum(PLAN_PRICING_METHODS),
   comparable_price: cents.optional(),
   discount_bps: z.number().int().min(0).max(10000).optional(),
+  /** Fixed Margin only — dollars above known cost (exact cents). */
+  margin_cents: cents.optional(),
   manual_override: z.boolean().default(false),
 });
 /** Exact rational arithmetic; final half-cent rounds up to the nearest cent. */
@@ -40,6 +51,13 @@ export function percentagePrice(comparable: number, bps: number) {
   cents.parse(comparable);
   z.number().int().min(0).max(10000).parse(bps);
   return Number((BigInt(comparable) * BigInt(10000 - bps) + 5000n) / 10000n);
+}
+
+/** Plan Fixed Margin: customer price = known cost + margin (exact cents; Unknown cost ≠ invent). */
+export function fixedMarginPrice(costCents: number, marginCents: number) {
+  cents.parse(costCents);
+  cents.parse(marginCents);
+  return costCents + marginCents;
 }
 export function percentageCommission(basis: number, bps: number) {
   cents.parse(basis);

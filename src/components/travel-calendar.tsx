@@ -1,6 +1,13 @@
 'use client';
 import { useState } from 'react';
-import { addDays, calendarEntries, calendarLanes, tripTitle } from '@/lib/travel-presentation';
+import {
+  addDays,
+  calendarEntries,
+  calendarEntryMatchesSearch,
+  calendarEntryVisibleWithCancelled,
+  calendarLanes,
+  tripTitle,
+} from '@/lib/travel-presentation';
 import { dateLabel } from '@/lib/display-date';
 type R = Record<string, any>;
 export default function TravelCalendar({
@@ -8,15 +15,20 @@ export default function TravelCalendar({
   components,
   today,
   open,
+  copyLink,
 }: {
   bookings: R[];
   components: R[];
   today: string;
   open: (id: string) => void;
+  /** Plan shareable booking address — blank id never called. */
+  copyLink?: (bookingId: string) => void;
 }) {
   const [anchor, setAnchor] = useState(today),
     [mode, setMode] = useState('Month'),
-    [filter, setFilter] = useState('All');
+    [filter, setFilter] = useState('All'),
+    [query, setQuery] = useState(''),
+    [hideCancelled, setHideCancelled] = useState(false);
   const first = mode === 'Month' ? anchor.slice(0, 7) + '-01' : anchor;
   const offset = (new Date(first + 'T12:00:00Z').getUTCDay() + 6) % 7;
   const start = addDays(first, -offset);
@@ -27,7 +39,11 @@ export default function TravelCalendar({
           (offset + new Date(Number(first.slice(0, 4)), Number(first.slice(5, 7)), 0).getDate()) /
             7,
         );
-  const entries = calendarEntries(bookings, components, filter);
+  const entries = calendarEntries(bookings, components, filter).filter(
+    (e) =>
+      calendarEntryMatchesSearch(e, query) &&
+      calendarEntryVisibleWithCancelled(e, hideCancelled),
+  );
   return (
     <>
       <div className="toolbar calendar-controls">
@@ -41,6 +57,26 @@ export default function TravelCalendar({
             {name}
           </button>
         ))}
+        <label className="directory-search" htmlFor="calendar-search">
+          {' '}
+          <input
+            id="calendar-search"
+            type="search"
+            aria-label="Search calendar"
+            placeholder="Search booking #, customer or trip…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className={`btn small ${hideCancelled ? 'primary' : ''}`}
+          aria-pressed={hideCancelled}
+          aria-label="Hide cancelled trips"
+          onClick={() => setHideCancelled((v) => !v)}
+        >
+          Hide cancelled
+        </button>
         <div className="tabs">
           {['Month', 'Week'].map((v) => (
             <button key={v} className={mode === v ? 'active' : ''} onClick={() => setMode(v)}>
@@ -97,7 +133,10 @@ export default function TravelCalendar({
             {type}
           </span>
         ))}
-        <span>Orange edge: needs attention · strike-through: cancelled / refund pending</span>
+        <span>
+          Orange edge: needs attention · strike-through: cancelled / refund pending
+          {copyLink ? ' · right-click trip: copy link' : ''}
+        </span>
       </div>
       <div className="card travel-calendar">
         <div className="calendar-week">
@@ -136,8 +175,14 @@ export default function TravelCalendar({
                       type="button"
                       className={`calendar-bar trip-${b.product.toLowerCase()} ${b.attention ? 'needs-attention' : ''} ${b.cancelled ? 'cancelled-trip' : ''}`}
                       style={{ gridColumn: `${b.start + 1} / ${b.end + 2}`, gridRow: b.lane + 1 }}
-                      title={`${tripTitle(b)}\n${b.travel_start} – ${b.travel_end}\nTravelers: ${b.travelers || 'Unknown'}\nCustomer: ${b.customer}\n${b.code}${b.cancelled ? '\nCancelled / refund pending' : ''}`}
+                      title={`${tripTitle(b)}\n${dateLabel(b.travel_start)}${b.travel_end && b.travel_end !== b.travel_start ? ` – ${dateLabel(b.travel_end)}` : ''}\nTravelers: ${b.travelers || 'Unknown'}\nCustomer: ${b.customer}\n${b.code}${b.cancelled ? '\nCancelled / refund pending' : ''}${copyLink && b.booking_id ? '\nRight-click: copy link' : ''}`}
+                      aria-label={`${tripTitle(b)}${copyLink && b.booking_id ? '. Right-click to copy shareable link' : ''}`}
                       onClick={() => open(b.booking_id)}
+                      onContextMenu={(e) => {
+                        if (!copyLink || !b.booking_id) return;
+                        e.preventDefault();
+                        copyLink(String(b.booking_id));
+                      }}
                     >
                       {({ Flight: '↗', Hotel: '▤', Car: '▰', Other: '•' } as R)[b.product]}{' '}
                       {tripTitle(b)} · {b.travelers || 'Traveler missing'}

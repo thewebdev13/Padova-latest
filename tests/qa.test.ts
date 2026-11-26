@@ -61,7 +61,12 @@ test('QA operations grants exclude administration while existing staff defaults 
     'view_total_profit',
   ] as const)
     assert.ok(!hasPermission(actor, p));
-  assert.deepEqual(EMPLOYEE_PERMISSIONS, ['operations', 'edit_payments']);
+  assert.ok(EMPLOYEE_PERMISSIONS.includes('operations'));
+  assert.ok(EMPLOYEE_PERMISSIONS.includes('view_booking_profit'));
+  assert.ok(EMPLOYEE_PERMISSIONS.includes('manage_funding'));
+  assert.ok(!EMPLOYEE_PERMISSIONS.includes('view_total_profit'));
+  assert.ok(!EMPLOYEE_PERMISSIONS.includes('view_accounting'));
+  assert.ok(!EMPLOYEE_PERMISSIONS.includes('manage_users'));
   assert.ok(OWNER_PERMISSIONS.includes('manage_users'));
 });
 

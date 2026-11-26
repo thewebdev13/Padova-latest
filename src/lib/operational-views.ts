@@ -1,6 +1,13 @@
 import type { Row } from './db';
 import type { Permission } from './permissions';
 import { latestCreditRequests } from './v1-entry';
+import { sellerUnpaidOperationalStatus } from './seller-unpaid';
+import {
+  compareRefundFollowUpDue,
+  refundFollowUpDueOn,
+  refundFollowUpUrgency,
+  refundFollowUpUrgencyLabel,
+} from './refund-follow-up-due';
 
 export function operationalViews(input: {
   bookings: Row[];
@@ -13,6 +20,7 @@ export function operationalViews(input: {
   expectedEvents: Row[];
   attention: Row[];
   can: (p: Permission) => boolean;
+  today?: string;
 }) {
   const {
     bookings,
@@ -25,6 +33,7 @@ export function operationalViews(input: {
     expectedEvents,
     attention,
     can,
+    today,
   } = input;
   const item = (b: Row, amount?: number | null, detail?: string): Row => ({
     id: b.id,
@@ -35,18 +44,27 @@ export function operationalViews(input: {
     amount,
   });
   const canCommissions = can('view_commissions') || can('manage_commissions');
+  const asOf = today && /^\d{4}-\d{2}-\d{2}$/.test(today) ? today : '';
   const pendingRefunds: Row[] = [];
   if (can('view_refunds') || can('issue_refunds'))
     for (const r of refunds) {
       const supplier = Number(r.supplier_expected) - Number(r.received),
         customer = Number(r.customer_due) - Number(r.paid) - Number(r.handed_over ?? 0);
+      const dueOn = refundFollowUpDueOn(r.due_on);
+      const urgency = asOf ? refundFollowUpUrgency(dueOn, asOf) : 'none';
+      const urgencyLabel = refundFollowUpUrgencyLabel(urgency);
+      const dueDetail = [r.reason, dueOn ? `Follow-up ${dueOn}` : null, urgencyLabel]
+        .filter(Boolean)
+        .join(' · ');
       if (supplier > 0)
         pendingRefunds.push({
           id: r.id + ':supplier',
           booking_id: r.booking_id,
           code: r.code,
           title: 'Supplier return pending',
-          detail: r.reason,
+          detail: dueDetail || r.reason,
+          due_on: dueOn,
+          urgency,
           ...(['money', undefined, null].includes(r.quantity_unit ?? r.unit)
             ? { amount: supplier }
             : { quantity: supplier, unit: r.quantity_unit ?? r.unit }),
@@ -57,10 +75,20 @@ export function operationalViews(input: {
           booking_id: r.booking_id,
           code: r.code,
           title: 'Customer repayment pending',
-          detail: r.reason,
+          detail: dueDetail || r.reason,
+          due_on: dueOn,
+          urgency,
           amount: customer,
         });
     }
+  if (asOf)
+    pendingRefunds.sort((a, b) =>
+      compareRefundFollowUpDue(
+        { due_on: a.due_on as string | null, urgency: a.urgency as any },
+        { due_on: b.due_on as string | null, urgency: b.urgency as any },
+        asOf,
+      ),
+    );
   const credits: Row[] = [];
   if (can('manage_assets') || can('view_supplier_cost')) {
     for (const b of bookings)
@@ -125,7 +153,8 @@ export function operationalViews(input: {
                 Number(b.recorded_supplier_balance),
                 b.supplier ?? 'Recorded booking sellers',
               ),
-              status: b.cost_incomplete ? 'Recorded obligation; total cost incomplete' : 'Unpaid',
+              status: sellerUnpaidOperationalStatus(Boolean(b.cost_incomplete)),
+              kind: 'Seller unpaid',
             })),
           ...assets
             .filter((a) => a.acquisition_due > 0)
@@ -134,7 +163,8 @@ export function operationalViews(input: {
               title: a.name,
               detail: parties.find((p) => p.id === a.seller_id)?.name,
               amount: a.acquisition_due,
-              status: 'Inventory purchase unpaid',
+              status: 'Pay ASAP · inventory purchase',
+              kind: 'Seller unpaid',
               record_type: 'asset',
               record_id: a.id,
             })),
@@ -196,4 +226,43 @@ export function operationalViews(input: {
       : [],
     'Needs Attention': attention.map((a) => ({ ...a, id: a.key, title: a.title })),
   };
+}
+
+/**
+ * Plan Follow-up / Needs attention row search:
+ * code · title · detail · kind · status · booking/record ids.
+ * Blank query → match all; empty fields never invent a hit.
+ */
+export function followupRowMatchesSearch(
+  row: {
+    id?: string | null;
+    key?: string | null;
+    code?: string | null;
+    title?: string | null;
+    detail?: string | null;
+    kind?: string | null;
+    status?: string | null;
+    booking_id?: string | null;
+    record_id?: string | null;
+  },
+  query: string | null | undefined,
+): boolean {
+  const q = String(query || '')
+    .trim()
+    .toLowerCase();
+  if (!q) return true;
+  const hay = [
+    row.code,
+    row.title,
+    row.detail,
+    row.kind,
+    row.status,
+    row.booking_id,
+    row.record_id,
+    row.id,
+    row.key,
+  ]
+    .map((x) => String(x || '').toLowerCase())
+    .join(' ');
+  return hay.includes(q);
 }

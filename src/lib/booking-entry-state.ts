@@ -1,4 +1,6 @@
+import { entryDocumentDraftStarted } from './booking-documents';
 import { parseList } from './entry-options';
+import { entryExtraIncomeDraftStarted } from './standing-deals';
 
 type Values = Record<string, any>;
 const productFields: Record<string, string[]> = {
@@ -155,5 +157,118 @@ export function taxesCreateFunding(tax: Values | undefined) {
     !!tax?.amount &&
     !tax.included_in_component &&
     (tax.bearer === 'Padova' || (tax.bearer === 'Seller' && tax.owed_to_seller))
+  );
+}
+
+/** Plan v1 short New Booking path — five primary sections (rare fields live in More). */
+export const BOOKING_ENTRY_PRIMARY_NAV = [
+  { id: 'customer', label: 'Customer' },
+  { id: 'travel', label: 'Travel' },
+  { id: 'how', label: 'How booked' },
+  { id: 'money', label: 'Price & cost' },
+  { id: 'more', label: 'More' },
+] as const;
+
+export function bookingEntryPrimaryNav() {
+  return BOOKING_ENTRY_PRIMARY_NAV.map((step) => ({ ...step }));
+}
+
+/** Open More when a rare Plan field already has a value (Unknown ≠ invent). */
+export function bookingEntryMoreShouldOpen(v: Values): boolean {
+  return Boolean(
+    v.referring_organization_id ||
+      v.held_pnr ||
+      v.ticketing_deadline ||
+      v.program_rate_name ||
+      v.program_perks ||
+      v.program_benefit_gained ||
+      v.additional_charge ||
+      (typeof v.additional_charge_note === 'string' && v.additional_charge_note.trim()) ||
+      (typeof v.notes === 'string' && v.notes.trim()) ||
+      (typeof v.price_breakdown_note === 'string' && v.price_breakdown_note.trim()) ||
+      v.summary_override ||
+      entryDocumentDraftStarted(v) ||
+      entryExtraIncomeDraftStarted(v) ||
+      (typeof v.tax_amount === 'string' && v.tax_amount.trim()) ||
+      (typeof v.tax_amount === 'number' && Number.isFinite(v.tax_amount)) ||
+      (v.tax_bearer && v.tax_bearer !== 'Unknown'),
+  );
+}
+
+/**
+ * Plan short Travel: cabin / flight # / tickets / room / times stay collapsed.
+ * Open when any of those rare fields already has a value (Unknown ≠ invent).
+ */
+export function bookingTravelMoreShouldOpen(v: Values): boolean {
+  const present = (x: unknown) => typeof x === 'string' && !!x.trim();
+  return Boolean(
+    present(v.cabin) ||
+      present(v.flight_numbers) ||
+      present(v.ticket_numbers) ||
+      present(v.additional_airlines) ||
+      present(v.room_type) ||
+      present(v.pickup_time) ||
+      present(v.dropoff_time) ||
+      (Array.isArray(v.provider_references) &&
+        v.provider_references.some(
+          (r: Values) => present(r?.value) || present(r?.provider_id),
+        )) ||
+      (v.ticketing_status &&
+        v.ticketing_status !== 'Not Ticketed / Unknown' &&
+        present(v.ticketing_status)),
+  );
+}
+
+/**
+ * Plan short Price: typed Manual sale is primary.
+ * Percent-off / comparable online stays collapsed until chosen or filled.
+ */
+export function bookingPercentPricingShouldOpen(v: Values): boolean {
+  const present = (x: unknown) =>
+    (typeof x === 'string' && !!x.trim()) ||
+    (typeof x === 'number' && Number.isFinite(x));
+  return Boolean(
+    v.pricing_method === 'Percentage Off Comparable Online Price' ||
+      present(v.comparable_price) ||
+      present(v.discount_percent) ||
+      v.price_override ||
+      v.record_comparable,
+  );
+}
+
+/**
+ * Plan Fixed Margin stays collapsed until chosen or a margin is typed.
+ * Same as Cost is a one-tap seed (not this panel).
+ */
+export function bookingFixedMarginShouldOpen(v: Values): boolean {
+  const present = (x: unknown) =>
+    (typeof x === 'string' && !!x.trim()) ||
+    (typeof x === 'number' && Number.isFinite(x));
+  return Boolean(v.pricing_method === 'Fixed Margin' || present(v.fixed_margin));
+}
+
+const textPresent = (x: unknown) => typeof x === 'string' && !!x.trim();
+
+/** Plan More: FHR / program rate fields stay collapsed until filled. */
+export function bookingEntryFhrMoreShouldOpen(v: Values): boolean {
+  return Boolean(
+    textPresent(v.program_rate_name) ||
+      textPresent(v.program_perks) ||
+      textPresent(v.program_benefit_gained),
+  );
+}
+
+/** Plan More: Held PNR stays collapsed until hold is checked or deadline set. */
+export function bookingEntryHeldMoreShouldOpen(v: Values): boolean {
+  return Boolean(v.held_pnr || textPresent(v.ticketing_deadline));
+}
+
+/** Plan More: notes / summary stay collapsed until edited or noted. */
+export function bookingEntryNotesMoreShouldOpen(v: Values): boolean {
+  return Boolean(
+    v.summary_override ||
+      textPresent(v.notes) ||
+      textPresent(v.price_breakdown_note) ||
+      textPresent(v.reservation_summary),
   );
 }

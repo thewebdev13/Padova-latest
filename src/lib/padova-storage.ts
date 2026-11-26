@@ -41,6 +41,9 @@ for (const name of [
   'review_resolution_events',
   'commission_payable_revisions',
   'commission_payout_adjustments',
+  'fee_settings',
+  'invoice_drafts',
+  'booking_relations',
 ])
   relations[name] = `padova.${name}`;
 

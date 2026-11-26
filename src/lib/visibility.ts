@@ -19,7 +19,17 @@ export function bookingVisibility(row: Row, actor: Actor) {
       for (const key of ['additional_charge', 'pricing']) delete b.itinerary.operational_entry[key];
     if (!hasPermission(actor, 'view_supplier_cost')) {
       delete b.itinerary.operational_entry.components;
-      delete b.itinerary.operational_entry.taxes;
+      // Plan: tax amount is part of customer price (sale side). Keep amount for
+      // view_sale_price; drop funding/bearer details without supplier-cost grant.
+      if (!hasPermission(actor, 'view_sale_price')) {
+        delete b.itinerary.operational_entry.taxes;
+      } else if (b.itinerary.operational_entry.taxes) {
+        const t = b.itinerary.operational_entry.taxes as Record<string, unknown>;
+        b.itinerary.operational_entry.taxes = {
+          amount: t.amount,
+          ...(t.customer_recovery != null ? { customer_recovery: t.customer_recovery } : {}),
+        };
+      }
     }
   }
   if (b.itinerary && actor.role !== 'OWNER') {

@@ -1,5 +1,7 @@
 /** Entry helpers only: these never infer prices, payments, ownership or cost basis. */
 
+import { travelerCandidates } from './traveler-candidates';
+
 /** Sum known money component costs (USD strings). Undefined if a filled cost cannot be parsed. */
 export function entryBookedCostCents(
   components: Array<Record<string, any>>,
@@ -24,11 +26,20 @@ export function entryBookedCostCents(
 }
 
 export function travelerNames(input: string): string[] {
+  const candidates = travelerCandidates(input);
+  // Safe multi-name paste (Alex; Jamie / Alex & Jamie) must not collapse to one person.
+  if (candidates.split && candidates.names.length > 1) return candidates.names;
   const names = new Map<string, string>();
   for (const name of input.split(/[,\r\n]+/).map((s) => s.trim().replace(/\s+/g, ' '))) {
     if (name) names.set(name.normalize('NFKC').toLocaleLowerCase(), name);
   }
   return [...names.values()];
+}
+
+/** Ambiguous multi-person paste (e.g. "Alex and Jamie Winter") needs staff review. */
+export function travelerPasteNeedsReview(input: string): boolean {
+  const candidates = travelerCandidates(input);
+  return candidates.review === true && !candidates.split;
 }
 
 /** Common IATA codes used by AirportInput — avoid treating "Tel Aviv" as TEL. */

@@ -1,5 +1,7 @@
 'use client';
 
+import { pluralLabelFromPlural } from '@/lib/count-label';
+
 export function pageSlice<T>(items: T[], page: number, pageSize: number) {
   const total = items.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
@@ -40,11 +42,9 @@ function pageWindow(current: number, totalPages: number): (number | '…')[] {
   return out;
 }
 
-function pluralLabel(total: number, label: string) {
-  if (total === 1 && label.endsWith('s') && !label.includes(' ')) {
-    return label.replace(/s$/, '');
-  }
-  return label;
+/** Plan wording: "1 booking" not "1 bookings". */
+export function pluralLabel(total: number, label: string) {
+  return pluralLabelFromPlural(total, label);
 }
 
 export default function ListPager({

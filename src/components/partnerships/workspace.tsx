@@ -859,11 +859,12 @@ export default function Partnerships() {
               'When earned',
               'After travel',
               'After customer paid',
+              'After commission confirmed',
               'After commission received',
               'On date',
             ].map((value) => ({ value, label: value })),
           ],
-          value: 'After travel',
+          value: 'After commission confirmed',
           width: 'half',
         },
         {

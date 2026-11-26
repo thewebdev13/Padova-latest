@@ -2,19 +2,26 @@
 
 ## Current direction and precedence
 
-The Owner’s latest instructions supersede earlier independent-schema/prototype wording: continue this application by reusing and extending the existing US Supabase `padova` foundation in project `unugynfzmxjxifgofxjr` (us-east-1). Preserve `padova_staging`, source evidence, provenance, review/audit history and existing test schemas. Never create a duplicate schema/project or reinstall the installed adapter. Migration `20261028191100_padova_existing_schema_adapter` is already installed; marker `20261028_existing_padova_adapter` is authoritative. Continue routine additive implementation and verification autonomously. Stop for destructive/irreversible operations, evidence changes, paid services/material costs, or financially consequential ambiguous business rules. Keep the operational gate locked until independent backup/restore and hosted acceptance are verified.
+**Product source of truth:** Owner *Padova Travel — CRM Plan (v1)* (24 Nov 2026). Local extract: `docs/_audit_source_Padova_Travel_CRM_Plan_v1_20261124.txt`. Active agent rules: `.cursor/rules/*.mdc` (archived `.cursor/archive/**` is not live). Older `docs/MASTER_REQUIREMENTS.md` layers are historical when they conflict with Plan v1.
+
+Continue on the existing US Supabase `padova` foundation in project `unugynfzmxjxifgofxjr` (us-east-1). Preserve `padova_staging`, source evidence, provenance, review/audit history and existing test schemas. Never create a duplicate schema/project or reinstall the installed adapter. Migration `20261028191100_padova_existing_schema_adapter` is already installed; marker `20261028_existing_padova_adapter` is authoritative.
+
+**Build order (Plan v1):** (1) inspect/fix defects → (2) fast How-booked entry → (3) Money Back/ledgers → (4) payments/invoices/ACL → (5) 2026 history import → (6) intake depth. QA first; production/sheet cutover only with Owner approval. History posting is **not** priority ahead of Phases 1–4.
+
+Stop for destructive/irreversible operations, evidence changes, paid services/material costs, or financially consequential ambiguous business rules. Keep operational/production gates locked until independent backup/restore and hosted acceptance are verified.
 
 ## Permanent Padova Rules
 
-- Historical files remain read-only evidence. Do not import them into live records. Owner-approved existing US `padova`/`padova_staging` are the permanent database foundation; reuse them safely.
+- Historical files remain read-only evidence. Do not import them into live records until Plan Phase 5 gated adoption. Owner-approved existing US `padova`/`padova_staging` are the permanent database foundation; reuse them safely.
 - Financial integrity is critical: exact money, relational constraints, atomic transactions, concurrency protection, and idempotency are required.
 - Never destructively delete financial history. Corrections preserve prior values, actor, time, reason, and dated accounting effects.
-- Ambiguous historical data belongs in Needs Review. Never guess.
-- Read `docs/MASTER_REQUIREMENTS.md` and `docs/BUILD_STATE.md` on resumption. Update BUILD_STATE throughout implementation and before ending a session.
+- Ambiguous historical data belongs in Needs Review. Never guess. Unknown ≠ 0.
+- On resumption: Plan v1 extract + `.cursor/rules` + `docs/BUILD_STATE.md` (newest at top). Update BUILD_STATE when implementing.
 - Test financial workflows before calling them complete. Keep local readiness and production readiness distinct.
 - Use professional TypeScript standards, server-side permissions, and no secrets or production traveler data in Git.
-- Require individual staff sessions everywhere. Never add a shared login or development authentication bypass. Enforce independent permissions on server reads/writes and retain actual-user attribution.
+- Require individual staff sessions everywhere. Never add a shared login or development authentication bypass. Enforce independent permissions on server reads/writes and retain actual-user attribution. Plan v1: staff may use the system broadly; **hide monthly/yearly/company-wide profit totals** from staff.
 - Use only Supabase `unugynfzmxjxifgofxjr` (US Private Trial, us-east-1). No duplicate schema/project or test-schema deletion. The existing adapter is installed; never reinstall it. Routine additive work is authorized; stop for destructive/evidence/cost/financial-policy decisions. See `docs/PADOVA_ADAPTER.md`.
+- UI: restructure layouts toward Plan v1 (short booking entry, More panel, clean lists). **Do not change the existing color scheme / theme tokens.** Preserve performance (no redundant fetches/re-renders for cosmetics).
 
 ## Project Structure & Module Organization
 

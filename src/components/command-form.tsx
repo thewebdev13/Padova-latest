@@ -8,6 +8,10 @@ import RolesInput from './roles-input';
 import BookingFunding from './booking-funding';
 import BookingTravel from './booking-travel';
 import TravelerRecords from './traveler-records';
+import {
+  TRAVELER_PERSONAL_OPTIONAL_KEYS,
+  travelerPersonalOptionalShouldOpen,
+} from '@/lib/traveler-personal-fields';
 import BookingEntry from './booking-entry';
 import CommissionBundleForm from './commission-bundle-form';
 import BookingPartySelect from './booking-party-select';
@@ -19,14 +23,21 @@ import { eligibleParty, providerRole, accountSupports } from '@/lib/directory-el
 import { itineraryEntryKeys } from '@/lib/booking-itinerary';
 import { fulfillmentEntryTerms } from '@/lib/fulfillment-entry';
 import { assetUnit, formatQuantity, refundQuantityUnit } from '@/lib/asset-units';
+import { countLabel } from '@/lib/count-label';
 import {
   BOOKING_CHANNELS,
   PAYMENT_METHODS,
+  PAYMENT_METHOD_OTHER,
   FUNDING_KINDS,
+  LOYALTY_PROGRAM_OTHER,
   LOYALTY_PROGRAMS,
   SEAT_PREFERENCES,
+  mergeLoyaltyProgramOptions,
+  mergePaymentMethodOptions,
   parseList,
   decimalUnits,
+  resolveLoyaltyProgram,
+  resolvePaymentMethod,
 } from '@/lib/entry-options';
 import {
   cancelScopeFieldErrors,
@@ -37,6 +48,66 @@ import {
 } from '@/lib/form-field-errors';
 import { FieldError, FormAlert, ReqMark } from './form-feedback';
 import { useConfirmDialog } from './confirm-dialog';
+import { isCardPaymentMethod, suggestPaymentCardFees } from '@/lib/card-fees';
+import { partyReferralRateBps } from '@/lib/referrer-defaults';
+import { inlinePartyCreateDefaults } from '@/lib/inline-party-defaults';
+import {
+  STANDING_DEAL_BASES,
+  STANDING_DEAL_PRODUCTS,
+  partyStandingDeals,
+  upsertPrimaryStandingDeal,
+  type StandingDealBasis,
+  type StandingDealProduct,
+} from '@/lib/standing-deals';
+import {
+  TRADE_DEFAULT_STOCK_MODE,
+  TRADE_STATUSES,
+  TRADE_STOCK_MODE_OPTIONS,
+  TRADE_WHAT_OTHER,
+  TRADE_WHATS,
+  formatTradeRateLabel,
+  mergeTradeWhatOptions,
+  resolveTradeWhat,
+  suggestTradeStatus,
+  tradeStatusLabel,
+  tradeToComplete,
+  tradeUnit,
+  type TradeStatus,
+} from '@/lib/trade-desk';
+import {
+  EXPIRY_RULE_OTHER,
+  EXPIRY_RULES,
+  mergeExpiryRuleOptions,
+  parseExpiryRuleFromRestrictions,
+  resolveExpiryRule,
+  suggestExpiresOn,
+} from '@/lib/expiry-rules';
+import {
+  POINTS_BATCH_SOURCES,
+  normalizePointsBatchSource,
+} from '@/lib/points-batch-source';
+import {
+  expectedTransferQuantity,
+  pointsReceivedWithBonus,
+  transferBonusPlanHint,
+  transferSpreadSummary,
+} from '@/lib/points-transfer-bonus';
+import { formatRefundCallNoteBody } from '@/lib/refund-call-notes';
+import { cancelFormMoneyDefaults, suggestCancelRefundAmounts } from '@/lib/refund-card-fee';
+import { proportionalRefundPlanHint } from '@/lib/proportional-refund';
+import { BOOKING_RELATION_KINDS } from '@/lib/booking-relations';
+import {
+  PLAN_RESERVATION_STATUS_OPTIONS,
+  reservationStatusForForm,
+  reservationStatusPlanHint,
+  toStoredReservationStatus,
+} from '@/lib/booking-status';
+import { REFUND_HOW_GIVEN, refundHowGivenPlanHint } from '@/lib/refund-how-given';
+import {
+  SUPPLIER_REFUND_DENIED_FORM,
+  supplierRefundDenyPlanHint,
+} from '@/lib/supplier-refund-status';
+import { BOOKING_DOCUMENT_KINDS } from '@/lib/booking-documents';
 type R = Record<string, any>;
 const pretty = (v: string) => v.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 const money = (v: any) =>
@@ -147,7 +218,13 @@ const fields: Record<string, Field[]> = {
     dateField,
     F('reference', 'Unique supplier fee / invoice reference', 'text', { required: true }),
     F('settled', 'Actual supplier fee has already been paid', 'checkbox'),
-    F('method', 'Actual payment method', 'choice', { options: PAYMENT_METHODS }),
+    F('method', 'Actual payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
     F('account_id', 'Payment account / card', 'select', { source: 'paymentAccounts' }),
     F('reason', 'Actual fee and why it is additional', 'textarea', { required: true, full: true }),
   ],
@@ -290,8 +367,12 @@ const fields: Record<string, Field[]> = {
       help: 'For a partial payment, leave the paid-in-full checkbox clear. The remaining invoice balance stays payable.',
     }),
     F('payment_method', 'Actual source payment method', 'choice', {
-      options: PAYMENT_METHODS,
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
       required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('payment_method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
     }),
     F('confirm_cost', 'This completes the cost for this travel', 'checkbox'),
     dateField,
@@ -317,7 +398,13 @@ const fields: Record<string, Field[]> = {
     }),
     party('fee_source_id', 'Actual taxes / fees payee', false),
     F('fee_settled', 'These additional taxes / fees were actually paid', 'checkbox'),
-    F('fee_payment_method', 'Taxes / fees payment method', 'choice', { options: PAYMENT_METHODS }),
+    F('fee_payment_method', 'Taxes / fees payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('fee_payment_method_custom', 'New taxes / fees method', 'text', {
+      help: 'Required when taxes / fees method is Other…',
+    }),
     F('fee_account_id', 'Taxes / fees payment account', 'select', { source: 'paymentAccounts' }),
     F('rebate_expected', 'Expected whole points back (pending only)', 'integer', {
       help: 'Use the actual expected issuer amount. No inventory or profit is recognized until the reward posts.',
@@ -349,7 +436,9 @@ const fields: Record<string, Field[]> = {
     F('quantity_expected', 'Whole points expected', 'integer', { required: true }),
     F('ratio_numerator', 'Transfer ratio (received units)', 'integer'),
     F('ratio_denominator', 'Transfer ratio (sending units)', 'integer'),
-    F('bonus_bps', 'Transfer bonus (%)', 'percent'),
+    F('bonus_bps', 'Transfer bonus (%)', 'percent', {
+      help: 'Optional. Seeds expected points (e.g. 30% on 100,000 → 130,000). Exact match required — no rounding.',
+    }),
     F('fees', 'Actual transfer fee (USD)', 'money'),
     F('due_on', 'Expected receipt date', 'date'),
     dateField,
@@ -381,12 +470,39 @@ const fields: Record<string, Field[]> = {
       help: 'Independent of purchasing Tier. Monetary upgrade thresholds are not assumed.',
     }),
     F('roles', 'Roles', 'roles', { full: true }),
+    F('referral_rate_bps', 'Default referrer share of profit', 'percent', {
+      help: 'Plan: per-referrer %, changeable. Typical hint ~20%. Blank = Unknown (do not invent).',
+    }),
+    F('standing_deal_label', 'Standing deal label', 'text', {
+      help: 'Plan: e.g. Extra 10% cash. Blank + blank % clears the primary standing deal.',
+    }),
+    F('standing_deal_rate_bps', 'Standing deal %', 'percent', {
+      help: 'Of stay/sale (basis below). Blank = no standing deal. Never invent.',
+    }),
+    F('standing_deal_basis', 'Standing deal basis', 'select', {
+      options: ['sale_ex_tax', 'sale'],
+      help: 'sale_ex_tax = price excluding taxes (Marriott example). sale = full customer price.',
+    }),
+    F('standing_deal_product', 'Standing deal product', 'select', {
+      options: ['Hotel', 'Flight', 'Car', 'Other', 'Any'],
+      help: 'Only seeds onto matching new bookings (Any = all products).',
+    }),
     F('source_offerings', 'What do they sell?', 'multi_choice', {
       options: ['Points / miles', 'Award tickets', 'Certificates', 'Vouchers', 'Other'],
       full: true,
     }),
     F('travel_rules', 'Company / customer travel rules', 'textarea', { full: true }),
     F('reason', 'Reason for edit', 'text', { required: true }),
+  ],
+  merge_party: [
+    party('keep_id', 'Keep this person (canonical)'),
+    party('merge_id', 'Merge this duplicate into Keep'),
+    dateField,
+    F('reason', 'Why these are the same person', 'textarea', {
+      required: true,
+      full: true,
+      help: 'Roles union onto Keep. Duplicate is archived with merged-into. Bookings/travelers remap. No silent identity guess.',
+    }),
   ],
   authorize_payer: [
     booking,
@@ -411,6 +527,20 @@ const fields: Record<string, Field[]> = {
     }),
     F('last_four', 'Last four digits only', 'text', { pattern: '[0-9]{4}', maxLength: 4 }),
   ],
+  update_fee_settings: [
+    F('customer_card_fee_bps', 'Customer card fee (pass-through %)', 'percent', {
+      required: true,
+      help: 'Default charged to the customer when they pay by card (Plan default 2.9%). Editable per booking via Card fee.',
+    }),
+    F('padova_card_fee_bps', 'Padova card cost (%)', 'percent', {
+      required: true,
+      help: 'Processor percent Padova pays (Plan default ~2.7%).',
+    }),
+    F('padova_card_fee_flat_cents', 'Padova card cost flat (USD)', 'money', {
+      required: true,
+      help: 'Flat processor fee Padova pays in addition to the percent (Plan default $0.30).',
+    }),
+  ],
   transfer_asset: [
     F('sending_asset_id', 'Sending points / asset account', 'select', {
       source: 'assets',
@@ -420,17 +550,96 @@ const fields: Record<string, Field[]> = {
     F('quantity_sent', 'Amount sent (USD) or whole points', 'quantity', {
       required: true,
     }),
+    F('transfer_bonus_percent', 'Transfer bonus (%)', 'percent', {
+      help: 'Optional. Seeds amount received (e.g. 30 → 100k sent becomes 130k received). Cost still spreads over all received.',
+    }),
     F('quantity_received', 'Amount received (USD) or whole points, including bonus', 'quantity', {
       required: true,
+      help: 'Plan: with a bonus, enter the full points received. Whole cost basis spreads over this quantity.',
     }),
     F('fees', 'Transfer fees (USD)', 'money'),
     dateField,
   ],
   expire_asset: [
     F('asset_id', 'Asset', 'select', { source: 'assets', required: true }),
-    F('quantity', 'Amount expired (USD) or whole points', 'quantity', { required: true }),
+    F('quantity', 'Amount expired (USD) or whole points', 'quantity', {
+      required: true,
+      help: 'Plan: unused points/vouchers expire as a loss equal to remaining cost. Cap1 credits do not expire — use Void unused credit.',
+    }),
     dateField,
-    F('reason', 'Reason', 'textarea', { required: true }),
+    F('reason', 'Reason', 'textarea', {
+      required: true,
+      help: 'Remaining acquisition cost posts as an expiration loss. Blank / Unknown basis stays Unknown ≠ $0.',
+    }),
+  ],
+  void_credit: [
+    F('asset_id', 'Capital One credit', 'select', { source: 'assets', required: true }),
+    dateField,
+    F('reason', 'Why voided', 'textarea', {
+      required: true,
+      full: true,
+      help: 'Plan: unused Cap1 credit voided when itinerary cancels after price match. No warning popup.',
+    }),
+  ],
+  void_money_back: [
+    booking,
+    F('target_kind', 'Line type', 'select', {
+      options: [
+        'expected_primary',
+        'expected_secondary',
+        'standing_deal',
+        'commission',
+        'referral',
+        'price_match',
+      ],
+      required: true,
+    }),
+    F('target_id', 'Line id', 'text', { required: true }),
+    dateField,
+    F('reason', 'Why voided', 'textarea', {
+      required: true,
+      full: true,
+      help: 'Plan: void cancels an expected Money Back line. Denied is a separate issuer outcome.',
+    }),
+  ],
+  deny_money_back: [
+    booking,
+    F('target_kind', 'Line type', 'select', {
+      options: [
+        'expected_primary',
+        'expected_secondary',
+        'standing_deal',
+        'commission',
+        'referral',
+        'price_match',
+      ],
+      required: true,
+    }),
+    F('target_id', 'Line id', 'text', { required: true }),
+    dateField,
+    F('reason', 'Why denied', 'textarea', {
+      required: true,
+      full: true,
+      help: 'Plan: issuer/payer refused (e.g. Cap1 price match denied, hotel no commission). Not the same as void.',
+    }),
+  ],
+  deduct_money_back: [
+    booking,
+    F('target_kind', 'Line type', 'select', {
+      options: ['commission'],
+      required: true,
+    }),
+    F('target_id', 'Commission id', 'text', { required: true }),
+    F('amount', 'Amount deducted', 'money', {
+      required: true,
+      help: 'Plan: paid less / remittance deducted. Does not overwrite the original expected amount.',
+    }),
+    dateField,
+    F('reason', 'Why deducted', 'textarea', {
+      required: true,
+      full: true,
+      help: 'E.g. Sruly remittance short, fee taken, cancel clawback. How received = deducted.',
+    }),
   ],
   convert_asset: [
     F('asset_id', 'Source Padova asset', 'select', { source: 'assets', required: true }),
@@ -449,7 +658,12 @@ const fields: Record<string, Field[]> = {
       ],
       required: true,
     }),
-    F('issuer', 'New issuer / program', 'choice', { options: LOYALTY_PROGRAMS, required: true }),
+    F('issuer', 'New issuer / program', 'choice', {
+      options: [...LOYALTY_PROGRAMS, LOYALTY_PROGRAM_OTHER],
+      required: true,
+      help: 'Plan: program list the owner can extend — Other… for a new name.',
+    }),
+    F('issuer_custom', 'New program name', 'text'),
     F('quantity_received', 'New face amount (USD) or whole points received', 'quantity', {
       required: true,
     }),
@@ -467,14 +681,28 @@ const fields: Record<string, Field[]> = {
     F('sale_id', 'Asset sale', 'select', { source: 'sales', required: true }),
     amount,
     dateField,
-    F('method', 'Payment method', 'choice', { options: PAYMENT_METHODS, required: true }),
+    F('method', 'Payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
     F('reference', 'Reference'),
   ],
   pay_asset_purchase: [
     F('asset_id', 'Asset', 'select', { source: 'assets', required: true }),
     amount,
     dateField,
-    F('method', 'Payment method', 'choice', { options: PAYMENT_METHODS, required: true }),
+    F('method', 'Payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
     F('reference', 'Reference'),
     F('account_id', 'Reusable payment account / card', 'select', { source: 'paymentAccounts' }),
   ],
@@ -484,10 +712,62 @@ const fields: Record<string, Field[]> = {
       required: true,
     }),
     F('kind', 'Description / fee kind', 'choice', {
-      options: ['Booking fee', 'Service fee', 'Change fee', 'Cancellation fee', 'Sale adjustment'],
+      options: [
+        'Booking fee',
+        'Card fee',
+        'Service fee',
+        'Change fee',
+        'Cancellation fee',
+        'Sale adjustment',
+      ],
       required: true,
     }),
     dateField,
+  ],
+  booking_extra: [
+    booking,
+    F('category', 'Extra type', 'select', {
+      options: ['Seat', 'Bag', 'Other'],
+      required: true,
+    }),
+    F('description', 'What (optional)', 'text', {
+      help: 'e.g. 1A extra legroom, 2 checked bags',
+    }),
+    F('customer_amount', 'Customer price (USD)', 'money', {
+      help: 'Leave blank when Unknown — never invent $0',
+    }),
+    F('cost_amount', 'Padova cost (USD)', 'money', {
+      help: 'Leave blank when Unknown — never invent $0',
+    }),
+    party('payee_id', 'Paid to (when cost known)', false),
+    F('reference', 'Confirmation / EMD / reference'),
+    dateField,
+    F('trip_shared', 'Shared across trip (related bookings)', 'checkbox', {
+      help: 'Plan: enter once at trip level. Money stays on this booking; Related bookings lists the shared line.',
+    }),
+    F('reason', 'Note', 'textarea', { full: true }),
+  ],
+  booking_change: [
+    booking,
+    F('summary', 'Updated route / stay (optional)', 'text', {
+      full: true,
+      help: 'Leave blank to keep the current summary. Full itinerary edit stays on Edit booking.',
+    }),
+    F('travel_start', 'New travel start (optional)', 'date'),
+    F('travel_end', 'New travel end (optional)', 'date'),
+    party('change_seller_id', 'Seller for fare / change fee', false),
+    F('fare_difference', 'Additional supplier fare (USD)', 'money', {
+      help: 'Airline fare difference. Leave blank for a note- or date-only change.',
+    }),
+    F('supplier_change_fee', 'Supplier change fee (USD)', 'money'),
+    F('padova_change_fee', 'Padova change fee (USD)', 'money'),
+    F(
+      'additional_customer_charge',
+      'Total additional customer charge, including Padova fee (USD)',
+      'money',
+    ),
+    dateField,
+    F('reason', 'Reason for change', 'textarea', { required: true, full: true }),
   ],
   party: [
     F('kind', 'Person or organization', 'select', {
@@ -512,6 +792,9 @@ const fields: Record<string, Field[]> = {
     F('roles', 'Roles', 'roles', {
       full: true,
       help: 'Pick every hat this contact wears. One contact can be traveler, payer, seller, and more.',
+    }),
+    F('referral_rate_bps', 'Default referrer share of profit', 'percent', {
+      help: 'Shown when role includes referrer. Typical Plan hint ~20% of profit; leave blank if Unknown.',
     }),
   ],
   relationship: [
@@ -547,7 +830,13 @@ const fields: Record<string, Field[]> = {
     F('redress', 'Redress number'),
     F('ktn', 'Known Traveler Number'),
     F('seat', 'Seat preference', 'choice', { options: SEAT_PREFERENCES }),
-    F('loyalty_program', 'Loyalty program', 'choice', { options: LOYALTY_PROGRAMS }),
+    F('loyalty_program', 'Loyalty program', 'choice', {
+      options: [...LOYALTY_PROGRAMS, LOYALTY_PROGRAM_OTHER],
+      help: 'Plan: owner can add program names — pick Other… for a new one.',
+    }),
+    F('loyalty_program_custom', 'New program name', 'text', {
+      help: 'Owner-added loyalty program (saved on this traveler).',
+    }),
     F('loyalty_number', 'Loyalty number'),
     F('passport_number', 'Passport number (protected)'),
     F('passport_country', 'Passport issuing country', 'choice', {
@@ -604,8 +893,18 @@ const fields: Record<string, Field[]> = {
     amount,
     dateField,
     F('method', 'Payment method', 'choice', {
-      options: PAYMENT_METHODS,
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
       required: true,
+      help: 'Plan: customer payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
+    F('customer_card_fee', 'Customer card fee (USD)', 'money', {
+      help: 'Separate charge line on the booking (Plan). Suggested from Settings when method is Card. Leave blank or 0 for none.',
+    }),
+    F('padova_card_cost', 'Padova card cost (USD)', 'money', {
+      help: 'Processor cost Padova pays (settings % + flat). Audit only — not charged to the customer.',
     }),
     F('reference', 'Reference / proof identifier'),
     F('account_id', 'Reusable payment account / card', 'select', { source: 'paymentAccounts' }),
@@ -626,6 +925,56 @@ const fields: Record<string, Field[]> = {
     dateField,
     F('reason', 'Reason for correction', 'textarea', { required: true, full: true }),
   ],
+  trade: [
+    F('side', 'Buy or Sell', 'choice', {
+      options: ['Buy', 'Sell'],
+      required: true,
+      help: 'Plan trading desk — 10-second entry. Rate is calculated from amount + price.',
+    }),
+    F('what', 'What', 'choice', {
+      options: [...TRADE_WHATS, TRADE_WHAT_OTHER],
+      required: true,
+      help: 'Plan: short drop-down the owner can extend — pick Other… to add a new kind.',
+    }),
+    F('what_custom', 'New kind name', 'text', {
+      help: 'Owner-added trade type (saved on this trade; appears next time from existing assets).',
+    }),
+    F('amount', 'Amount (points or face USD)', 'quantity', {
+      required: true,
+      help: 'Points: whole points. Credits/vouchers/FHR: face value in dollars.',
+    }),
+    F('price', 'Total price (USD)', 'money', {
+      required: true,
+      help: 'What Padova pays (buy) or receives (sell). Rate is calculated — do not type a rate.',
+    }),
+    party('counterparty_id', 'Counterparty', false),
+    F('asset_id', 'Asset / batch to sell', 'select', {
+      source: 'assets',
+      help: 'Required for Sell.',
+    }),
+    F('stock_mode', 'Stock', 'select', {
+      options: TRADE_STOCK_MODE_OPTIONS.map((o) => o.value),
+      help: 'Plan default: for this booking. Switch to hold in stock when buying for later.',
+    }),
+    F('booking_id', 'Linked booking', 'select', { source: 'bookings' }),
+    dateField,
+    F('expires_on', 'Expiration', 'date'),
+    F('paid', 'Payment already received (sell)', 'checkbox'),
+    F('status', 'Trade status', 'choice', {
+      options: [...TRADE_STATUSES],
+      required: true,
+      help: 'Plan: offered · agreed · paid · delivered. Suggested from desk facts; change when the deal stage differs.',
+    }),
+    F('method', 'Payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
+    F('reference', 'Reference'),
+    F('notes', 'Notes', 'textarea', { full: true }),
+  ],
   acquire_asset: [
     F('name', 'Asset / account name', 'text', { required: true }),
     F('kind', 'Asset kind', 'choice', {
@@ -643,31 +992,63 @@ const fields: Record<string, Field[]> = {
       ],
       required: true,
     }),
-    F('issuer', 'Issuer / loyalty program', 'choice', {
-      options: LOYALTY_PROGRAMS,
+    F('profile_id', 'Cap1 account / profile', 'select', {
+      source: 'bookingSourceProfiles',
       required: true,
+      help: 'Required for Capital One credit. Which Cap1 profile holds this credit — never invent a profile.',
+    }),
+    F('issuer', 'Issuer / loyalty program', 'choice', {
+      options: [...LOYALTY_PROGRAMS, LOYALTY_PROGRAM_OTHER],
+      required: true,
+      help: 'Plan: program names are owner-extensible — Other… adds a new program.',
+    }),
+    F('issuer_custom', 'New program name', 'text', {
+      help: 'Required when Issuer is Other…',
     }),
     F('quantity', 'Face amount (USD) or points quantity', 'quantity', {
       required: true,
-      help: 'For Points enter whole points. For monetary assets enter dollars.',
+      help: 'For Points enter whole points received (with bonus: e.g. 130,000 for 100k+30%). Monetary assets use dollars. Whole cost spreads over that total.',
     }),
     F('cost', 'Padova purchase cost (USD)', 'money', {
-      help: 'Leave blank if unknown. Enter 0 only when the original cost was actually zero.',
+      help: 'Leave blank if unknown. Enter 0 only when the original cost was actually zero. With a points bonus, enter the full acquisition cost — it spreads over all points received.',
     }),
     F('purchase_percent', 'Or purchase percentage of face value', 'percent', {
       help: 'Enter either total cost or a percentage for monetary assets.',
     }),
     party('seller_id', 'Purchased from', false),
-    party('holder_id', 'Account holder', false),
+    party('holder_id', 'Locked to traveler (optional)', false),
     F('ownership', 'Ownership', 'select', { options: ['Padova', 'External', 'Customer'] }),
     dateField,
-    F('expires_on', 'Expiration', 'date'),
-    F('restrictions', 'Restrictions / responsibility', 'textarea', { full: true }),
+    F('points_source', 'Points batch source', 'choice', {
+      options: [...POINTS_BATCH_SOURCES],
+      help: 'Plan Points batch: purchase · transfer with bonus · sold on. Optional; blank stays Unknown.',
+    }),
+    F('expiry_rule', 'Expiry rule', 'choice', {
+      options: [...EXPIRY_RULES, EXPIRY_RULE_OTHER],
+      help: 'Plan Points: expiry rules are a list the owner can extend — Other… for a new rule. Exact date stays below.',
+    }),
+    F('expiry_rule_custom', 'New expiry rule', 'text', {
+      help: 'Required when Expiry rule is Other…',
+    }),
+    F('expires_on', 'Expiration', 'date', {
+      help: 'Actual expiry date when known. Suggested from the rule when purchase date is set — never invent.',
+    }),
+    F('restrictions', 'Restrictions / responsibility', 'textarea', {
+      full: true,
+      help: 'Plan: when Locked to traveler is set on a Padova voucher, it can only be used on bookings that include that person. Cap1/points use other locks.',
+    }),
     F('reference', 'Voucher / account reference'),
   ],
   revise_asset: [
     F('name', 'Asset name', 'text', { required: true }),
     F('issuer', 'Issuer / program', 'text', { required: true }),
+    F('expiry_rule', 'Expiry rule', 'choice', {
+      options: [...EXPIRY_RULES, EXPIRY_RULE_OTHER],
+      help: 'Plan Points: owner-extensible expiry rule list — Other… adds a new rule.',
+    }),
+    F('expiry_rule_custom', 'New expiry rule', 'text', {
+      help: 'Required when Expiry rule is Other…',
+    }),
     F('expires_on', 'Expiration', 'date'),
     F('restrictions', 'Restrictions / responsibility', 'textarea', { full: true }),
     F('reference', 'Voucher / account reference'),
@@ -705,13 +1086,25 @@ const fields: Record<string, Field[]> = {
     F('proceeds', 'Sale proceeds (USD)', 'money'),
     F('sale_percent', 'Or sale percentage of face value', 'percent'),
     F('paid', 'Payment received', 'checkbox'),
-    F('method', 'Payment method', 'choice', { options: PAYMENT_METHODS, required: true }),
+    F('method', 'Payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
     F('reference', 'Reference'),
     dateField,
   ],
   benefit: [
     booking,
     F('name', 'Credit name', 'text', { required: true }),
+    F('profile_id', 'Cap1 account / profile', 'select', {
+      source: 'bookingSourceProfiles',
+      required: true,
+      help: 'Required. Which Cap1 profile holds this credit — links the asset to that account.',
+    }),
     amount,
     F('original_rate', 'Original confirmed rate (USD)', 'money', {
       help: 'Optional paired rate check; final rate must produce exactly the generated credit.',
@@ -798,10 +1191,12 @@ const fields: Record<string, Field[]> = {
         'When earned',
         'After travel',
         'After customer paid',
+        'After commission confirmed',
         'After commission received',
         'On date',
       ],
       required: true,
+      help: 'Plan default: owed when commission is confirmed (receivable recorded), not when the customer pays.',
     }),
     F('cancellation_rule', 'Cancellation agreement', 'select', {
       options: ['Realized economics', 'Retain agreed amount'],
@@ -815,7 +1210,14 @@ const fields: Record<string, Field[]> = {
     F('referral_id', 'Commission Payable', 'select', { source: 'referrals', required: true }),
     amount,
     dateField,
-    F('method', 'Payment method', 'choice', { options: PAYMENT_METHODS, required: true }),
+    F('method', 'Payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
     F('reference', 'Reference'),
   ],
   revise_referral: [],
@@ -844,18 +1246,30 @@ const fields: Record<string, Field[]> = {
     }),
     F('supplier_expected', 'Supplier refund expected (USD or points units)', 'quantity', {
       required: true,
+      help: proportionalRefundPlanHint(),
     }),
     F('customer_due', 'Customer refund due (USD)', 'money', {
       required: true,
-      help: 'Normally allocated customer payments less retained fees. Can differ from supplier refund.',
+      help: 'Plan default: proportional to what the customer paid, scaled by supplier return / original cost (less retained card fee). Editable.',
     }),
     F('charge_reduction', 'Cancelled customer charges to credit (USD)', 'money', {
       required: true,
-      help: 'The amount removed from what the customer owes, after retained fees. For an unpaid cancellation this can be positive while actual customer refund due is $0.',
+      help: 'The amount removed from what the customer owes, after retained fees. Scaled with supplier return when known. For an unpaid cancellation this can be positive while actual customer refund due is $0.',
+    }),
+    F('refund_card_fee', 'Also refund customer card fee', 'checkbox', {
+      help: 'Plan default: no. When unchecked, card fee stays on the booking as Padova profit.',
     }),
     F('due_on', 'Follow-up date', 'date', { required: true }),
     dateField,
     F('reason', 'Cancellation reason', 'textarea', { required: true, full: true }),
+    F('chargeback_status', 'Chargeback status (rare)', 'select', {
+      options: ['', 'disputed', 'won', 'lost'],
+      help: 'Plan: chargebacks are refund-type lines with disputed / won / lost. Leave blank when not a chargeback.',
+    }),
+    F('call_notes', 'Call notes (chase refund)', 'textarea', {
+      full: true,
+      help: 'Plan: refund stays on follow-up until settled. Optional chase notes are saved on the refund case.',
+    }),
   ],
   receive_refund: [
     F('account_id', 'Payment account', 'select', { source: 'paymentAccounts' }),
@@ -870,11 +1284,14 @@ const fields: Record<string, Field[]> = {
         'Hotel credit',
         'Capital One credit',
         'points',
+        SUPPLIER_REFUND_DENIED_FORM,
       ],
       required: true,
+      help: supplierRefundDenyPlanHint(),
     }),
     F('amount', 'Received amount (USD), points or certificate count', 'quantity', {
       required: true,
+      help: 'For Denied, enter the remaining expected amount being closed (not recovered).',
     }),
     assetField,
     F('basis', 'Basis of newly issued credit (USD)', 'money'),
@@ -882,18 +1299,64 @@ const fields: Record<string, Field[]> = {
     F('new_asset_issuer', 'New credit issuer'),
     F('new_asset_expiry', 'New credit expiration', 'date'),
     dateField,
-    F('method', 'Cash payment method', 'choice', { options: PAYMENT_METHODS, required: true }),
-    F('reference', 'Reference'),
+    F('method', 'Cash payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
+    F('reference', 'Reference', 'text', {
+      help: 'Required when marking Denied.',
+    }),
   ],
   pay_refund: [
-    F('account_id', 'Payment account', 'select', { source: 'paymentAccounts' }),
     F('refund_id', 'Refund case', 'select', { source: 'refunds', required: true }),
     amount,
     dateField,
-    F('method', 'Refund payment method', 'choice', { options: PAYMENT_METHODS, required: true }),
-    F('reference', 'Reference'),
+    F('how_given', 'How given', 'choice', {
+      options: [...REFUND_HOW_GIVEN],
+      required: true,
+      help: refundHowGivenPlanHint(),
+    }),
+    F('voucher_name', 'Voucher name', 'text', {
+      help: 'Defaults to “Refund voucher — {booking code}”. Customer-owned; Padova cost stays $0.',
+    }),
+    F('voucher_expires_on', 'Voucher expiration', 'date'),
+    F('account_id', 'Payment account', 'select', { source: 'paymentAccounts' }),
+    F('method', 'Refund payment method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
+    F('reference', 'Reference', 'text', {
+      help: 'Required when how given is Other.',
+    }),
     F('override_reason', 'Handling override reason (if supplier cash not received)', 'textarea', {
       full: true,
+    }),
+  ],
+  return_customer_credit: [
+    party('party_id', 'Customer'),
+    F('account_id', 'Payment account', 'select', { source: 'paymentAccounts' }),
+    amount,
+    dateField,
+    F('method', 'Return method', 'choice', {
+      options: [...PAYMENT_METHODS, PAYMENT_METHOD_OTHER],
+      required: true,
+      help: 'Plan: payment methods can be extended — Other… for a new name.',
+    }),
+    F('method_custom', 'New payment method', 'text', {
+      help: 'Required when method is Other…',
+    }),
+    F('reference', 'Reference'),
+    F('reason', 'Why returned', 'textarea', {
+      required: true,
+      full: true,
+      help: 'Plan: held deposit/credit returned to the customer as a payment out.',
     }),
   ],
   revise: [
@@ -916,11 +1379,15 @@ const fields: Record<string, Field[]> = {
       help: 'Adds active travelers. Use partial cancellation for a traveler leaving the reservation.',
     }),
     F('reservation_status', 'Reservation status', 'select', {
-      options: ['Booked', 'Traveled', 'Cancelled', 'Refund Pending'],
+      options: [...PLAN_RESERVATION_STATUS_OPTIONS],
       required: true,
+      help: reservationStatusPlanHint(),
+    }),
+    F('ticketing_deadline', 'Ticketing deadline', 'date', {
+      help: 'Required when status is Held. Reminders fire within 3 days / overdue.',
     }),
     F('confirmation_status', 'Confirmation / ticketing', 'select', {
-      options: ['Confirmed', 'Ticketed', 'Pending', 'Cancelled'],
+      options: ['Confirmed', 'Ticketed', 'Pending', 'Cancelled', 'Not Ticketed / Unknown'],
     }),
     F('document_status', 'Itinerary / documents', 'select', {
       options: ['Not prepared', 'Draft', 'Ready', 'Issued'],
@@ -944,7 +1411,52 @@ const fields: Record<string, Field[]> = {
       required: true,
     }),
     F('record_id', 'Linked record', 'select', { source: 'taskLinks', required: true }),
-    F('body', 'Note', 'textarea', { required: true, full: true }),
+    F('body', 'Note', 'textarea', {
+      required: true,
+      full: true,
+      help: 'For refund chase notes, start with the facts of the call — saved as Call note on the refund.',
+    }),
+  ],
+  link_booking: [
+    F('from_booking_id', 'This booking', 'select', { source: 'bookings', required: true }),
+    F('to_booking_id', 'Related booking', 'select', { source: 'bookings', required: true }),
+    F('kind', 'Link type', 'select', {
+      options: [...BOOKING_RELATION_KINDS],
+      required: true,
+      help: 'Change/extension, rebooking, voucher chain, or same trip. Money stays on each booking.',
+    }),
+    F('note', 'Optional note', 'textarea', { full: true }),
+  ],
+  unlink_booking: [
+    F('relation_id', 'Booking link id', 'text', { required: true }),
+    F('reason', 'Why remove this link', 'textarea', { required: true, full: true }),
+  ],
+  booking_document: [
+    booking,
+    F('label', 'Document name', 'text', { required: true }),
+    F('kind', 'Type', 'select', {
+      options: [...BOOKING_DOCUMENT_KINDS],
+      required: true,
+      help: 'Plan: itineraries, screenshots, PDFs — link metadata for now (no binary upload).',
+    }),
+    F('url', 'Link / URL', 'text', {
+      help: 'Optional. Drive, WhatsApp export, or shared file link.',
+    }),
+    F('note', 'Note', 'textarea', { full: true }),
+    dateField,
+  ],
+  booking_document_hide: [
+    booking,
+    F('document_id', 'Document id', 'text', { required: true }),
+    F('reason', 'Why hide', 'textarea', { required: true, full: true }),
+  ],
+  booking_taxes: [
+    booking,
+    F('tax_amount', 'Taxes (USD)', 'money', {
+      help: 'Part of the customer price — not an extra charge. Leave blank to clear (Unknown). Used for sale-excluding-taxes standing deals.',
+    }),
+    dateField,
+    F('reason', 'Note', 'textarea', { full: true }),
   ],
   task: [
     F('title', 'Task title', 'text', { required: true, full: true }),
@@ -1037,12 +1549,21 @@ const titles: Record<string, string> = {
   update_task: 'Edit / reopen follow-up task',
   booking: 'New booking',
   party: 'Add person / organization',
+  merge_party: 'Merge duplicate people',
   charge: 'Adjust customer charge',
+  booking_extra: 'Add extra (seat / bag)',
+  booking_change: 'Record change (fees / dates)',
   authorize_payer: 'Authorize payer',
   booking_source_profile_link: 'Link account / profile',
   payment: 'Record payment',
   fund: 'Record booking cost',
+  trade: 'Trade desk (buy / sell)',
+  void_credit: 'Void unused Cap1 credit',
+  void_money_back: 'Void Money Back line',
+  deny_money_back: 'Mark Money Back denied',
+  deduct_money_back: 'Deduct Money Back',
   acquire_asset: 'Buy / register travel asset',
+  transfer_asset: 'Transfer points / asset',
   sell_asset: 'Sell voucher / travel asset',
   benefit: 'Record verified price-match credit',
   price_match_event: 'Update price-match case',
@@ -1054,15 +1575,22 @@ const titles: Record<string, string> = {
   reverse_referral_payment: 'Reverse recorded commission payout',
   cancel: 'Cancellation / partial cancellation',
   receive_refund: 'Record supplier refund received',
-  pay_refund: 'Refund customer',
+  pay_refund: 'Refund customer (cash or keep as credit)',
+  return_customer_credit: 'Return held customer credit',
   correct_payment: 'Correct payment amount',
-  allocate: 'Allocate existing payment',
+  allocate: 'Allocate existing payment / apply held credit',
   revise: 'Change booking',
   commission_receipt: 'Allocate commission receipt',
-  pay_referral: 'Record commission payout',
+  pay_referral: 'Mark referrer paid',
   traveler: 'Edit protected traveler details',
   relationship: 'Link a person',
   note: 'Add note',
+  // call_note uses kind note with a custom title via config.title
+  link_booking: 'Link related booking',
+  unlink_booking: 'Remove booking link',
+  booking_document: 'Add booking document',
+  booking_document_hide: 'Hide booking document',
+  booking_taxes: 'Edit booking taxes',
   task: 'New follow-up task',
   complete_task: 'Complete task',
   resolve_attention: 'Acknowledge follow-up',
@@ -1070,13 +1598,30 @@ const titles: Record<string, string> = {
 const actionHelp: Record<string, string> = {
   payment: 'Record money that actually moved. Allocate this one payment to the bookings it covers.',
   fund: 'Record Padova’s acquisition cost and who was paid. Card/cash need Actual cost + Purchased From; vouchers/points use the asset lot.',
+  trade:
+    'Buy or sell points, FHR/hotel credits, vouchers. Four fields first; rate is calculated. Posts to the same asset ledgers.',
+  transfer_asset: transferBonusPlanHint(),
+  void_credit:
+    'Mark remaining Cap1 credit as voided (cancel after price match). Append-only; reverses unused earned credit.',
+  void_money_back:
+    'Cancel an expected Money Back line (commission, standing deal, price match, referral). Not the same as denied.',
+  deny_money_back:
+    'Issuer or payer refused this Money Back line. Cap1 price matches: prefer Update price match → Denied.',
+  deduct_money_back:
+    'Reduce a posted commission receivable when remittance pays less or something is deducted. Append-only; original expected stays in history.',
+  return_customer_credit:
+    'Pay out held deposit or unallocated customer credit. Apply to a booking with Allocate instead when they use it.',
   fulfill: 'Record the cost, points or voucher used for this travel item.',
   revise: 'Update this booking. Existing costs and payments remain in its history.',
   charge:
     'Add a customer charge or enter a negative amount to give a discount. This does not record a payment.',
+  booking_extra:
+    'Seat, bag, or other ancillary on this booking. Customer price and cost are both optional; blank stays Unknown.',
+  booking_change:
+    'Dated change on this booking: optional new dates/summary, optional airline cost and customer fee. Original details stay in history. Full Edit booking is separate.',
   authorize_payer: 'Allow another person or company to pay for this booking.',
   cancel:
-    'Record the canceled travel and expected returns. A requested refund stays pending until received.',
+    'Record the canceled travel and expected returns. A requested refund stays pending until received; optional call notes chase the refund.',
   voucherize:
     'Link the canceled booking to a travel voucher. Ownership and acquisition cost remain separate.',
   benefit: 'Record a credit only when the provider has actually confirmed it.',
@@ -1087,7 +1632,17 @@ const actionHelp: Record<string, string> = {
   referral:
     'Record money Padova owes an agent, referrer or partner, including when it is earned and payable.',
   note: 'Add a note to this record’s permanent activity history.',
+  link_booking:
+    'Link bookings in a family tree (change, extension, voucher, same trip). Money stays on each booking.',
+  unlink_booking: 'Remove a related-booking link (append-only void).',
+  booking_document:
+    'Attach an itinerary, screenshot, or PDF link to this booking. Hide removes from view — history stays.',
+  booking_document_hide: 'Hide a document link from the booking view (append-only).',
+  booking_taxes:
+    'Set or clear taxes that are part of the customer price (not an extra charge). Blank = Unknown. Recomputes sale-ex-tax standing deals when known.',
   party: 'Create a reusable contact. One person or organization can have several roles.',
+  merge_party:
+    'Fold a duplicate person into the record you keep. One person, many roles. Duplicate stays archived with merged-into history.',
 };
 const actionSave: Record<string, string> = {
   payment: 'Record payment',
@@ -1095,6 +1650,8 @@ const actionSave: Record<string, string> = {
   fulfill: 'Record cost / payment',
   revise: 'Save booking changes',
   charge: 'Save charge adjustment',
+  booking_extra: 'Save extra',
+  booking_change: 'Save change',
   authorize_payer: 'Authorize payer',
   cancel: 'Cancel booking',
   voucherize: 'Create linked voucher',
@@ -1104,8 +1661,20 @@ const actionSave: Record<string, string> = {
   commission: 'Save Commission Receivable',
   referral: 'Save Commission Payable',
   note: 'Save note',
+  link_booking: 'Save booking link',
+  unlink_booking: 'Remove link',
+  booking_document: 'Save document',
+  booking_document_hide: 'Hide document',
+  booking_taxes: 'Save taxes',
+  trade: 'Save trade',
+  void_credit: 'Void credit',
+  void_money_back: 'Void Money Back line',
+  deny_money_back: 'Mark denied',
+  deduct_money_back: 'Record deduction',
+  return_customer_credit: 'Return credit',
   traveler: 'Save traveler details',
   edit_party: 'Save profile',
+  merge_party: 'Merge into Keep',
   party: 'Add contact',
 };
 export default function CommandForm(props: Parameters<typeof LegacyCommandForm>[0]) {
@@ -1122,6 +1691,8 @@ const DESTRUCTIVE_KINDS = new Set([
   'reverse_referral_payment',
   'reverse_asset',
   'correct_payment',
+  'merge_party',
+  'unlink_booking',
 ]);
 
 function LegacyCommandForm({
@@ -1188,25 +1759,71 @@ function LegacyCommandForm({
       cash_method: 'Card',
       role: 'Core',
       method: '',
+      how_given: config.kind === 'pay_refund' ? 'original_method' : undefined,
       ownership: 'Padova',
       basis: config.kind === 'referral' ? 'percentage' : undefined,
       percentage_basis: 'profit',
       earned: true,
-      payable_when: 'After travel',
+      payable_when: 'After commission confirmed',
       due_on: ['referral', 'revise_referral'].includes(config.kind) ? state.today : undefined,
       cancellation_rule: 'Realized economics',
       rate_bps: 0,
       fixed_amount: 0,
-      after_receipt: true,
+      after_receipt: false,
       source_offerings: config.defaults.details?.source_offerings ?? [],
       seat: config.defaults.preferences?.seat ?? '',
       sex: config.defaults.preferences?.sex ?? '',
       nationality: config.defaults.preferences?.nationality ?? '',
       redress: config.defaults.preferences?.redress ?? '',
       ...config.defaults,
+      ...(config.kind === 'revise' && config.defaults.reservation_status
+        ? {
+            reservation_status: reservationStatusForForm(config.defaults.reservation_status),
+          }
+        : {}),
       // Cancel scope is exclusive: travel-component cancel must not also send traveler_id.
       ...(config.kind === 'cancel' && config.defaults.travel_component_id
         ? { traveler_id: '' }
+        : {}),
+      ...(config.kind === 'cancel'
+        ? (() => {
+            const booking = state.bookings?.find(
+              (b: R) => b.id === (config.defaults.booking_id ?? config.defaults.id),
+            );
+            const funding = state.fundingComponents?.find(
+              (f: R) => f.id === config.defaults.funding_component_id,
+            );
+            const unit = funding ? refundQuantityUnit(funding) : 'money';
+            const recoverable =
+              funding == null
+                ? null
+                : funding.asset_id
+                  ? funding.face_amount == null
+                    ? null
+                    : Number(funding.face_amount)
+                  : funding.cost == null
+                    ? null
+                    : Number(funding.cost);
+            const seeded =
+              config.defaults.customer_due != null || config.defaults.charge_reduction != null
+                ? null
+                : booking
+                  ? cancelFormMoneyDefaults(booking, {
+                      quantity_unit: unit,
+                      supplier_expected_cents: unit === 'money' ? recoverable : null,
+                      original_cost_cents: unit === 'money' ? recoverable : null,
+                    })
+                  : null;
+            return {
+              refund_card_fee: config.defaults.refund_card_fee === true,
+              ...(seeded
+                ? {
+                    customer_due: seeded.customer_due,
+                    charge_reduction: seeded.charge_reduction,
+                  }
+                : {}),
+            };
+          })()
         : {}),
       ...(config.kind === 'revise_referral'
         ? {
@@ -1216,6 +1833,33 @@ function LegacyCommandForm({
               config.defaults.agreed_basis == null
                 ? ''
                 : (Number(config.defaults.agreed_basis) / 100).toFixed(2),
+          }
+        : {}),
+      ...(config.kind === 'update_fee_settings'
+        ? {
+            customer_card_fee_bps: (
+              Number(config.defaults.customer_card_fee_bps ?? 290) / 100
+            ).toFixed(2),
+            padova_card_fee_bps: (
+              Number(config.defaults.padova_card_fee_bps ?? 270) / 100
+            ).toFixed(2),
+            padova_card_fee_flat_cents: (
+              Number(config.defaults.padova_card_fee_flat_cents ?? 30) / 100
+            ).toFixed(2),
+          }
+        : {}),
+      ...(config.kind === 'trade'
+        ? {
+            side: config.defaults.side || 'Buy',
+            what: config.defaults.what || 'Points',
+            stock_mode: config.defaults.stock_mode || TRADE_DEFAULT_STOCK_MODE,
+            method: config.defaults.method || 'Zelle',
+            status:
+              config.defaults.status ||
+              suggestTradeStatus({
+                side: config.defaults.side || 'Buy',
+                paid: config.defaults.paid === true,
+              }),
           }
         : {}),
       ...(['travel_component', 'revise_travel'].includes(config.kind) &&
@@ -1231,8 +1875,29 @@ function LegacyCommandForm({
       whatsapp: config.defaults.details?.whatsapp ?? '',
       company_tier: config.defaults.details?.corporate_policy?.tier ?? '',
       company_comfort_level: config.defaults.details?.corporate_policy?.comfort_level ?? '',
+      referral_rate_bps:
+        config.defaults.details?.referral_rate_bps != null
+          ? (Number(config.defaults.details.referral_rate_bps) / 100).toFixed(2)
+          : '',
+      ...(() => {
+        if (config.kind !== 'edit_party') return {};
+        const primary = partyStandingDeals({ details: config.defaults.details }).find(
+          (d) => d.id === 'primary',
+        );
+        return {
+          standing_deal_label: primary?.label ?? '',
+          standing_deal_rate_bps:
+            primary?.rate_bps != null ? (primary.rate_bps / 100).toFixed(2) : '',
+          standing_deal_basis: primary?.basis ?? 'sale_ex_tax',
+          standing_deal_product: primary?.product ?? 'Hotel',
+        };
+      })(),
       ...(config.kind === 'revise' ? { traveler_ids: [], confirmations: '' } : {}),
       cost_status: config.defaults.itinerary?.cost_status ?? '',
+      ticketing_deadline:
+        config.defaults.itinerary?.ticketing_deadline ||
+        config.defaults.itinerary?.operational_entry?.ticketing_deadline ||
+        '',
       ...(['booking', 'revise'].includes(config.kind)
         ? Object.fromEntries(
             itineraryEntryKeys.map((key) => [
@@ -1246,13 +1911,23 @@ function LegacyCommandForm({
       booking_id:
         config.defaults.booking_id ?? (config.kind === 'revise' ? config.defaults.id : undefined),
     })),
-    [allocs, setAllocs] = useState<R[]>(
-      config.defaults.commission_id && config.kind === 'payment'
-        ? [{ commission_id: config.defaults.commission_id, amount: '' }]
-        : config.defaults.booking_id && config.kind === 'payment'
-          ? [{ booking_id: config.defaults.booking_id, amount: '' }]
-          : [],
-    );
+    [allocs, setAllocs] = useState<R[]>(() => {
+      if (
+        config.kind === 'payment' &&
+        Array.isArray(config.defaults.commission_allocations) &&
+        config.defaults.commission_allocations.length
+      ) {
+        return config.defaults.commission_allocations.map((a: R) => ({
+          commission_id: a.commission_id,
+          amount: a.amount === '' || a.amount == null ? '' : String(a.amount),
+        }));
+      }
+      if (config.defaults.commission_id && config.kind === 'payment')
+        return [{ commission_id: config.defaults.commission_id, amount: '' }];
+      if (config.defaults.booking_id && config.kind === 'payment')
+        return [{ booking_id: config.defaults.booking_id, amount: '' }];
+      return [];
+    });
   const allowed = (p: string) =>
     state.actor.role === 'OWNER' || state.actor.permissions.includes(p);
   busyRef.current = busy;
@@ -1347,8 +2022,8 @@ function LegacyCommandForm({
       if (f.key === 'booking_id' && config.defaults.booking_id) return false;
       if (
         config.kind === 'note' &&
-        config.defaults.record_type &&
-        config.defaults.record_id &&
+        (config.defaults.call_note ||
+          (config.defaults.record_type && config.defaults.record_id)) &&
         ['record_type', 'record_id'].includes(f.key)
       )
         return false;
@@ -1363,7 +2038,9 @@ function LegacyCommandForm({
         )
           return false;
         if (['original_rate', 'original_rate_reason'].includes(f.key) && !advanced) return false;
+        // Plan: Cap1 profile must be visible on credit create (not only in Advanced).
         if (
+          config.kind === 'price_match_event' &&
           f.key === 'profile_id' &&
           (config.defaults.profile_id ||
             selectedBooking?.itinerary?.operational_entry?.source_profile_id) &&
@@ -1503,6 +2180,19 @@ function LegacyCommandForm({
         !state.fulfillmentEnabled
       )
         return false;
+      // Plan: Cap1 profile always asked on Buy/register when kind is Capital One credit.
+      if (
+        config.kind === 'acquire_asset' &&
+        f.key === 'profile_id' &&
+        vals.kind !== 'Capital One credit'
+      )
+        return false;
+      if (
+        config.kind === 'acquire_asset' &&
+        f.key === 'points_source' &&
+        !/point|mile/i.test(String(vals.kind || ''))
+      )
+        return false;
       if (
         config.kind === 'acquire_asset' &&
         vals.ownership === 'Customer' &&
@@ -1599,6 +2289,38 @@ function LegacyCommandForm({
         return false;
       if (['company_tier', 'company_comfort_level'].includes(f.key))
         return (vals.kind ?? config.defaults.kind) === 'company';
+      if (f.key === 'referral_rate_bps' && ['party', 'edit_party'].includes(config.kind))
+        return parseList(vals.roles).includes('referrer');
+      if (config.kind === 'trade') {
+        if (f.key === 'asset_id') return vals.side === 'Sell';
+        if (['paid', 'method'].includes(f.key)) return vals.side === 'Sell';
+        if (f.key === 'stock_mode') return vals.side === 'Buy';
+        if (f.key === 'booking_id')
+          return vals.side === 'Buy' && vals.stock_mode === 'for_booking';
+        if (f.key === 'what_custom')
+          return vals.what === TRADE_WHAT_OTHER || vals.what === 'Other';
+      }
+      if (f.key === 'issuer_custom')
+        return vals.issuer === LOYALTY_PROGRAM_OTHER || vals.issuer === 'Other';
+      if (f.key === 'loyalty_program_custom')
+        return (
+          vals.loyalty_program === LOYALTY_PROGRAM_OTHER || vals.loyalty_program === 'Other'
+        );
+      if (f.key === 'method_custom')
+        return vals.method === PAYMENT_METHOD_OTHER || vals.method === 'Other';
+      if (f.key === 'payment_method_custom')
+        return (
+          vals.payment_method === PAYMENT_METHOD_OTHER || vals.payment_method === 'Other'
+        );
+      if (f.key === 'fee_payment_method_custom')
+        return (
+          vals.fee_payment_method === PAYMENT_METHOD_OTHER ||
+          vals.fee_payment_method === 'Other'
+        );
+      if (f.key === 'expiry_rule_custom')
+        return vals.expiry_rule === EXPIRY_RULE_OTHER || vals.expiry_rule === 'Other';
+      if (f.key === 'ticketing_deadline' && config.kind === 'revise')
+        return vals.reservation_status === 'Held';
       if (config.kind === 'relationship' && ['tier', 'comfort_level'].includes(f.key))
         return vals.relationship === 'employee';
       if (['booking', 'revise'].includes(config.kind)) {
@@ -1627,6 +2349,15 @@ function LegacyCommandForm({
       if (config.kind === 'booking' && f.key === 'sale' && !allowed('edit_customer_charges'))
         return false;
       if (config.kind === 'sell_asset' && f.key === 'method') return !!vals.paid;
+      if (
+        config.kind === 'payment' &&
+        ['customer_card_fee', 'padova_card_cost'].includes(f.key)
+      )
+        return (
+          vals.direction === 'customer' &&
+          /^card$/i.test(String(vals.method || '')) &&
+          allowed('edit_customer_charges')
+        );
       if (['referral', 'revise_referral'].includes(config.kind)) {
         if (['percentage_basis', 'rate_bps'].includes(f.key)) return vals.basis !== 'fixed';
         if (f.key === 'agreed_basis')
@@ -1660,17 +2391,50 @@ function LegacyCommandForm({
         }
       }
       if (config.kind === 'receive_refund') {
+        const denied = vals.form === SUPPLIER_REFUND_DENIED_FORM;
         if (['method', 'account_id'].includes(f.key)) return vals.form === 'cash';
         if (
           ['asset_id', 'basis', 'new_asset_name', 'new_asset_issuer', 'new_asset_expiry'].includes(
             f.key,
           )
         )
-          return vals.form !== 'cash' && vals.form !== 'Supplier payable credit';
+          return (
+            !denied && vals.form !== 'cash' && vals.form !== 'Supplier payable credit'
+          );
+      }
+      if (config.kind === 'pay_refund') {
+        const how = vals.how_given || 'original_method';
+        if (['voucher_name', 'voucher_expires_on'].includes(f.key)) return how === 'voucher';
+        if (['method', 'account_id'].includes(f.key))
+          return how === 'original_method' || how === 'other';
       }
       return true;
     })
     .map((f) => {
+      if (config.kind === 'pay_refund' && f.key === 'method') {
+        return {
+          ...f,
+          required: (vals.how_given || 'original_method') === 'original_method',
+        };
+      }
+      if (config.kind === 'pay_refund' && f.key === 'reference') {
+        return {
+          ...f,
+          required: (vals.how_given || '') === 'other',
+        };
+      }
+      if (config.kind === 'receive_refund' && f.key === 'reference') {
+        return {
+          ...f,
+          required: vals.form === SUPPLIER_REFUND_DENIED_FORM,
+        };
+      }
+      if (config.kind === 'receive_refund' && f.key === 'method') {
+        return {
+          ...f,
+          required: vals.form === 'cash',
+        };
+      }
       if (!travelEditing) return f;
       if (f.key === 'description') return { ...f, required: vals.product === 'Other' };
       if (f.key === 'provider_id')
@@ -1818,6 +2582,28 @@ function LegacyCommandForm({
         (order.includes(b.key) ? order.indexOf(b.key) : 100)
       );
     });
+  const applyCardFeeSuggestion = (next: R) => {
+    if (
+      config.kind !== 'payment' ||
+      next.direction !== 'customer' ||
+      !isCardPaymentMethod(next.method)
+    )
+      return next;
+    const base = decimalUnits(next.amount || 0);
+    if (!(base > 0)) return next;
+    const suggested = suggestPaymentCardFees(base, state.feeSettings);
+    return {
+      ...next,
+      customer_card_fee:
+        next.customer_card_fee === '' || next.customer_card_fee == null
+          ? (suggested.customer_card_fee / 100).toFixed(2)
+          : next.customer_card_fee,
+      padova_card_cost:
+        next.padova_card_cost === '' || next.padova_card_cost == null
+          ? (suggested.padova_card_cost / 100).toFixed(2)
+          : next.padova_card_cost,
+    };
+  };
   const change = (key: string, value: any) => {
     if (
       key === 'amount' &&
@@ -1829,6 +2615,138 @@ function LegacyCommandForm({
     )
       setAllocs((rows) => rows.map((a) => ({ ...a, amount: value })));
     if (key === 'direction' && value !== vals.direction) setAllocs([]);
+    if (config.kind === 'payment' && (key === 'method' || key === 'amount' || key === 'direction')) {
+      setVals((prev) => {
+        const next = { ...prev, [key]: value };
+        if (key === 'direction' && value !== 'customer') {
+          next.customer_card_fee = '';
+          next.padova_card_cost = '';
+          return next;
+        }
+        if (key === 'method' && !isCardPaymentMethod(value)) {
+          next.customer_card_fee = '';
+          next.padova_card_cost = '';
+          return next;
+        }
+        if (key === 'method' && isCardPaymentMethod(value)) {
+          next.customer_card_fee = '';
+          next.padova_card_cost = '';
+        }
+        if (key === 'amount' && isCardPaymentMethod(next.method)) {
+          next.customer_card_fee = '';
+          next.padova_card_cost = '';
+        }
+        try {
+          return applyCardFeeSuggestion(next);
+        } catch {
+          return next;
+        }
+      });
+      setFieldErrors((prev) => {
+        if (!prev[key]) return prev;
+        const cleared = { ...prev };
+        delete cleared[key];
+        return cleared;
+      });
+      return;
+    }
+    if (
+      config.kind === 'cancel' &&
+      ['refund_card_fee', 'supplier_expected', 'funding_component_id'].includes(key)
+    ) {
+      const booking = state.bookings?.find((b: R) => b.id === vals.booking_id);
+      if (booking) {
+        const nextFundingId =
+          key === 'funding_component_id' ? value : vals.funding_component_id;
+        const funding = state.fundingComponents?.find((f: R) => f.id === nextFundingId);
+        const unit = funding ? refundQuantityUnit(funding) : 'money';
+        const recoverable =
+          funding == null
+            ? null
+            : funding.asset_id
+              ? funding.face_amount == null
+                ? null
+                : Number(funding.face_amount)
+              : funding.cost == null
+                ? null
+                : Number(funding.cost);
+        const supplierRaw =
+          key === 'supplier_expected' ? value : vals.supplier_expected;
+        let supplierCents: number | null = null;
+        try {
+          if (String(supplierRaw ?? '').trim())
+            supplierCents =
+              unit === 'money'
+                ? decimalUnits(supplierRaw)
+                : decimalUnits(supplierRaw, true);
+        } catch {
+          supplierCents = null;
+        }
+        const suggested = suggestCancelRefundAmounts({
+          paid_cents: booking.paid == null ? null : Number(booking.paid),
+          sale_cents: booking.sale == null ? null : Number(booking.sale),
+          prior_customer_due_cents:
+            booking.refund_due == null ? 0 : Number(booking.refund_due),
+          charges: [{ kind: 'Card fee', amount: Number(booking.card_fee_charges ?? 0) }],
+          refund_card_fee:
+            key === 'refund_card_fee' ? Boolean(value) : Boolean(vals.refund_card_fee),
+          ...(unit === 'money'
+            ? {
+                supplier_expected_cents: supplierCents,
+                original_cost_cents: recoverable,
+              }
+            : {}),
+        });
+        setVals((prev) => ({
+          ...prev,
+          [key]: key === 'refund_card_fee' ? Boolean(value) : value,
+          customer_due:
+            suggested.customer_due_cents == null
+              ? prev.customer_due
+              : (suggested.customer_due_cents / 100).toFixed(2),
+          charge_reduction:
+            suggested.charge_reduction_cents == null
+              ? prev.charge_reduction
+              : (suggested.charge_reduction_cents / 100).toFixed(2),
+        }));
+        setFieldErrors((prev) => {
+          if (!prev[key] && !prev.customer_due && !prev.charge_reduction) return prev;
+          const cleared = { ...prev };
+          delete cleared[key];
+          delete cleared.customer_due;
+          delete cleared.charge_reduction;
+          return cleared;
+        });
+        return;
+      }
+    }
+    if (
+      key === 'referrer_id' &&
+      ['referral', 'revise_referral'].includes(config.kind) &&
+      value
+    ) {
+      const party = state.parties?.find((p: R) => p.id === value);
+      const rate = partyReferralRateBps(party);
+      setVals((prev) => ({
+        ...prev,
+        referrer_id: value,
+        ...(rate != null
+          ? {
+              basis: prev.basis === 'fixed' ? 'percentage' : prev.basis || 'percentage',
+              percentage_basis: prev.percentage_basis || 'profit',
+              rate_bps: (rate / 100).toFixed(2),
+            }
+          : {}),
+      }));
+      setFieldErrors((prev) => {
+        if (!prev[key] && !prev.rate_bps) return prev;
+        const cleared = { ...prev };
+        delete cleared[key];
+        delete cleared.rate_bps;
+        return cleared;
+      });
+      return;
+    }
     if (key === 'kind' && config.kind === 'fund') {
       const cashFund = ['Card', 'Cash', 'Bank', 'Seller-funded reservation'].includes(
         String(value ?? ''),
@@ -1845,6 +2763,79 @@ function LegacyCommandForm({
         });
         return;
       }
+    }
+    if (
+      config.kind === 'transfer_asset' &&
+      ['quantity_sent', 'transfer_bonus_percent'].includes(key)
+    ) {
+      setVals((prev) => {
+        const next = { ...prev, [key]: value };
+        const bonusRaw = String(next.transfer_bonus_percent ?? '').trim();
+        if (!bonusRaw) return next;
+        try {
+          const bonusBps = decimalUnits(bonusRaw);
+          const sentRaw = String(next.quantity_sent ?? '').trim();
+          if (!/^\d+$/.test(sentRaw)) return next;
+          const received = pointsReceivedWithBonus(Number(sentRaw), bonusBps);
+          if (received != null) next.quantity_received = String(received);
+        } catch {
+          /* leave received as-typed until inputs are exact */
+        }
+        return next;
+      });
+      setFieldErrors((prev) => {
+        if (!prev[key] && !prev.quantity_received) return prev;
+        const cleared = { ...prev };
+        delete cleared[key];
+        delete cleared.quantity_received;
+        return cleared;
+      });
+      return;
+    }
+    if (
+      config.kind === 'expected_event' &&
+      ['quantity_sent', 'bonus_bps', 'ratio_numerator', 'ratio_denominator'].includes(key)
+    ) {
+      setVals((prev) => {
+        const next = { ...prev, [key]: value };
+        if (String(next.kind ?? '') !== 'Points transfer') return next;
+        const sentRaw = String(next.quantity_sent ?? '').trim();
+        if (!/^\d+$/.test(sentRaw)) return next;
+        const parseOptInt = (raw: unknown) => {
+          const t = String(raw ?? '').trim();
+          if (!t) return null;
+          if (!/^\d+$/.test(t)) return undefined;
+          return Number(t);
+        };
+        let bonusBps: number | null = null;
+        const bonusRaw = String(next.bonus_bps ?? '').trim();
+        if (bonusRaw) {
+          try {
+            bonusBps = decimalUnits(bonusRaw);
+          } catch {
+            return next;
+          }
+        }
+        const ratioNum = parseOptInt(next.ratio_numerator);
+        const ratioDen = parseOptInt(next.ratio_denominator);
+        if (ratioNum === undefined || ratioDen === undefined) return next;
+        const expected = expectedTransferQuantity({
+          quantitySent: Number(sentRaw),
+          bonusBps,
+          ratioNumerator: ratioNum,
+          ratioDenominator: ratioDen,
+        });
+        if (expected != null) next.quantity_expected = String(expected);
+        return next;
+      });
+      setFieldErrors((prev) => {
+        if (!prev[key] && !prev.quantity_expected) return prev;
+        const cleared = { ...prev };
+        delete cleared[key];
+        delete cleared.quantity_expected;
+        return cleared;
+      });
+      return;
     }
     setFieldErrors((prev) => {
       if (key === 'kind' && config.kind === 'expected_event') return {};
@@ -2002,6 +2993,10 @@ function LegacyCommandForm({
         ) {
           const selected = state.bookings.find((b: R) => b.id === vals.booking_id);
           return r.source_method_id === selected?.itinerary?.operational_entry?.source_method_id;
+        }
+        if (config.kind === 'acquire_asset' && f.source === 'bookingSourceProfiles') {
+          if (r.status && r.status !== 'Active') return false;
+          return /capital\s*one/i.test(String(r.provider || r.name || ''));
         }
         if (config.kind === 'payment' && vals.direction === 'supplier' && f.key === 'party_id')
           return eligibleParty(r, 'seller');
@@ -2168,10 +3163,14 @@ function LegacyCommandForm({
       });
     }
     if (config.kind === 'expire_asset') {
+      const loss =
+        config.defaults?.loss_basis_cents == null
+          ? 'remaining cost Unknown (not $0)'
+          : money(Number(config.defaults.loss_basis_cents));
       return askConfirm({
-        title: 'Expire this asset?',
-        message: 'Expired points or credits stay in history. Continue only if the balance truly expired.',
-        confirmLabel: 'Yes, expire',
+        title: 'Expire unused balance?',
+        message: `Plan: unused points/vouchers expire as a loss equal to remaining cost (${loss}). History is kept. Continue only if the balance truly expired.`,
+        confirmLabel: 'Yes, expire as loss',
         cancelLabel: 'Go back',
         tone: 'danger',
       });
@@ -2310,10 +3309,10 @@ function LegacyCommandForm({
           (config.kind === 'price_match_event' || data.final_rate !== undefined)
         )
           data.original_rate = inheritedRate;
+        data.profile_id ||=
+          config.defaults.profile_id ||
+          selectedBooking?.itinerary?.operational_entry?.source_profile_id;
         if (config.kind === 'price_match_event') {
-          data.profile_id ||=
-            config.defaults.profile_id ||
-            selectedBooking?.itinerary?.operational_entry?.source_profile_id;
           if (
             (!advanced || data.requested_amount === undefined) &&
             data.final_rate !== undefined &&
@@ -2460,12 +3459,159 @@ function LegacyCommandForm({
           data.face_amount = data.cost;
         }
       }
+      if (config.kind === 'transfer_asset') {
+        delete data.transfer_bonus_percent;
+      }
+      if (config.kind === 'note' && config.defaults?.call_note) {
+        const formatted = formatRefundCallNoteBody(String(data.body || ''));
+        if (!formatted) throw new Error('Enter the call note');
+        data.body = formatted;
+        data.record_type = 'refund';
+        if (config.defaults.record_id) data.record_id = config.defaults.record_id;
+      }
+      if (config.kind === 'cancel' && data.call_notes !== undefined) {
+        const note = String(data.call_notes || '').trim();
+        if (!note) delete data.call_notes;
+      }
+      if (config.kind === 'acquire_asset' || config.kind === 'convert_asset') {
+        const issuer = resolveLoyaltyProgram(vals.issuer, vals.issuer_custom);
+        if (!issuer) throw new Error('Enter the new program name (or pick a listed issuer)');
+        data.issuer = issuer;
+        delete data.issuer_custom;
+      }
+      if (config.kind === 'acquire_asset' || config.kind === 'revise_asset') {
+        if (
+          vals.expiry_rule === EXPIRY_RULE_OTHER ||
+          vals.expiry_rule === 'Other' ||
+          vals.expiry_rule_custom ||
+          vals.expiry_rule
+        ) {
+          const rule = resolveExpiryRule(vals.expiry_rule, vals.expiry_rule_custom);
+          if (
+            (vals.expiry_rule === EXPIRY_RULE_OTHER || vals.expiry_rule === 'Other') &&
+            !rule
+          )
+            throw new Error('Enter the new expiry rule name');
+          if (rule) data.expiry_rule = rule;
+          else delete data.expiry_rule;
+          delete data.expiry_rule_custom;
+          if (!data.expires_on && rule) {
+            const suggested = suggestExpiresOn(rule, vals.date || data.date);
+            if (suggested) data.expires_on = suggested;
+          }
+        }
+      }
+      if (
+        vals.method === PAYMENT_METHOD_OTHER ||
+        vals.method === 'Other' ||
+        vals.method_custom
+      ) {
+        const method = resolvePaymentMethod(vals.method, vals.method_custom);
+        if (
+          (vals.method === PAYMENT_METHOD_OTHER || vals.method === 'Other') &&
+          !method
+        )
+          throw new Error('Enter the new payment method name');
+        if (method) data.method = method;
+        delete data.method_custom;
+      }
+      if (
+        vals.payment_method === PAYMENT_METHOD_OTHER ||
+        vals.payment_method === 'Other' ||
+        vals.payment_method_custom
+      ) {
+        const method = resolvePaymentMethod(
+          vals.payment_method,
+          vals.payment_method_custom,
+        );
+        if (
+          (vals.payment_method === PAYMENT_METHOD_OTHER || vals.payment_method === 'Other') &&
+          !method
+        )
+          throw new Error('Enter the new payment method name');
+        if (method) data.payment_method = method;
+        delete data.payment_method_custom;
+      }
+      if (
+        vals.fee_payment_method === PAYMENT_METHOD_OTHER ||
+        vals.fee_payment_method === 'Other' ||
+        vals.fee_payment_method_custom
+      ) {
+        const method = resolvePaymentMethod(
+          vals.fee_payment_method,
+          vals.fee_payment_method_custom,
+        );
+        if (
+          (vals.fee_payment_method === PAYMENT_METHOD_OTHER ||
+            vals.fee_payment_method === 'Other') &&
+          !method
+        )
+          throw new Error('Enter the new taxes / fees payment method name');
+        if (method) data.fee_payment_method = method;
+        delete data.fee_payment_method_custom;
+      }
       if (config.kind === 'acquire_asset') {
         if (data.ownership === 'Customer') data.cost = 0;
         if (data.cost === undefined && data.purchase_percent !== undefined)
           data.cost = Math.round((data.quantity * data.purchase_percent) / 10000);
         if (data.cost === undefined) data.cost = null;
         delete data.purchase_percent;
+        if (data.kind === 'Capital One credit') {
+          if (!data.profile_id)
+            throw new Error('Choose the Cap1 account profile that holds this credit');
+        } else {
+          delete data.profile_id;
+        }
+        if (/point|mile/i.test(String(data.kind || ''))) {
+          const src = normalizePointsBatchSource(vals.points_source ?? data.points_source);
+          if (vals.points_source && !src)
+            throw new Error('Points batch source must be purchase, transfer with bonus, or sold on');
+          if (src) data.points_source = src;
+          else delete data.points_source;
+        } else {
+          delete data.points_source;
+        }
+      }
+      if (config.kind === 'trade') {
+        const what = resolveTradeWhat(vals.what, vals.what_custom);
+        if (!what) throw new Error('Enter the new trade kind name (or pick a listed What)');
+        const unit = tradeUnit(what);
+        const rawAmount = vals.amount;
+        const amount_units =
+          unit === 'money'
+            ? decimalUnits(rawAmount)
+            : decimalUnits(rawAmount, true);
+        const price_cents = decimalUnits(vals.price);
+        data.amount_units = amount_units;
+        data.price_cents = price_cents;
+        data.side = vals.side;
+        data.what = what;
+        data.stock_mode = vals.stock_mode || TRADE_DEFAULT_STOCK_MODE;
+        data.counterparty_id = vals.counterparty_id || null;
+        data.asset_id = vals.asset_id || null;
+        data.booking_id = vals.booking_id || null;
+        data.notes = vals.notes || '';
+        data.reference = vals.reference || '';
+        data.paid = vals.paid === true;
+        data.method = vals.method || 'Zelle';
+        data.status = (TRADE_STATUSES as readonly string[]).includes(String(vals.status || ''))
+          ? (String(vals.status) as TradeStatus)
+          : suggestTradeStatus({
+              side: vals.side,
+              paid: vals.paid === true,
+              to_complete: tradeToComplete({
+                side: vals.side,
+                stock_mode: vals.stock_mode || TRADE_DEFAULT_STOCK_MODE,
+                booking_id: vals.booking_id,
+                counterparty_id: vals.counterparty_id,
+                asset_id: vals.asset_id,
+                expires_on: vals.expires_on,
+                what: what,
+              }),
+            });
+        delete data.amount;
+        delete data.price;
+        delete data.what_custom;
       }
       if (config.kind === 'sell_asset') {
         if (data.proceeds === undefined && data.sale_percent !== undefined)
@@ -2477,13 +3623,26 @@ function LegacyCommandForm({
         data.confirmations = parseList(vals.confirmations);
         data.traveler_ids = vals.traveler_ids ?? [];
         data.sale ??= 0;
-        if (initialPayment)
+        if (initialPayment) {
+          const method = resolvePaymentMethod(
+            initialPayment.method,
+            initialPayment.method_custom,
+          );
+          if (
+            (initialPayment.method === PAYMENT_METHOD_OTHER ||
+              initialPayment.method === 'Other') &&
+            !method
+          )
+            throw new Error('Enter the new payment method name');
+          const { method_custom: _mc, ...paymentRest } = initialPayment;
           data.customer_payment = {
-            ...initialPayment,
+            ...paymentRest,
+            method: method || initialPayment.method,
             amount: decimalUnits(initialPayment.amount),
             account_id: initialPayment.account_id || undefined,
             allocate_to_booking: allowed('edit_customer_charges'),
           };
+        }
         if (travelRows.length) {
           data.travel_components_input = travelRows.map((row) => ({
             product: row.product,
@@ -2566,11 +3725,51 @@ function LegacyCommandForm({
             tier: vals.company_tier || null,
             comfort_level: vals.company_comfort_level || null,
           };
+        if (data.roles.includes('referrer')) {
+          data.details.referral_rate_bps =
+            vals.referral_rate_bps === '' || vals.referral_rate_bps == null
+              ? null
+              : data.referral_rate_bps;
+        } else if ('referral_rate_bps' in (data.details ?? {})) {
+          // Keep stored rate if role removed — staff can clear explicitly while still a referrer.
+        }
+        if (config.kind === 'edit_party') {
+          const existing = partyStandingDeals({ details: config.defaults.details });
+          const rate =
+            vals.standing_deal_rate_bps === '' || vals.standing_deal_rate_bps == null
+              ? null
+              : Number(data.standing_deal_rate_bps);
+          const label = String(vals.standing_deal_label || '').trim();
+          data.details.standing_deals = upsertPrimaryStandingDeal(
+            existing,
+            rate == null || !label
+              ? null
+              : {
+                  label,
+                  rate_bps: rate,
+                  basis: (STANDING_DEAL_BASES as readonly string[]).includes(
+                    vals.standing_deal_basis,
+                  )
+                    ? (vals.standing_deal_basis as StandingDealBasis)
+                    : 'sale_ex_tax',
+                  product: (STANDING_DEAL_PRODUCTS as readonly string[]).includes(
+                    vals.standing_deal_product,
+                  )
+                    ? (vals.standing_deal_product as StandingDealProduct)
+                    : 'Hotel',
+                },
+          );
+        }
         delete data.source_offerings;
         delete data.whatsapp;
         delete data.relationship_notes;
         delete data.company_tier;
         delete data.company_comfort_level;
+        delete data.referral_rate_bps;
+        delete data.standing_deal_label;
+        delete data.standing_deal_rate_bps;
+        delete data.standing_deal_basis;
+        delete data.standing_deal_product;
       }
       if (config.kind === 'review_resolution') {
         delete data.source_link;
@@ -2608,8 +3807,17 @@ function LegacyCommandForm({
         data.commission_allocations = data.direction === 'commission' ? allocations : [];
       }
       if (config.kind === 'traveler') {
-        if (Boolean(vals.loyalty_program) !== Boolean(vals.loyalty_number))
+        const loyaltyProgram = resolveLoyaltyProgram(
+          vals.loyalty_program,
+          vals.loyalty_program_custom,
+        );
+        if (Boolean(loyaltyProgram) !== Boolean(vals.loyalty_number))
           throw new Error('Enter both the loyalty program and membership number');
+        if (
+          (vals.loyalty_program === LOYALTY_PROGRAM_OTHER || vals.loyalty_program === 'Other') &&
+          !loyaltyProgram
+        )
+          throw new Error('Enter the new loyalty program name');
         data.preferences = {
           ...(config.defaults.preferences ?? {}),
           seat: vals.seat ?? '',
@@ -2620,7 +3828,13 @@ function LegacyCommandForm({
         delete data.sex;
         delete data.nationality;
         delete data.redress;
-        data.memberships = vals.memberships ?? config.defaults.memberships ?? [];
+        data.memberships = (vals.memberships ?? config.defaults.memberships ?? []).map((row: R) => {
+          const program = resolveLoyaltyProgram(row.program, row.program_custom);
+          if (!program && (row.program || row.number))
+            throw new Error('Enter the loyalty program name for each membership');
+          const { program_custom: _pc, ...rest } = row;
+          return { ...rest, program };
+        });
         data.documents = (vals.documents ?? config.defaults.documents ?? []).map((row: R) => ({
           ...row,
           expires_on: row.expires_on || undefined,
@@ -2640,10 +3854,10 @@ function LegacyCommandForm({
         delete data.passport_number;
         delete data.passport_country;
         delete data.passport_expiry;
-        if (vals.loyalty_program && vals.loyalty_number)
+        if (loyaltyProgram && vals.loyalty_number)
           data.memberships = [
             ...data.memberships,
-            { program: vals.loyalty_program, number: vals.loyalty_number },
+            { program: loyaltyProgram, number: vals.loyalty_number },
           ];
         data.memberships = [
           ...new Map(data.memberships.map((r: R) => [`${r.program}\u0000${r.number}`, r])).values(),
@@ -2655,6 +3869,7 @@ function LegacyCommandForm({
         ];
         delete data.seat;
         delete data.loyalty_program;
+        delete data.loyalty_program_custom;
         delete data.loyalty_number;
       }
       if (config.kind === 'receive_refund' && data.new_asset_name) {
@@ -2686,6 +3901,17 @@ function LegacyCommandForm({
         if (config.kind === 'revise') {
           if (vals.product === 'Flight' && tripType === 'One Way')
             data.itinerary.end_date_known = false;
+          if (data.reservation_status) {
+            const stored = toStoredReservationStatus(String(data.reservation_status));
+            if (stored) data.reservation_status = stored;
+          }
+          if (vals.reservation_status === 'Held') {
+            if (!vals.ticketing_deadline)
+              throw new Error('Held PNR requires a ticketing deadline date');
+            data.itinerary.ticketing_deadline = vals.ticketing_deadline;
+          } else if (vals.ticketing_deadline) {
+            data.itinerary.ticketing_deadline = vals.ticketing_deadline;
+          }
           if (config.defaults.itinerary?.summary_generated) {
             const generated = !advanced || vals.summary === config.defaults.summary;
             data.summary = generated ? travelDerived.summary : vals.summary;
@@ -2695,6 +3921,7 @@ function LegacyCommandForm({
           }
         }
         delete data.cost_status;
+        delete data.ticketing_deadline;
       }
       await onSubmit(data);
     } catch (err) {
@@ -2850,22 +4077,26 @@ function LegacyCommandForm({
   const optionalKeys = new Set(
     ['party', 'edit_party'].includes(config.kind)
       ? ['relationship_notes', 'company_tier', 'company_comfort_level', 'travel_rules']
-      : [
-            'payment',
-            'fund',
-            'charge',
-            'authorize_payer',
-            'commission',
-            'referral',
-            'note',
-            'cancel',
-            'voucherize',
-            'booking_source_profile_link',
-            'price_match_event',
-            'benefit',
-          ].includes(config.kind)
-        ? ['reference', 'expires_on', 'external_reference']
-        : [],
+      : config.kind === 'traveler'
+        ? [...TRAVELER_PERSONAL_OPTIONAL_KEYS]
+        : config.kind === 'trade'
+          ? ['expires_on', 'notes', 'reference']
+          : [
+                'payment',
+                'fund',
+                'charge',
+                'authorize_payer',
+                'commission',
+                'referral',
+                'note',
+                'cancel',
+                'voucherize',
+                'booking_source_profile_link',
+                'price_match_event',
+                'benefit',
+              ].includes(config.kind)
+            ? ['reference', 'expires_on', 'external_reference']
+            : [],
   );
   const renderFields = (items: typeof defs) => (
     <>
@@ -3084,19 +4315,17 @@ function LegacyCommandForm({
                 id={`f-${f.key}`}
                 label={f.label}
                 options={
-                  f.key === 'issuer'
-                    ? [
-                        ...new Set([
-                          ...(f.options ?? []),
-                          ...(state.programs ?? []).map((p: R) => p.name),
-                          ...state.parties
-                            .filter(
-                              (p: R) =>
-                                p.kind === 'supplier' || (p.roles ?? []).includes('supplier'),
-                            )
-                            .map((p: R) => p.name),
-                        ]),
-                      ]
+                  f.key === 'issuer' || f.key === 'loyalty_program'
+                    ? mergeLoyaltyProgramOptions([
+                        ...(state.programs ?? []).map((p: R) => p.name),
+                        ...(state.assets ?? []).map((a: R) => a.issuer),
+                        ...state.parties
+                          .filter(
+                            (p: R) =>
+                              p.kind === 'supplier' || (p.roles ?? []).includes('supplier'),
+                          )
+                          .map((p: R) => p.name),
+                      ])
                     : config.kind === 'acquire_asset' && f.key === 'kind'
                       ? [
                           ...new Set([
@@ -3104,7 +4333,23 @@ function LegacyCommandForm({
                             ...(state.instruments ?? []).map((i: R) => i.name),
                           ]),
                         ]
-                      : (f.options ?? [])
+                      : config.kind === 'trade' && f.key === 'what'
+                        ? mergeTradeWhatOptions([
+                            ...(state.assets ?? []).map((a: R) => a.kind),
+                            ...(state.instruments ?? []).map((i: R) => i.name),
+                          ])
+                        : ['method', 'payment_method', 'fee_payment_method'].includes(f.key)
+                          ? mergePaymentMethodOptions([
+                              ...(state.payments ?? []).map((p: R) => p.method),
+                              ...(state.referralPayments ?? []).map((p: R) => p.method),
+                            ])
+                          : f.key === 'expiry_rule'
+                            ? mergeExpiryRuleOptions(
+                                (state.assets ?? []).map((a: R) =>
+                                  parseExpiryRuleFromRestrictions(a.restrictions),
+                                ),
+                              )
+                            : (f.options ?? [])
                 }
                 required={f.required}
                 autoFocus={defs[0]?.key === f.key}
@@ -3252,7 +4497,9 @@ function LegacyCommandForm({
                   value={travelerSearch}
                   onChange={(e) => setTravelerSearch(e.target.value)}
                 />
-                <small>{(vals.traveler_ids ?? []).length} traveler(s) selected</small>
+                <small>
+                  {countLabel((vals.traveler_ids ?? []).length, 'traveler')} selected
+                </small>
                 <small>
                   Search by name to add travelers. Selected people stay visible; showing up to 20
                   matches.
@@ -3398,7 +4645,14 @@ function LegacyCommandForm({
                   className="btn small"
                   type="button"
                   style={{ marginTop: 10 }}
-                  onClick={() => setAllocs((v) => [...v, { booking_id: '', amount: '' }])}
+                  onClick={() =>
+                    setAllocs((v) => [
+                      ...v,
+                      vals.direction === 'commission'
+                        ? { commission_id: '', amount: '' }
+                        : { booking_id: '', amount: '' },
+                    ])
+                  }
                 >
                   <Plus size={12} />
                   Add allocation
@@ -3478,13 +4732,6 @@ function LegacyCommandForm({
                   type="button"
                   onClick={() => {
                     creationKey.current = crypto.randomUUID();
-                    const provider = ['supplier_id', 'airline_id', 'provider_id'].includes(f.key);
-                    const sellerCreate = [
-                      'seller_id',
-                      'change_seller_id',
-                      'acquisition_source_id',
-                      'source_id',
-                    ].includes(f.key);
                     const kind =
                       f.source === 'parties'
                         ? 'party'
@@ -3493,18 +4740,24 @@ function LegacyCommandForm({
                           : f.source === 'instruments'
                             ? 'instrument'
                             : 'program_account';
+                    // Plan: new payer/referrer from Authorize / Money Back / payment
+                    // without closing — seed roles so the contact is usable immediately.
+                    const partySeed =
+                      kind === 'party'
+                        ? inlinePartyCreateDefaults({
+                            fieldKey: f.key,
+                            commandKind: config.kind,
+                            paymentDirection: vals.direction,
+                          })
+                        : null;
                     setInlineCreation({
                       kind,
                       target: f.key,
                       defaults:
-                        kind === 'party'
+                        kind === 'party' && partySeed
                           ? {
-                              kind: provider ? 'supplier' : sellerCreate ? 'partner' : 'person',
-                              roles: provider
-                                ? ['supplier']
-                                : sellerCreate
-                                  ? ['seller']
-                                  : [],
+                              kind: partySeed.kind,
+                              roles: partySeed.roles,
                             }
                           : kind === 'program'
                             ? { category: 'Other' }
@@ -3554,6 +4807,32 @@ function LegacyCommandForm({
               !(f.type === 'roles' && config.defaults.entry_context === 'Suppliers') &&
               f.help &&
               !fieldErrors[f.key] && <small>{f.help}</small>}
+            {config.kind === 'transfer_asset' &&
+              f.key === 'quantity_received' &&
+              (() => {
+                const sentRaw = String(vals.quantity_sent ?? '').trim();
+                const recvRaw = String(vals.quantity_received ?? '').trim();
+                if (!/^\d+$/.test(sentRaw) || !/^\d+$/.test(recvRaw)) return null;
+                let feesCents = 0;
+                const feesRaw = String(vals.fees ?? '').trim();
+                if (feesRaw) {
+                  try {
+                    feesCents = decimalUnits(feesRaw);
+                  } catch {
+                    feesCents = 0;
+                  }
+                }
+                const sending = state.assets?.find((a: R) => a.id === vals.sending_asset_id);
+                const summary = transferSpreadSummary({
+                  quantitySent: Number(sentRaw),
+                  quantityReceived: Number(recvRaw),
+                  remainingBasisCents:
+                    sending?.remaining_basis == null ? null : Number(sending.remaining_basis),
+                  remainingQuantity: sending?.balance == null ? null : Number(sending.balance),
+                  feesCents,
+                });
+                return summary ? <small className="transfer-spread-summary">{summary}</small> : null;
+              })()}
             {attempted && fieldErrors[f.key] ? (
               <FieldError id={`err-${f.key}`}>{fieldErrors[f.key]}</FieldError>
             ) : null}
@@ -3673,6 +4952,68 @@ function LegacyCommandForm({
             )}
           <FormAlert onDismiss={() => setError('')}>{error}</FormAlert>
           <div className="form-grid">
+            {config.kind === 'trade' && (
+              <output className="full">
+                Calculated rate:{' '}
+                {(() => {
+                  try {
+                    const what =
+                      resolveTradeWhat(vals.what, vals.what_custom) ||
+                      String(vals.what || 'Points');
+                    const unit = tradeUnit(what);
+                    const amount =
+                      vals.amount === '' || vals.amount == null
+                        ? null
+                        : unit === 'money'
+                          ? decimalUnits(vals.amount)
+                          : decimalUnits(vals.amount, true);
+                    const price =
+                      vals.price === '' || vals.price == null ? null : decimalUnits(vals.price);
+                    return formatTradeRateLabel(what, amount, price);
+                  } catch {
+                    return 'Enter amount + total price';
+                  }
+                })()}
+                {(() => {
+                  const whatResolved =
+                    resolveTradeWhat(vals.what, vals.what_custom) || String(vals.what || '');
+                  const missing = tradeToComplete({
+                    side: vals.side,
+                    stock_mode: vals.stock_mode || TRADE_DEFAULT_STOCK_MODE,
+                    booking_id: vals.booking_id,
+                    counterparty_id: vals.counterparty_id,
+                    asset_id: vals.asset_id,
+                    expires_on: vals.expires_on,
+                    what: whatResolved,
+                  });
+                  const suggested = suggestTradeStatus({
+                    side: vals.side,
+                    paid: vals.paid === true,
+                    to_complete: missing,
+                  });
+                  const chosen = (TRADE_STATUSES as readonly string[]).includes(
+                    String(vals.status || ''),
+                  )
+                    ? String(vals.status)
+                    : suggested;
+                  return (
+                    <>
+                      <span className="muted" style={{ display: 'block', marginTop: 4 }}>
+                        Status: {tradeStatusLabel(chosen)}
+                        {chosen !== suggested
+                          ? ` · suggested ${tradeStatusLabel(suggested)}`
+                          : ''}
+                      </span>
+                      {missing.length ? (
+                        <span className="muted" style={{ display: 'block', marginTop: 4 }}>
+                          To complete: {missing.join(' · ')}
+                        </span>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </output>
+            )}
             {config.kind === 'price_match_event' &&
               vals.final_rate !== '' &&
               vals.final_rate != null &&
@@ -3724,8 +5065,19 @@ function LegacyCommandForm({
             )}
             {renderFields(defs.filter((f) => !optionalKeys.has(f.key) || f.required))}
             {defs.some((f) => optionalKeys.has(f.key) && !f.required) && (
-              <details className="optional-section full">
-                <summary>More options · contact, references & details</summary>
+              <details
+                className="optional-section full"
+                open={
+                  config.kind === 'traveler'
+                    ? travelerPersonalOptionalShouldOpen(vals)
+                    : undefined
+                }
+              >
+                <summary>
+                  {config.kind === 'traveler'
+                    ? 'Personal travel details · passport, DOB, loyalty (optional)'
+                    : 'More options · contact, references & details'}
+                </summary>
                 <div className="form-grid">
                   {renderFields(defs.filter((f) => optionalKeys.has(f.key) && !f.required))}
                 </div>
@@ -3759,12 +5111,25 @@ function LegacyCommandForm({
             </button>
           )}
           {config.kind === 'traveler' && (
-            <TravelerRecords
-              memberships={vals.memberships ?? config.defaults.memberships ?? []}
-              documents={vals.documents ?? config.defaults.documents ?? []}
-              onMemberships={(v) => change('memberships', v)}
-              onDocuments={(v) => change('documents', v)}
-            />
+            <details
+              className="optional-section full"
+              open={
+                (vals.memberships ?? config.defaults.memberships ?? []).length > 0 ||
+                (vals.documents ?? config.defaults.documents ?? []).length > 0
+              }
+            >
+              <summary>Saved memberships & travel documents (optional)</summary>
+              <TravelerRecords
+                memberships={vals.memberships ?? config.defaults.memberships ?? []}
+                documents={vals.documents ?? config.defaults.documents ?? []}
+                onMemberships={(v) => change('memberships', v)}
+                onDocuments={(v) => change('documents', v)}
+                programExtras={[
+                  ...(state.programs ?? []).map((p: R) => p.name),
+                  ...(state.assets ?? []).map((a: R) => a.issuer),
+                ]}
+              />
+            </details>
           )}
           {config.kind === 'booking' && state.fulfillmentEnabled && allowed('operations') && (
             <BookingTravel
@@ -3879,12 +5244,32 @@ function LegacyCommandForm({
                     <ChoiceInput
                       id="initial-payment-method"
                       label="Customer payment method"
-                      options={PAYMENT_METHODS}
+                      options={mergePaymentMethodOptions([
+                        ...(state.payments ?? []).map((p: R) => p.method),
+                      ])}
                       required
                       value={initialPayment.method}
                       onChange={(method) => setInitialPayment({ ...initialPayment, method })}
                     />
                   </div>
+                  {(initialPayment.method === PAYMENT_METHOD_OTHER ||
+                    initialPayment.method === 'Other') && (
+                    <div className="form-field">
+                      <label htmlFor="initial-payment-method-custom">New payment method *</label>
+                      <input
+                        id="initial-payment-method-custom"
+                        required
+                        value={initialPayment.method_custom ?? ''}
+                        onChange={(e) =>
+                          setInitialPayment({
+                            ...initialPayment,
+                            method_custom: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. Venmo"
+                      />
+                    </div>
+                  )}
                   <div className="form-field">
                     <label htmlFor="initial-payment-date">Received on *</label>
                     <input

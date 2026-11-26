@@ -559,6 +559,34 @@ test('operational booking separates brand, booking method, sellers, customer car
     });
     assert.equal(deleted.deleted, true);
     assert.equal((await snapshot(db, worker)).bookingDrafts.length, 0);
+    assert.equal((await snapshot(db, worker)).bookingDraftsRemoved.length, 1);
+    assert.equal((await snapshot(db, worker)).bookingDraftsRemoved[0].id, draft.id);
+    await assert.rejects(detail(db, worker, 'draft', draft.id));
+    await assert.rejects(
+      execute(db, worker, {
+        id: randomUUID(),
+        kind: 'booking_draft_delete',
+        data: { draft_id: draft.id },
+      }),
+      /already deleted/i,
+    );
+    const restored = await execute(db, worker, {
+      id: randomUUID(),
+      kind: 'booking_draft_restore',
+      data: { draft_id: draft.id },
+    });
+    assert.equal(restored.restored, true);
+    assert.equal((await snapshot(db, worker)).bookingDrafts.length, 1);
+    assert.equal((await snapshot(db, worker)).bookingDraftsRemoved.length, 0);
+    assert.equal((await detail(db, worker, 'draft', draft.id)).entry.sale, null);
+    await assert.rejects(
+      execute(db, worker, {
+        id: randomUUID(),
+        kind: 'booking_draft_restore',
+        data: { draft_id: draft.id },
+      }),
+      /not deleted/i,
+    );
     const held = await execute(db, worker, {
       id: randomUUID(),
       kind: 'booking_draft',

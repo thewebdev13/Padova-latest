@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react';
 import { fixedMenuStyleFromRect } from '@/lib/fixed-menu-style';
+import { searchableDropdownOpensFor } from '@/lib/searchable-dropdown-policy';
 type Option = {
   value: string;
   label: string;
@@ -149,10 +150,14 @@ export default function SearchableSelect({
           placeholder={placeholder}
           onFocus={(e) => {
             if (blurClose.current != null) window.clearTimeout(blurClose.current);
+            // Plan Do-now: do not open dropdowns on tab focus alone — covers the screen
+            // and makes it easy to pick the wrong record. Click / type / arrows open.
             e.target.select();
             onSearch?.('');
-            setOpen(true);
-            setActive(0);
+            if (searchableDropdownOpensFor('focus')) {
+              setOpen(true);
+              setActive(0);
+            }
           }}
           onBlur={() => {
             // Delay close so option onMouseDown/onClick can commit the selection.
@@ -165,6 +170,7 @@ export default function SearchableSelect({
           onClick={(e) => {
             e.currentTarget.select();
             setOpen(true);
+            setActive(0);
           }}
           onChange={(e) => {
             const next = e.target.value;

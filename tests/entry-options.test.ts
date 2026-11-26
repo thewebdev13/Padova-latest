@@ -3,7 +3,12 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import CommandForm from '../src/components/command-form';
-import { BOOKING_CHANNELS, decimalUnits, parseList } from '../src/lib/entry-options';
+import {
+  BOOKING_CHANNELS,
+  PAYMENT_METHODS,
+  decimalUnits,
+  parseList,
+} from '../src/lib/entry-options';
 
 const state = {
   today: '2026-10-28',
@@ -31,16 +36,17 @@ test('booking uses channel choices and a required custom alternative; travel dat
   assert.match(html, /<select id="f-channel" required=""/);
   for (const channel of BOOKING_CHANNELS)
     assert.ok(html.includes(`value="${channel.replaceAll('&', '&amp;')}"`));
-  assert.match(html, /Other — specify/);
+  assert.match(html, /Other, specify/);
   assert.doesNotMatch(html, /value="Direct Airline" selected/);
   assert.match(html, /id="f-travel_start"[^>]*value=""/);
   assert.match(html, /Search saved travelers/);
   assert.match(
     form('booking', { channel: 'Existing custom channel' }),
-    /aria-label="Booking channel — other"[^>]*value="Existing custom channel"/,
+    /aria-label="Booking channel, other"[^>]*value="Existing custom channel"/,
   );
 });
 test('payment workflows use the same method selector and numeric money controls', () => {
+  assert.ok(PAYMENT_METHODS.includes('PayPal'), 'Plan lists PayPal as a customer method');
   for (const kind of [
     'payment',
     'pay_asset_purchase',
@@ -52,6 +58,7 @@ test('payment workflows use the same method selector and numeric money controls'
     const html = form(kind, { paid: true });
     assert.match(html, /<select id="f-method"/);
     assert.match(html, /value="Zelle"/);
+    assert.match(html, /value="PayPal"/);
     assert.match(html, /type="number"[^>]*step="0.01"/);
   }
 });

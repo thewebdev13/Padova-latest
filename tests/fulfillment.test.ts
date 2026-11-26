@@ -513,7 +513,10 @@ test('count certificates can fund core travel or add an ancillary benefit with e
       Number((await f.db.query('SELECT count(*) n FROM supplier_obligations')).rows[0].n),
       0,
     );
-    assert.equal(formatQuantity(1, 'count'), '1 certificate(s)');
+    assert.equal(formatQuantity(1, 'count'), '1 certificate');
+    assert.equal(formatQuantity(2, 'count'), '2 certificates');
+    assert.equal(formatQuantity(1, 'points'), '1 point');
+    assert.equal(formatQuantity(100, 'points'), '100 points');
   } finally {
     await f.db.close();
   }

@@ -14,6 +14,8 @@ import {
   shouldAutoOpenBookingRecovery,
   snoozeBookingRecoveryAutoOpen,
   isServerDraftRecovery,
+  localBookingRecoveryOffer,
+  bookingRecoveryContinueDefaults,
 } from '../src/lib/booking-recovery';
 let db: Database;
 const date = '2026-11-02';
@@ -109,7 +111,8 @@ test('automatic recovery is actor-scoped, retains exact retry identity and survi
   assert.ok(!recovered.paste.includes('4111111111111111'));
   assert.ok(!recovered.paste.includes('hidden'));
   assert.equal(readBookingRecovery('second', storage), null);
-  assert.equal(shouldAutoOpenBookingRecovery('first', recovered, storage), true);
+  // Plan v1: never auto-open unfinished booking on load (Drafts / explicit Continue only).
+  assert.equal(shouldAutoOpenBookingRecovery('first', recovered, storage), false);
   snoozeBookingRecoveryAutoOpen('first', storage);
   assert.equal(shouldAutoOpenBookingRecovery('first', recovered, storage), false);
   clearBookingRecovery('first', storage);
@@ -139,8 +142,37 @@ test('server Continue Draft recovery does not auto-open on refresh', () => {
   assert.equal(shouldAutoOpenBookingRecovery('first', draft), false);
   assert.equal(
     shouldAutoOpenBookingRecovery('first', { ...draft, values: { sale: '100' } }),
-    true,
+    false,
   );
+  // Server drafts: Drafts list only — no local Continue banner.
+  assert.equal(localBookingRecoveryOffer('first', draft), null);
+});
+
+test('Plan Do-now: local unfinished offers Continue banner defaults (never auto-open)', () => {
+  const key = randomUUID();
+  const draft = {
+    version: 1 as const,
+    actorId: 'first',
+    commandKey: key,
+    savedAt: `${date}T12:00:00.000Z`,
+    values: { sale: '550', customer_id: 'c1' },
+    components: [{ type: 'Flight' }],
+    traveler: 'Ada',
+    paste: 'PNR ABC',
+  };
+  assert.equal(shouldAutoOpenBookingRecovery('first', draft), false);
+  assert.deepEqual(localBookingRecoveryOffer('first', draft), {
+    commandKey: key,
+    savedAt: `${date}T12:00:00.000Z`,
+    hasPaste: true,
+  });
+  assert.equal(localBookingRecoveryOffer('other', draft), null);
+  const defaults = bookingRecoveryContinueDefaults(draft);
+  assert.equal(defaults.resume_recovery, true);
+  assert.equal(defaults.sale, '550');
+  assert.equal(defaults.pending_traveler, 'Ada');
+  assert.equal(defaults.recovery_paste, 'PNR ABC');
+  assert.deepEqual(defaults.components, [{ type: 'Flight' }]);
 });
 test('booking change consistently projects dates, traveled state, travelers and references over the normal single trip while preserving its original row', async () => {
   const x = await setup();

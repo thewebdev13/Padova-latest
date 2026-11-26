@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
+import { workspacePath, WORKSPACE_HOME_PAGE } from '@/lib/workspace-routes';
 
 export const dynamic = 'force-dynamic';
 
-/** /w → /w/dashboard */
+/** Plan home: /w → Bookings list */
 export default function WorkspaceIndex() {
-  redirect('/w/dashboard');
+  redirect(workspacePath(WORKSPACE_HOME_PAGE));
 }

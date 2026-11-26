@@ -58,6 +58,8 @@ export const bookingItinerary = z
       .max(1000)
       .optional(),
     cost_status: z.enum(['Pending', 'Confirmed', 'No supplier cost']).optional(),
+    /** Plan Held PNR ticketing deadline (YYYY-MM-DD). */
+    ticketing_deadline: z.iso.date().optional().nullable(),
     origin: optionalText,
     route: optionalText,
     trip_type: z.enum(['One Way', 'Round Trip', 'Multi-City']).optional(),

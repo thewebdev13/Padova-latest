@@ -17,6 +17,7 @@ import PnrInput from './pnr-input';
 import BookingTravelerDetails from './booking-traveler-details';
 import {
   travelerNames,
+  travelerPasteNeedsReview,
   flightEndpoints,
   flightEndpointChange,
   inventoryOption,
@@ -37,9 +38,46 @@ import {
   derivedTravel,
   travelDateLabels,
   travelDateOrderIssue,
+  bookingTravelEndMissingMessage,
   directCardOwner,
 } from '@/lib/booking-derived';
-import { decimalUnits, parseList, PAYMENT_METHODS } from '@/lib/entry-options';
+import {
+  decimalUnits,
+  parseList,
+  PAYMENT_METHOD_OTHER,
+  HOW_BOOKED_PRESETS,
+  mergePaymentMethodOptions,
+  resolvePaymentMethod,
+  type HowBookedPreset,
+} from '@/lib/entry-options';
+import { howBookedHint, howBookedVisibility } from '@/lib/how-booked';
+import {
+  HOTEL_PAID_BY_OPTIONS,
+  hotelPaidByDefaultPaymentType,
+  hotelPaidByHint,
+  hotelPaidBySetsPadovaOwedZero,
+  isHotelPaidBy,
+  type HotelPaidBy,
+} from '@/lib/hotel-paid-by';
+import {
+  GDS_COMMISSIONABLE_OPTIONS,
+  gdsCommissionableHint,
+  gdsCommissionExpectedSeed,
+  isGdsCommissionable,
+  type GdsCommissionable,
+} from '@/lib/gds-commissionable';
+import {
+  OUTSIDE_SELLER_BP_LABEL,
+  OUTSIDE_SELLER_BP_SUMMARY,
+  OUTSIDE_SELLER_COST_HINT,
+  OUTSIDE_SELLER_REBATE_LABEL,
+  outsideSellerAllowsRebateExpected,
+} from '@/lib/outside-seller';
+import { sellerUnpaidEntryHint } from '@/lib/seller-unpaid';
+import {
+  costEstimateEntryHint,
+  normalizeOtherCurrencyNote,
+} from '@/lib/cost-estimate';
 import {
   eligibleParty,
   providerRole,
@@ -48,6 +86,7 @@ import {
 } from '@/lib/directory-eligibility';
 import {
   parseQuickPaste,
+  bookingSourceMethodMatch,
   exactEligibleMatch,
   exactPointCost,
   parsePaymentStatus,
@@ -62,20 +101,53 @@ import {
   INTAKE_REQUIRED_ROWS,
   INTAKE_SAMPLE_PASTE,
   UNREAD_FILE_MESSAGE,
+  intakePreviewMark,
+  intakePreviewMarkLabel,
 } from '@/lib/intake-preview';
 import { intakeReservationBlockReason } from '@/lib/booking-message-detect';
+import { customerCardFeeCents, DEFAULT_CUSTOMER_CARD_FEE_BPS } from '@/lib/card-fees';
+import {
+  SRULY_FEE_PRESETS,
+  centsToUsdInput,
+} from '@/lib/sruly-fees';
+import {
+  buildStandingDealExpectations,
+  mergeStandingDealExpectations,
+  normalizeEntryExtraIncomeDraft,
+  partyStandingDeals,
+  STANDING_DEAL_BASES,
+} from '@/lib/standing-deals';
 import {
   extractTextFromEml,
   looksLikeEml,
   parseEmlEnvelope,
 } from '@/lib/booking-intake-split';
-import { percentagePrice, percentageCommission, sourceConfirmationLabel } from '@/lib/v1-entry';
+import {
+  fixedMarginPrice,
+  percentagePrice,
+  percentageCommission,
+  sourceConfirmationLabel,
+} from '@/lib/v1-entry';
 import {
   transitionBookingProduct,
   bookingProductDetails,
   sellerPaymentState,
   customerReceivedAmount,
+  bookingEntryPrimaryNav,
+  bookingEntryMoreShouldOpen,
+  bookingEntryFhrMoreShouldOpen,
+  bookingEntryHeldMoreShouldOpen,
+  bookingEntryNotesMoreShouldOpen,
+  bookingTravelMoreShouldOpen,
+  bookingPercentPricingShouldOpen,
+  bookingFixedMarginShouldOpen,
 } from '@/lib/booking-entry-state';
+import {
+  BOOKING_DOCUMENT_KINDS,
+  appendBookingDocument,
+  bookingDocumentKindLabel,
+  normalizeEntryDocumentDraft,
+} from '@/lib/booking-documents';
 import { useConfirmDialog } from '@/components/confirm-dialog';
 type R = Record<string, any>;
 type Props = {
@@ -204,17 +276,27 @@ export default function BookingEntry(props: Props) {
     receipt_date: state.today,
     ...props.config.defaults,
   });
-  const [components, setComponents] = useState<R[]>(
-    props.config.defaults.components ?? [
-      {
-        type: 'Outside seller',
-        supplied: 'Complete Booking / Ticket',
-        unit: 'money',
-        payment_status: 'Unpaid',
-        entry_placeholder: true,
-      },
-    ],
-  );
+  const [components, setComponents] = useState<R[]>(() => {
+    const seed = props.config.defaults.components;
+    if (!Array.isArray(seed) || !seed.length) {
+      return [
+        {
+          type: 'Outside seller',
+          supplied: 'Complete Booking / Ticket',
+          unit: 'money',
+          payment_status: 'Unpaid',
+          entry_placeholder: true,
+        },
+      ];
+    }
+    return seed.map((c: R) => ({
+      ...c,
+      cost_is_estimate: !!c.cost_is_estimate,
+      other_currency_code: c.other_currency_code ?? c.other_currency?.code ?? '',
+      other_currency_amount: c.other_currency_amount ?? c.other_currency?.amount ?? '',
+      other_currency_rate: c.other_currency_rate ?? c.other_currency?.rate ?? '',
+    }));
+  });
   const initialPaste = String(
     props.config.defaults.recovery_paste ||
       props.config.defaults.intake_raw_text ||
@@ -448,6 +530,40 @@ export default function BookingEntry(props: Props) {
   const [attemptedSave, setAttemptedSave] = useState(false);
   const [busy, setBusy] = useState(false);
   const [inline, setInline] = useState<R | null>(null);
+  const [howBooked, setHowBooked] = useState<HowBookedPreset | ''>(() => {
+    const raw = String(props.config.defaults?.how_booked || '').trim();
+    return (HOW_BOOKED_PRESETS as readonly string[]).includes(raw)
+      ? (raw as HowBookedPreset)
+      : '';
+  });
+  const [moreOpen, setMoreOpen] = useState(() =>
+    bookingEntryMoreShouldOpen(props.config.defaults ?? {}),
+  );
+  const howVis = howBookedVisibility(howBooked);
+  const primaryNav = bookingEntryPrimaryNav();
+  useEffect(() => {
+    if (bookingEntryMoreShouldOpen(v)) setMoreOpen(true);
+  }, [
+    v.referring_organization_id,
+    v.held_pnr,
+    v.ticketing_deadline,
+    v.program_rate_name,
+    v.program_perks,
+    v.program_benefit_gained,
+    v.additional_charge,
+    v.additional_charge_note,
+    v.notes,
+    v.price_breakdown_note,
+    v.summary_override,
+    v.document_label,
+    v.document_url,
+    v.document_note,
+    v.extra_income_label,
+    v.extra_income_percent,
+    v.extra_income_note,
+    v.tax_amount,
+    v.tax_bearer,
+  ]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || busy) return;
@@ -694,10 +810,10 @@ export default function BookingEntry(props: Props) {
                       details,
                     };
                     // Do not lock the whole booking form — party create is local + fast.
-                    const result = await onInlineCommand('party', data, commandKey);
-                    const row = { ...data, ...result };
-                    setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), row] }));
-                    return row;
+                      const result = await onInlineCommand('party', data, commandKey);
+                      const row = { ...data, ...result };
+                      setExtra((old) => ({ ...old, parties: [...(old.parties ?? []), row] }));
+                      return row;
                   }
                 : undefined
             }
@@ -750,7 +866,7 @@ export default function BookingEntry(props: Props) {
         )}
       </>
       {source === 'bookingSourceProfiles' && onInlineCommand && !value ? (
-        <div className="inline-actions">
+      <div className="inline-actions">
           <button
             type="button"
             className="btn small"
@@ -768,7 +884,7 @@ export default function BookingEntry(props: Props) {
           >
             + New profile
           </button>
-        </div>
+      </div>
       ) : null}
     </Field>
   );
@@ -856,11 +972,20 @@ export default function BookingEntry(props: Props) {
   // - Customer paid provider → $0 (trip already paid to provider; fee goes in Extra charge)
   // - Padova paid → booked cost (typical customer price matches trip cost)
   // Incomplete percent pricing falls back to Manual so the summary always shows dollars.
+  // Same as Cost / Fixed Margin keep their Plan method while cost updates.
   useEffect(() => {
     if (!can('edit_customer_charges')) return;
     if (bookedCostCents === undefined && !providerDirect) return;
     setV((old) => {
-      if (old.sale_touched) return old;
+      if (old.sale_touched && old.pricing_method === 'Manual Customer Price') return old;
+      // Pasted / staff-entered price must never be overwritten by cost (Plan QA finding).
+      if (
+        old.pricing_method === 'Manual Customer Price' &&
+        old.sale !== '' &&
+        old.sale != null &&
+        !old.sale_seeded_from_cost
+      )
+        return old;
       const percentIncomplete =
         old.pricing_method === 'Percentage Off Comparable Online Price' &&
         !old.price_override &&
@@ -874,6 +999,26 @@ export default function BookingEntry(props: Props) {
         !percentIncomplete
       )
         return old;
+      if (old.pricing_method === 'Fixed Margin') {
+        if (bookedCostCents === undefined) return old;
+        const margin = (() => {
+          try {
+            return usd(old.fixed_margin);
+          } catch {
+            return undefined;
+          }
+        })();
+        if (margin === undefined) return old;
+        const next = (fixedMarginPrice(bookedCostCents, margin) / 100).toFixed(2);
+        if (String(old.sale ?? '') === next) return old;
+        return { ...old, sale: next, sale_seeded_from_cost: false };
+      }
+      if (old.pricing_method === 'Same as Cost') {
+        if (bookedCostCents === undefined) return old;
+        const next = (bookedCostCents / 100).toFixed(2);
+        if (String(old.sale ?? '') === next) return old;
+        return { ...old, sale: next, sale_seeded_from_cost: true };
+      }
       const next = providerDirect
         ? '0'
         : bookedCostCents === undefined
@@ -944,13 +1089,12 @@ export default function BookingEntry(props: Props) {
     attemptedSave &&
     !(v.trip_type === 'Multi-City' ? v.segments?.[0]?.date : v.travel_start);
   const travelEndMissing =
-    attemptedSave &&
-    ((v.product === 'Flight' && v.trip_type === 'Round Trip') ||
-      ['Hotel', 'Car'].includes(v.product)) &&
-    !v.travel_end;
+    attemptedSave && Boolean(bookingTravelEndMissingMessage(v));
   const otherDescriptionMissing =
     attemptedSave && v.product === 'Other' && !String(v.description || '').trim();
   const percentPricing = v.pricing_method === 'Percentage Off Comparable Online Price';
+  const sameAsCostPricing = v.pricing_method === 'Same as Cost';
+  const fixedMarginPricing = v.pricing_method === 'Fixed Margin';
   let calculatedSale: number | undefined;
   try {
     if (
@@ -961,11 +1105,22 @@ export default function BookingEntry(props: Props) {
       v.discount_percent != null
     )
       calculatedSale = percentagePrice(usd(v.comparable_price)!, decimalUnits(v.discount_percent));
+    else if (sameAsCostPricing && bookedCostCents !== undefined)
+      calculatedSale = bookedCostCents;
+    else if (
+      fixedMarginPricing &&
+      bookedCostCents !== undefined &&
+      v.fixed_margin !== '' &&
+      v.fixed_margin != null
+    ) {
+      const margin = usd(v.fixed_margin);
+      if (margin !== undefined) calculatedSale = fixedMarginPrice(bookedCostCents, margin);
+    }
   } catch {
     /* Incomplete input remains unknown until validated on Save. */
   }
   const baseSale = can('edit_customer_charges')
-      ? percentPricing && !v.price_override
+      ? (percentPricing && !v.price_override) || sameAsCostPricing || fixedMarginPricing
         ? calculatedSale
         : usd(v.sale)
       : undefined,
@@ -1064,6 +1219,10 @@ export default function BookingEntry(props: Props) {
     ])
       if (p[key] !== undefined)
         next[key] = ['sale', 'tax_amount'].includes(key) ? amount(key) : p[key];
+    if (p.sale !== undefined) {
+      next.sale_touched = true;
+      next.sale_seeded_from_cost = false;
+    }
     if (next.product === 'Hotel' && p.route && !next.location) next.location = p.route;
     if (p.customer)
       next.intake_customer_label =
@@ -1077,15 +1236,15 @@ export default function BookingEntry(props: Props) {
     if (p.trip_type) {
       const trip = normalizePasteValue(p.trip_type);
       if (!/^(unknown|n\/a|not applicable|)$/i.test(trip)) {
-        next.trip_type =
-          trip === 'round trip'
-            ? 'Round Trip'
-            : trip === 'one way'
-              ? 'One Way'
-              : ['multi-city', 'multi city'].includes(trip)
-                ? 'Multi-City'
-                : '';
-        if (!next.trip_type)
+      next.trip_type =
+        trip === 'round trip'
+          ? 'Round Trip'
+          : trip === 'one way'
+            ? 'One Way'
+            : ['multi-city', 'multi city'].includes(trip)
+              ? 'Multi-City'
+              : '';
+      if (!next.trip_type)
           issues.push('Trip Type unclear, pick One Way, Round Trip, or Multi-City');
       }
     }
@@ -1249,7 +1408,7 @@ export default function BookingEntry(props: Props) {
     await Promise.all(partyLookups);
 
     const method = p.method
-      ? exactEligibleMatch(
+      ? bookingSourceMethodMatch(
           rows('bookingSourceMethods').filter((m) => m.products.includes(next.product)),
           p.method,
         )
@@ -1258,6 +1417,11 @@ export default function BookingEntry(props: Props) {
       next.source_method_id = method?.id ?? '';
       if (!method) issues.push(`Select booking method: ${p.method}`);
       next.source_profile_id = '';
+      // Cap1 Travel paste → How-booked Capital One when unique channel match.
+      if (method && /capital\s*one/i.test(String(method.name || ''))) {
+        next.how_booked = 'Capital One';
+        setHowBooked('Capital One');
+      }
     }
     if (p.referring_organization) {
       if (!can('manage_commissions')) {
@@ -1500,12 +1664,8 @@ export default function BookingEntry(props: Props) {
       }
       if (!(v.trip_type === 'Multi-City' ? v.segments?.[0]?.date : v.travel_start))
         throw new Error('Enter the travel date, or use Save Draft.');
-      if (
-        ((v.product === 'Flight' && v.trip_type === 'Round Trip') ||
-          ['Hotel', 'Car'].includes(v.product)) &&
-        !v.travel_end
-      )
-        throw new Error(`Enter ${dateLabels.end}, or use Save Draft.`);
+      const endMissing = bookingTravelEndMissingMessage(v);
+      if (endMissing) throw new Error(endMissing);
       const dateIssue = travelDateOrderIssue(v);
       if (dateIssue) throw new Error(dateIssue);
       if (v.product === 'Flight' && v.trip_type !== 'Multi-City') {
@@ -1555,6 +1715,8 @@ export default function BookingEntry(props: Props) {
         .filter(
           (c) =>
             !c.entry_placeholder ||
+            c.cost_is_estimate ||
+            String(c.other_currency_code || '').trim() ||
             [c.cost, c.seller_id, c.asset_id, c.quantity, c.paid].some(
               (x) => x !== '' && x != null,
             ),
@@ -1569,6 +1731,10 @@ export default function BookingEntry(props: Props) {
           )
             throw new Error(
               'Enter the gross points, or turn off the suggested rebate calculation to enter the agreed net points.',
+            );
+          if (c.cost_is_estimate && usd(c.paid))
+            throw new Error(
+              'Cannot record payment against a cost estimate — enter the real USD amount first',
             );
           const bp =
             bpSource && c.type === 'Outside seller' && c.bp_gross_points && c.use_bp_economics;
@@ -1646,8 +1812,22 @@ export default function BookingEntry(props: Props) {
             quantity,
             unit: c.unit ?? 'money',
             cost,
+            cost_is_estimate: c.cost_is_estimate ? true : undefined,
+            other_currency: normalizeOtherCurrencyNote({
+              code: c.other_currency_code,
+              amount: c.other_currency_amount,
+              rate: c.other_currency_rate,
+            }),
             paid: c.type === 'Customer card' ? undefined : paid,
-            method: c.method || undefined,
+            method: (() => {
+              const resolved = resolvePaymentMethod(c.method, c.method_custom);
+              if (
+                (c.method === PAYMENT_METHOD_OTHER || c.method === 'Other') &&
+                !resolved
+              )
+                throw new Error('Enter the new payment method name');
+              return resolved || undefined;
+            })(),
             account_id: c.account_id || null,
             date: c.date || v.booked_on,
             reference: c.reference ?? '',
@@ -1663,7 +1843,10 @@ export default function BookingEntry(props: Props) {
             quoted_rate: c.quoted_rate || undefined,
             rate_unit: c.rate_unit || undefined,
             holder_id: c.holder_id || null,
-            rebate_expected: c.rebate_expected ? Number(c.rebate_expected) : undefined,
+            rebate_expected:
+              outsideSellerAllowsRebateExpected(c.type) && c.rebate_expected
+                ? Number(c.rebate_expected)
+                : undefined,
             bp_gross_points: bp ? Number(c.bp_gross_points) : undefined,
             bp_rebate_bps: bp ? decimalUnits(String(c.bp_rebate_percent ?? 35)) : undefined,
             bp_net_override_reason: c.bp_net_override_reason || undefined,
@@ -1703,10 +1886,15 @@ export default function BookingEntry(props: Props) {
         channel: method?.name || 'Unknown',
         travel_start: start,
         travel_end:
-          v.product === 'Flight' && v.trip_type === 'One Way' ? v.travel_start : end || start,
+          v.product === 'Flight' && v.trip_type === 'One Way'
+            ? v.travel_start
+            : end || start,
         details: {
+          // Hotel / Car / Round Trip: only mark known when staff entered the end date.
           end_date_known:
-            multi || (!(v.product === 'Flight' && v.trip_type === 'One Way') && !!v.travel_end),
+            multi ||
+            (v.product === 'Flight' && v.trip_type === 'One Way') ||
+            !!v.travel_end,
           confirmations: refs
             .filter((r) => r.type !== 'ticket_number' && r.type !== 'booking_source_confirmation')
             .map((r) => r.value),
@@ -1718,6 +1906,158 @@ export default function BookingEntry(props: Props) {
           ...bookingProductDetails(v, provider?.name),
         },
       };
+      if (v.held_pnr && !v.ticketing_deadline)
+        throw new Error('Held PNR requires a ticketing deadline date');
+      const entryDoc = normalizeEntryDocumentDraft({
+        label: v.document_label,
+        kind: v.document_kind,
+        url: v.document_url,
+        note: v.document_note,
+        added_on: v.document_added_on || v.booked_on,
+      });
+      let operational: R = {
+        trip_type: v.product === 'Flight' ? v.trip_type : undefined,
+        segments: multi ? segments : undefined,
+        how_booked: howBooked || undefined,
+        ...(howBooked === 'Hotel at program rate (FHR)'
+          ? {
+              program_rate_name: String(v.program_rate_name || '').trim() || undefined,
+              program_perks: String(v.program_perks || '').trim() || undefined,
+              program_benefit_gained:
+                String(v.program_benefit_gained || '').trim() || undefined,
+            }
+          : {}),
+        ...(howBooked === 'Hotel with commission' && isHotelPaidBy(v.hotel_paid_by)
+          ? { hotel_paid_by: v.hotel_paid_by as HotelPaidBy }
+          : {}),
+        ...(howBooked === 'Cash / GDS' && isGdsCommissionable(v.gds_commissionable)
+          ? { gds_commissionable: v.gds_commissionable as GdsCommissionable }
+          : {}),
+        ticketing_deadline: v.held_pnr ? v.ticketing_deadline || null : undefined,
+        source_profile_id: v.source_profile_id || null,
+        pricing: can('edit_customer_charges')
+          ? {
+              method: v.pricing_method || 'Manual Customer Price',
+              comparable_price:
+                percentPricing || v.record_comparable ? usd(v.comparable_price) : undefined,
+              discount_bps:
+                percentPricing && v.discount_percent !== ''
+                  ? decimalUnits(v.discount_percent)
+                  : undefined,
+              margin_cents: fixedMarginPricing ? usd(v.fixed_margin) : undefined,
+              manual_override: percentPricing && !!v.price_override,
+            }
+          : undefined,
+        other_description: v.product === 'Other' ? v.description : undefined,
+        taxes:
+          usd(v.tax_amount) !== undefined && (can('manage_funding') || v.tax_bearer !== 'Padova')
+            ? {
+                amount: usd(v.tax_amount),
+                bearer: v.tax_bearer || 'Unknown',
+                economic_bearer: v.tax_economic_bearer || 'Unknown',
+                customer_recovery:
+                  v.tax_economic_bearer === 'Customer' ? usd(v.tax_customer_recovery) : undefined,
+                method:
+                  v.tax_bearer === 'Padova' && !v.tax_included
+                    ? (() => {
+                        const resolved = resolvePaymentMethod(
+                          v.tax_method,
+                          v.tax_method_custom,
+                        );
+                        if (
+                          (v.tax_method === PAYMENT_METHOD_OTHER ||
+                            v.tax_method === 'Other') &&
+                          !resolved
+                        )
+                          throw new Error('Enter the new tax payment method name');
+                        return resolved || undefined;
+                      })()
+                    : undefined,
+                account_id:
+                  v.tax_bearer === 'Padova' && !v.tax_included ? v.tax_account_id || null : null,
+                included_in_component: v.tax_bearer === 'Padova' && !!v.tax_included,
+              }
+            : undefined,
+        version: 1,
+        draft_id: v.draft_id,
+        intake_source: (() => {
+          const src = String(
+            v.intake_provenance?.source ||
+              props.config.defaults.intake_provenance?.source ||
+              '',
+          ).trim();
+          if (
+            src === 'whatsapp' ||
+            src === 'email' ||
+            src === 'staff_paste' ||
+            src === 'staff_upload' ||
+            src === 'instinct'
+          )
+            return src;
+          return v.draft_id ? undefined : ('manual' as const);
+        })(),
+        source_method_id: v.source_method_id || null,
+        award_program_id: method?.award ? v.award_program_id || null : null,
+        new_travelers: v.new_travelers,
+        references: refs,
+        notes: v.notes ?? '',
+        price_breakdown_note: String(v.price_breakdown_note || '').trim() || undefined,
+        sale_known: baseSale !== undefined,
+        additional_charge: extraCharge,
+        additional_charge_note:
+          extraCharge && String(v.additional_charge_note || '').trim()
+            ? String(v.additional_charge_note).trim().slice(0, 500)
+            : undefined,
+        components: componentInput,
+        // Soft-merge C: IATA / secondary receivables only via Add commission.
+        // Referring org on booking still applies the accepted partnership payable once.
+        // Hotel with commission: expected Money Back line (amount Unknown until posted).
+        // Cash / GDS: commissionable Yes → 50/50 expected; No → none; Unknown → Unknown.
+        commission:
+          howBooked === 'Hotel with commission'
+            ? { expected: 'Yes', notes: 'Default Sruly path ~90% Padova / 10% retained' }
+            : howBooked === 'Cash / GDS'
+              ? gdsCommissionExpectedSeed(
+                  isGdsCommissionable(v.gds_commissionable)
+                    ? (v.gds_commissionable as GdsCommissionable)
+                    : undefined,
+                )
+              : undefined,
+        secondary_commission: undefined,
+        standing_deals: (() => {
+          const parties = [...(state.parties ?? []), ...(extra.parties ?? [])];
+          const customer = parties.find((p: R) => p.id === v.customer_id);
+          const deals = partyStandingDeals(customer);
+          const taxCents = usd(v.tax_amount);
+          const seeded = deals.length
+            ? buildStandingDealExpectations({
+                deals,
+                product: v.product,
+                saleCents: baseSale ?? null,
+                taxCents: taxCents ?? null,
+              })
+            : [];
+          const entryExtra = normalizeEntryExtraIncomeDraft({
+            label: v.extra_income_label,
+            percent: v.extra_income_percent,
+            basis: v.extra_income_basis,
+            note: v.extra_income_note,
+            saleCents: baseSale ?? null,
+            taxCents: taxCents ?? null,
+            dealId: 'entry-more',
+          });
+          return mergeStandingDealExpectations(seeded, entryExtra);
+        })(),
+        referring_organization_id: can('manage_commissions')
+          ? v.referring_organization_id || null
+          : undefined,
+      };
+      if (entryDoc) {
+        operational = appendBookingDocument(operational, {
+          id: crypto.randomUUID(),
+          ...entryDoc,
+        });
+      }
       await onSubmit({
         customer_id: v.customer_id,
         product: v.product,
@@ -1729,83 +2069,34 @@ export default function BookingEntry(props: Props) {
         traveler_ids: v.traveler_ids,
         confirmations: [...new Set(refs.map((r) => r.value))],
         sale: baseSale ?? 0,
+        reservation_status: v.held_pnr ? 'Held' : 'Booked',
         travel_components_input: [travel],
-        itinerary: { cost_status: 'Pending', sale_known: baseSale !== undefined },
-        operational: {
-          trip_type: v.product === 'Flight' ? v.trip_type : undefined,
-          segments: multi ? segments : undefined,
-          source_profile_id: v.source_profile_id || null,
-          pricing: can('edit_customer_charges')
-            ? {
-                method: v.pricing_method || 'Manual Customer Price',
-                comparable_price:
-                  percentPricing || v.record_comparable ? usd(v.comparable_price) : undefined,
-                discount_bps:
-                  percentPricing && v.discount_percent !== ''
-                    ? decimalUnits(v.discount_percent)
-                    : undefined,
-                manual_override: percentPricing && !!v.price_override,
-              }
-            : undefined,
-          other_description: v.product === 'Other' ? v.description : undefined,
-          taxes:
-            usd(v.tax_amount) !== undefined && (can('manage_funding') || v.tax_bearer !== 'Padova')
-              ? {
-                  amount: usd(v.tax_amount),
-                  bearer: v.tax_bearer || 'Unknown',
-                  economic_bearer: v.tax_economic_bearer || 'Unknown',
-                  customer_recovery:
-                    v.tax_economic_bearer === 'Customer' ? usd(v.tax_customer_recovery) : undefined,
-                  method: v.tax_bearer === 'Padova' && !v.tax_included ? v.tax_method : undefined,
-                  account_id:
-                    v.tax_bearer === 'Padova' && !v.tax_included ? v.tax_account_id || null : null,
-                  included_in_component: v.tax_bearer === 'Padova' && !!v.tax_included,
-                }
-              : undefined,
-          version: 1,
-          draft_id: v.draft_id,
-          intake_source: (() => {
-            const src = String(
-              v.intake_provenance?.source ||
-                props.config.defaults.intake_provenance?.source ||
-                '',
-            ).trim();
-            if (
-              src === 'whatsapp' ||
-              src === 'email' ||
-              src === 'staff_paste' ||
-              src === 'staff_upload' ||
-              src === 'instinct'
-            )
-              return src;
-            return v.draft_id ? undefined : ('manual' as const);
-          })(),
-          source_method_id: v.source_method_id || null,
-          award_program_id: method?.award ? v.award_program_id || null : null,
-          new_travelers: v.new_travelers,
-          references: refs,
-          notes: v.notes ?? '',
+        itinerary: {
+          cost_status: 'Pending',
           sale_known: baseSale !== undefined,
-          additional_charge: extraCharge,
-          additional_charge_note:
-            extraCharge && String(v.additional_charge_note || '').trim()
-              ? String(v.additional_charge_note).trim().slice(0, 500)
-              : undefined,
-          components: componentInput,
-          // Soft-merge C: IATA / secondary receivables only via Add commission.
-          // Referring org on booking still applies the accepted partnership payable once.
-          commission: undefined,
-          secondary_commission: undefined,
-          referring_organization_id: can('manage_commissions')
-            ? v.referring_organization_id || null
-              : undefined,
+          ...(v.held_pnr && v.ticketing_deadline
+            ? { ticketing_deadline: v.ticketing_deadline }
+            : {}),
         },
+        operational,
         ...(received
           ? {
               customer_payment: {
                 amount: received,
                 date: v.receipt_date || v.booked_on,
-                method: v.receipt_method,
+                method: (() => {
+                  const resolved = resolvePaymentMethod(
+                    v.receipt_method,
+                    v.receipt_method_custom,
+                  );
+                  if (
+                    (v.receipt_method === PAYMENT_METHOD_OTHER ||
+                      v.receipt_method === 'Other') &&
+                    !resolved
+                  )
+                    throw new Error('Enter the new customer payment method name');
+                  return resolved || v.receipt_method;
+                })(),
                 account_id: v.receipt_account_id || undefined,
                 reference: v.receipt_reference ?? '',
                 allocate_to_booking: baseSale !== undefined && can('edit_customer_charges'),
@@ -1886,12 +2177,12 @@ export default function BookingEntry(props: Props) {
               <h2 id="booking-entry-title">
                 {props.config.defaults.draft_id ? 'Continue Draft' : 'New Booking'}
               </h2>
-              {state.developmentData && (
+            {state.developmentData && (
                 <span className="booking-entry-env-chip" title="QA / synthetic practice data">
                   Practice only
                 </span>
-              )}
-            </div>
+            )}
+          </div>
           </div>
           <button
             type="button"
@@ -2096,7 +2387,9 @@ export default function BookingEntry(props: Props) {
                         <ul className="intake-preview-rows">
                           {livePastePreview.rows.map((row) => {
                             const required = INTAKE_REQUIRED_ROWS.has(row.id);
-                            const needsAttention = row.status === 'missing' && required;
+                            const needsAttention =
+                              (row.status === 'missing' || row.status === 'confirm') &&
+                              required;
                             return (
                               <li
                                 key={row.id}
@@ -2111,7 +2404,7 @@ export default function BookingEntry(props: Props) {
                                       ) : null}
                                     </strong>
                                     {(row.sourceLabel || row.sourceHint) &&
-                                    row.status === 'found' ? (
+                                    (row.status === 'found' || row.status === 'confirm') ? (
                                       <small>
                                         {row.sourceLabel ? `from “${row.sourceLabel}”` : ''}
                                         {row.sourceLabel && row.sourceHint ? ' · ' : ''}
@@ -2123,11 +2416,9 @@ export default function BookingEntry(props: Props) {
                                     <span className="intake-preview-value">{row.value}</span>
                                     <span
                                       className="intake-preview-mark"
-                                      aria-label={
-                                        row.status === 'found' ? 'Found' : 'Missing'
-                                      }
+                                      aria-label={intakePreviewMarkLabel(row.status)}
                                     >
-                                      {row.status === 'found' ? '✓' : '!'}
+                                      {intakePreviewMark(row.status)}
                                     </span>
                                   </div>
                                 </div>
@@ -2216,14 +2507,7 @@ export default function BookingEntry(props: Props) {
             </div>
           </details>
           <nav className="booking-section-nav" aria-label="Booking sections">
-            {[
-              ['customer', 'Customer'],
-              ['travel', 'Travel'],
-              ['source', 'Booked Through'],
-              ['cost', 'Cost & Payment'],
-              ['price', 'Customer Price'],
-              ['summary', 'Summary & Notes'],
-            ].map(([id, label]) => (
+            {primaryNav.map(({ id, label }) => (
               <a key={id} href={`#booking-${id}`}>
                 {label}
               </a>
@@ -2250,39 +2534,6 @@ export default function BookingEntry(props: Props) {
                   </small>
                 ) : null}
               </div>
-              <details
-                className="optional-block full"
-                open={!!v.referring_organization_id}
-              >
-                <OptionalSummary title="Referring organization (affiliate)" />
-                {can('manage_commissions') ? (
-                  <SearchableSelect
-                    id="entry-referring_organization_id"
-                    label="Referring organization (affiliate)"
-                    value={v.referring_organization_id ?? ''}
-                    placeholder="Select organization…"
-                    options={[
-                      {
-                        value: '',
-                        label: 'None',
-                      },
-                      ...(state.referralOrganizations ?? []).map((r: R) => ({
-                        value: r.id,
-                        label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
-                          r.terms?.calculation === 'fixed'
-                            ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
-                            : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
-                        }`,
-                      })),
-                    ]}
-                    onChange={(id) => change('referring_organization_id', id || '')}
-                    emptyLabel="No matching organization"
-                    hideCount
-                  />
-                ) : (
-                  <small className="note">Commission permission required to set affiliate.</small>
-                )}
-              </details>
               <Field label="Travelers" full>
                 <div className="traveler-chips">
                   {v.traveler_ids.map((id: string) => {
@@ -2335,28 +2586,28 @@ export default function BookingEntry(props: Props) {
                 </div>
                 <div className="traveler-add-row">
                   <input
-                    ref={travelerInput}
+                  ref={travelerInput}
                     type="text"
                     aria-label="Traveler legal name"
                     placeholder="Legal name"
-                    value={traveler}
-                    onChange={(e) => {
-                      setTraveler(e.target.value);
-                      setBatchReview([]);
-                      setTravelerResults([]);
-                      setTravelerSearching(
-                        !!e.target.value.trim() && travelerNames(e.target.value).length === 1,
-                      );
-                      batchLookup.current++;
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (travelerNames(traveler).length > 1) void reviewTravelers();
+                  value={traveler}
+                  onChange={(e) => {
+                    setTraveler(e.target.value);
+                    setBatchReview([]);
+                    setTravelerResults([]);
+                    setTravelerSearching(
+                      !!e.target.value.trim() && travelerNames(e.target.value).length === 1,
+                    );
+                    batchLookup.current++;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (travelerNames(traveler).length > 1) void reviewTravelers();
                         else void addTraveler();
-                      }
-                    }}
-                  />
+                    }
+                  }}
+                />
                   <button
                     type="button"
                     className="btn small"
@@ -2365,6 +2616,7 @@ export default function BookingEntry(props: Props) {
                       !traveler.trim() ||
                       travelerSearching ||
                       travelerSearchFailed ||
+                      travelerPasteNeedsReview(traveler) ||
                       travelerNames(traveler).length !== 1
                     }
                     onClick={() => void addTraveler()}
@@ -2372,33 +2624,46 @@ export default function BookingEntry(props: Props) {
                     {travelerSearching ? '…' : 'Add'}
                   </button>
                 </div>
+                {traveler.trim() && travelerPasteNeedsReview(traveler) && (
+                  <p className="field-hint" role="status">
+                    This looks like more than one person. Split names with commas or new lines
+                    (or use &amp; / ;), then review each match. Do not Add as a single traveler.
+                  </p>
+                )}
                 {traveler.trim() && travelerNames(traveler).length === 1 && (
                   <>
                     {showTravelerMatches && matches.length > 0 && (
                       <div className="search-select-results" style={travelerMenuStyle}>
-                        {matches.map((p) => (
-                          <button
-                            type="button"
-                            className="btn small"
-                            key={p.id}
+                      {matches.length > 1 ? (
+                        <p className="field-hint" style={{ margin: '6px 8px' }}>
+                          {matches.length} possible matches — pick the right person (no auto
+                          select).
+                        </p>
+                      ) : null}
+                      {matches.map((p) => (
+                        <button
+                          type="button"
+                          className="btn small"
+                          key={p.id}
                             onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
+                          onClick={() => {
                               setExtra((old) => ({
                                 ...old,
                                 parties: [...(old.parties ?? []), p],
                               }));
-                              change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
-                              setTraveler('');
-                              travelerInput.current?.focus();
-                            }}
-                          >
-                            {p.name}
-                            {matches.filter((m) => m.name === p.name).length > 1
-                              ? ` · ${p.id.slice(-6)}`
-                              : ''}
-                          </button>
-                        ))}
-                      </div>
+                            change('traveler_ids', [...new Set([...v.traveler_ids, p.id])]);
+                            setTraveler('');
+                            travelerInput.current?.focus();
+                          }}
+                        >
+                          {p.name}
+                          {matches.filter((m) => m.name === p.name).length > 1 ||
+                          matches.length > 1
+                            ? ` · ${p.id.slice(-6)}`
+                            : ''}
+                        </button>
+                      ))}
+                    </div>
                     )}
                     {travelerSearchFailed && (
                       <p role="alert">Lookup failed — try again before adding.</p>
@@ -2433,10 +2698,18 @@ export default function BookingEntry(props: Props) {
                             )
                           }
                         >
-                          <option value="">Choose existing traveler or create new</option>
+                          <option value="">
+                            {r.results.length > 1
+                              ? `Choose among ${r.results.length} matches (required)`
+                              : 'Choose existing traveler or create new'}
+                          </option>
                           {r.results.map((p: R) => (
                             <option key={p.id} value={p.id}>
-                              {p.name} · existing traveler
+                              {p.name}
+                              {r.results.filter((m: R) => m.name === p.name).length > 1
+                                ? ` · ${p.id.slice(-6)}`
+                                : ''}{' '}
+                              · existing
                             </option>
                           ))}
                           <option value="new">Create {r.name} as a new traveler</option>
@@ -2459,24 +2732,24 @@ export default function BookingEntry(props: Props) {
               {onInlineCommand && !!v.traveler_ids.length && (
                 <details className="optional-block">
                   <OptionalSummary title="Travel docs" />
-                  <BookingTicketing
-                    cache={ticketingCache.current}
-                    people={v.traveler_ids
-                      .map((id: string) => rows('parties').find((p: R) => p.id === id))
-                      .filter(Boolean)}
-                    date={
-                      v.product === 'Flight' && v.trip_type === 'Multi-City'
-                        ? (v.segments?.[0]?.date ?? '')
-                        : (v.travel_start ?? '')
-                    }
-                    state={state}
-                    command={onInlineCommand}
-                    onFull={setTravelerDetailsId}
-                    onDirty={(id, dirty) => {
-                      if (dirty) ticketingDirty.current.add(id);
-                      else ticketingDirty.current.delete(id);
-                    }}
-                  />
+                <BookingTicketing
+                  cache={ticketingCache.current}
+                  people={v.traveler_ids
+                    .map((id: string) => rows('parties').find((p: R) => p.id === id))
+                    .filter(Boolean)}
+                  date={
+                    v.product === 'Flight' && v.trip_type === 'Multi-City'
+                      ? (v.segments?.[0]?.date ?? '')
+                      : (v.travel_start ?? '')
+                  }
+                  state={state}
+                  command={onInlineCommand}
+                  onFull={setTravelerDetailsId}
+                  onDirty={(id, dirty) => {
+                    if (dirty) ticketingDirty.current.add(id);
+                    else ticketingDirty.current.delete(id);
+                  }}
+                />
                 </details>
               )}
             </section>
@@ -2499,18 +2772,18 @@ export default function BookingEntry(props: Props) {
               ) : (
                 <>
                   {select('product', 'Product', products, changeProduct, v.product ?? '', true)}
-                  {v.product !== 'Other' &&
-                    entity(
-                      'provider_id',
+              {v.product !== 'Other' &&
+                entity(
+                  'provider_id',
                       v.product === 'Hotel'
                         ? 'Travel provider (property)'
                         : 'Travel provider (rental)',
-                      'parties',
-                      'party',
-                      { kind: 'company', roles: [providerRole(v.product)] },
+                  'parties',
+                  'party',
+                  { kind: 'company', roles: [providerRole(v.product)] },
                     )}
                 </>
-              )}
+                )}
               {v.product === 'Flight' && v.trip_type !== 'Multi-City' && (
                 <div className="flight-route full">
                   <AirportInput
@@ -2561,31 +2834,31 @@ export default function BookingEntry(props: Props) {
                 <div className="full segment-editor">
                   {(v.segments ?? [{}, {}]).map((s: R, i: number) => {
                     const patch = (key: string, value: string) =>
-                      change(
-                        'segments',
-                        (v.segments ?? [{}, {}]).map((r: R, j: number) =>
-                          i === j ? { ...r, [key]: value } : r,
+                              change(
+                                'segments',
+                                (v.segments ?? [{}, {}]).map((r: R, j: number) =>
+                                  i === j ? { ...r, [key]: value } : r,
                         ),
                       );
                     return (
                       <div className="segment-card" key={i}>
                         <div className="segment-card-head">
                           <strong>Segment {i + 1}</strong>
-                          <button
-                            type="button"
+                      <button
+                        type="button"
                             className="btn small segment-remove"
-                            disabled={(v.segments?.length ?? 2) <= 2}
+                        disabled={(v.segments?.length ?? 2) <= 2}
                             aria-label={`Remove segment ${i + 1}`}
-                            onClick={() =>
-                              change(
-                                'segments',
-                                v.segments.filter((_: R, j: number) => i !== j),
-                              )
-                            }
-                          >
+                        onClick={() =>
+                          change(
+                            'segments',
+                            v.segments.filter((_: R, j: number) => i !== j),
+                          )
+                        }
+                      >
                             ×
-                          </button>
-                        </div>
+                      </button>
+                    </div>
                         <div className="segment-row">
                           <AirportInput
                             id={`segment-${i}-origin`}
@@ -2910,7 +3183,7 @@ export default function BookingEntry(props: Props) {
                   )}
                   {travelEndMissing ? (
                     <small className="field-hint-error" role="alert">
-                      Enter {dateLabels.end}, or use Save Draft.
+                      {bookingTravelEndMissingMessage(v)}
                     </small>
                   ) : null}
                 </div>
@@ -2930,52 +3203,24 @@ export default function BookingEntry(props: Props) {
                 </Field>
               )}
               {v.product === 'Flight' ? (
-                <>
-                  <PnrInput
-                    value={v.primary_reference ?? ''}
-                    onChange={(value) => change('primary_reference', value)}
-                  />
-                  <Field label="Cabin">
-                    <SearchableSelect
-                      id="entry-cabin"
-                      label="Cabin"
-                      value={v.cabin ?? ''}
-                      hideCount
-                      placeholder="Select cabin…"
-                      options={[
-                        ...['Economy', 'Premium economy', 'Business', 'First'].map((s) => ({
-                          value: s,
-                          label: s,
-                        })),
-                        ...(v.cabin &&
-                        !['Economy', 'Premium economy', 'Business', 'First'].includes(v.cabin)
-                          ? [{ value: v.cabin, label: v.cabin }]
-                          : []),
-                      ]}
-                      onChange={(value) => change('cabin', value)}
-                      onAdd={(query) => {
-                        const name = query.trim();
-                        if (name) change('cabin', name);
-                      }}
-                      addLabel={(q) => (q ? `Add “${q}”` : 'Add cabin')}
-                      emptyLabel="Type a cabin name to add"
-                    />
-                  </Field>
-                </>
+                <PnrInput
+                  value={v.primary_reference ?? ''}
+                  onChange={(value) => change('primary_reference', value)}
+                />
               ) : (
                 text(
                   'primary_reference',
                   v.product === 'Hotel' || v.product === 'Car'
                     ? 'Confirmation #'
-                      : 'Primary confirmation',
+                    : 'Primary confirmation',
                 )
               )}
-              <details className="full">
+              <details className="full" open={bookingTravelMoreShouldOpen(v)}>
                 <OptionalSummary
                   title="More Travel Details"
                   hint={
                     v.product === 'Flight'
-                      ? 'Flight numbers, tickets, other airlines’ PNRs and booking date'
+                      ? 'Cabin, flight numbers, tickets, other airlines’ PNRs and booking date'
                       : v.product === 'Hotel'
                         ? 'Room type and booking date'
                         : v.product === 'Car'
@@ -2984,8 +3229,10 @@ export default function BookingEntry(props: Props) {
                   }
                   filled={
                     [
+                      v.cabin,
                       v.flight_numbers,
                       v.ticket_numbers,
+                      v.additional_airlines,
                       v.room_type,
                       v.pickup_time,
                       v.dropoff_time,
@@ -2995,6 +3242,32 @@ export default function BookingEntry(props: Props) {
                 <div className="form-grid">
                   {v.product === 'Flight' && (
                     <>
+                      <Field label="Cabin (optional)">
+                        <SearchableSelect
+                          id="entry-cabin"
+                          label="Cabin"
+                          value={v.cabin ?? ''}
+                          hideCount
+                          placeholder="Select cabin…"
+                          options={[
+                            ...['Economy', 'Premium economy', 'Business', 'First'].map((s) => ({
+                              value: s,
+                              label: s,
+                            })),
+                            ...(v.cabin &&
+                            !['Economy', 'Premium economy', 'Business', 'First'].includes(v.cabin)
+                              ? [{ value: v.cabin, label: v.cabin }]
+                              : []),
+                          ]}
+                          onChange={(value) => change('cabin', value)}
+                          onAdd={(query) => {
+                            const name = query.trim();
+                            if (name) change('cabin', name);
+                          }}
+                          addLabel={(q) => (q ? `Add “${q}”` : 'Add cabin')}
+                          emptyLabel="Type a cabin name to add"
+                        />
+                      </Field>
                       <details className="full">
                         <summary>PNRs for different airlines</summary>
                         {(v.provider_references ?? []).map((r: R, i: number) => (
@@ -3051,8 +3324,8 @@ export default function BookingEntry(props: Props) {
                           Add another airline PNR
                         </button>
                       </details>
-                      {v.trip_type !== 'Multi-City' && text('flight_numbers', 'Flight number(s)')}
-                      {text('ticket_numbers', 'Ticket number(s)')}
+                      {v.trip_type !== 'Multi-City' && text('flight_numbers', 'Flight numbers')}
+                      {text('ticket_numbers', 'Ticket numbers')}
                       {text('additional_airlines', 'Additional airlines')}
                       {select('ticketing_status', 'Ticketing status', [
                         'Not Ticketed / Unknown',
@@ -3073,77 +3346,332 @@ export default function BookingEntry(props: Props) {
                 </div>
               </details>
             </section>
-            <section className="booking-section full form-grid" id="booking-source">
+            <section className="booking-section full form-grid" id="booking-how">
               <h3 className="form-section-title">
-                <span>3</span> Booked Through<small>Booking method and relevant account</small>
+                <span>3</span> How booked
+                <small>Pick this first — it decides which cost fields matter</small>
               </h3>
-              {entity(
-                'source_method_id',
-                'Booked Through',
-                'bookingSourceMethods',
-                'booking_source_method',
-                { products: [v.product] },
-                undefined,
-                undefined,
-                (m) =>
-                  m.products.includes(v.product) &&
-                  (!/^(Other|Custom|Other \/ Custom)$/i.test(m.name) ||
-                    m.id === v.source_method_id),
-              )}
-              {rows('bookingSourceMethods').find((m) => m.id === v.source_method_id)?.award &&
-                entity(
-                  'award_program_id',
-                  'Loyalty Program',
-                  'programs',
-                  'program',
-                  {
-                    category: 'Airline',
-                  },
-                  undefined,
-                  undefined,
-                  (r) =>
-                    ['Airline', 'Hotel', 'Bank'].includes(r.category) &&
-                    !/business platinum/i.test(r.name),
+              <div
+                className="how-booked-presets full"
+                role="group"
+                aria-label="How this booking was made"
+              >
+                {HOW_BOOKED_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    className={
+                      howBooked === preset ? 'how-booked-chip is-selected' : 'how-booked-chip'
+                    }
+                    aria-pressed={howBooked === preset}
+                    disabled={busy}
+                    onClick={() => {
+                      const vis = howBookedVisibility(preset);
+                      setHowBooked(preset);
+                      change('how_booked', preset);
+                      if (preset !== 'Hotel with commission') change('hotel_paid_by', '');
+                      if (preset !== 'Cash / GDS') change('gds_commissionable', '');
+                      if (preset === 'Capital One') {
+                        // Plan: Cap1 card amount + optional old credit (price match later).
+                        setComponents([
+                          {
+                            type: 'Padova payment',
+                            method: 'Card',
+                            date: v.booked_on,
+                            unit: 'money',
+                            payment_status: 'Paid',
+                            entry_placeholder: true,
+                            cap1_role: 'card',
+                          },
+                          {
+                            type: 'Owned value',
+                            date: v.booked_on,
+                            unit: 'money',
+                            payment_status: 'Paid',
+                            entry_placeholder: true,
+                            cap1_role: 'old_credit',
+                          },
+                        ]);
+                        const methods = (state.bookingSourceMethods ?? []) as R[];
+                        const cap1 = methods.find((m) =>
+                          /capital\s*one/i.test(String(m.name || '')),
+                        );
+                        if (cap1?.id) change('source_method_id', cap1.id);
+                      } else {
+                        setComponents((old) => {
+                          if (!old.length)
+                            return [
+                              {
+                                type: vis.defaultPaymentType,
+                                date: v.booked_on,
+                                unit: 'money',
+                                payment_status: 'Unpaid',
+                              },
+                            ];
+                          return old.map((row, idx) =>
+                            idx === 0
+                              ? {
+                                  ...row,
+                                  type: vis.defaultPaymentType,
+                                  cap1_role: undefined,
+                                  entry_placeholder:
+                                    vis.defaultPaymentType === 'Owned value'
+                                      ? row.entry_placeholder
+                                      : undefined,
+                                }
+                              : row,
+                          );
+                        });
+                      }
+                      if (
+                        preset === 'Hotel with commission' ||
+                        preset === 'Hotel at program rate (FHR)'
+                      ) {
+                        if (v.product !== 'Hotel') change('product', 'Hotel');
+                      }
+                    }}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <p className="full field-hint">
+                {howBooked ? (
+                  <>
+                    Selected: <strong>{howBooked}</strong> — {howBookedHint(howBooked)}
+                  </>
+                ) : (
+                  howBookedHint('')
                 )}
-              {text('booking_source_confirmation', sourceConfirmationLabel(method?.name))}
-              {activeProfile && (
-                <p className="full">
-                  {sourceContact ? (
-                    <>
-                      Contact / account owner: <strong>{sourceContact.name}</strong>
-                      {sourceContact.phone && ` · ${sourceContact.phone}`}
-                      {sourceContact.details?.whatsapp &&
-                        ` · WhatsApp ${sourceContact.details.whatsapp}`}
-                    </>
-                  ) : (
-                    activeProfile.name
-                  )}
-                  {activeProfile.notes && <small>{activeProfile.notes}</small>}
+              </p>
+              {howBooked === 'Cash / GDS' ? (
+                <div className="full field-hint">
+                  <p>Fare commissionable?</p>
+                  <div
+                    className="fee-note-chips"
+                    role="group"
+                    aria-label="GDS fare commissionable"
+                  >
+                    {GDS_COMMISSIONABLE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        className={`btn small${v.gds_commissionable === opt ? ' primary' : ''}`}
+                        aria-pressed={v.gds_commissionable === opt}
+                        onClick={() => change('gds_commissionable', opt)}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 6 }}>{gdsCommissionableHint(v.gds_commissionable)}</p>
+                </div>
+              ) : null}
+              {howVis.showSrulyFeeHints ? (
+                <div className="full field-hint">
+                  <p>
+                    Optional Sruly fees: $50 per PNR when not commissionable; +$30 when a voucher is
+                    used (add only when they apply — never invent).
+                  </p>
+                  <div className="fee-note-chips" role="group" aria-label="Optional Sruly fees">
+                    {SRULY_FEE_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className={`btn small${
+                          Number(v.additional_charge) === preset.amount_cents / 100 &&
+                          String(v.additional_charge_note || '') === preset.note
+                            ? ' primary'
+                            : ''
+                        }`}
+                        onClick={() => {
+                          change('additional_charge', centsToUsdInput(preset.amount_cents));
+                          change('additional_charge_note', preset.note);
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {howVis.showHotelCommissionHints ? (
+                <div className="full field-hint">
+                  <p>
+                    Default commission path: Sruly ~90% to Padova / 10% retained (changeable). Paid
+                    after checkout; none if cancelled.
+                  </p>
+                  <p style={{ marginTop: 8 }}>How the hotel is paid</p>
+                  <div
+                    className="fee-note-chips"
+                    role="group"
+                    aria-label="How the hotel is paid"
+                  >
+                    {HOTEL_PAID_BY_OPTIONS.map((path) => (
+                      <button
+                        key={path}
+                        type="button"
+                        className={`btn small${v.hotel_paid_by === path ? ' primary' : ''}`}
+                        aria-pressed={v.hotel_paid_by === path}
+                        onClick={() => {
+                          const payType = hotelPaidByDefaultPaymentType(path);
+                          const zeroRoom = hotelPaidBySetsPadovaOwedZero(path);
+                          setV((old) => {
+                            const saleBlank =
+                              old.sale == null || String(old.sale).trim() === '';
+                            return {
+                              ...old,
+                              hotel_paid_by: path,
+                              ...(zeroRoom && saleBlank
+                                ? { sale: '0', sale_touched: true }
+                                : {}),
+                            };
+                          });
+                          if (payType) {
+                            setComponents((old) => {
+                              if (!old.length)
+                                return [
+                                  {
+                                    type: payType,
+                                    date: v.booked_on,
+                                    unit: 'money',
+                                    payment_status:
+                                      path === 'Customer pays at checkout' ? 'Paid' : 'Unpaid',
+                                  },
+                                ];
+                              return old.map((row, idx) =>
+                                idx === 0 ? { ...row, type: payType } : row,
+                              );
+                            });
+                          }
+                        }}
+                      >
+                        {path}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 6 }}>{hotelPaidByHint(v.hotel_paid_by)}</p>
+                </div>
+              ) : null}
+              {howVis.showFhrHints ? (
+                <p className="full field-hint">
+                  FHR / program rate: profit is customer price minus Padova cost. No commission line by
+                  default.
                 </p>
-              )}
-              {state.sourceProfilesEnabled &&
-                method &&
-                !/^(GDS|Direct Airline|Direct Hotel)$/i.test(method.name) &&
-                entity(
-                  'source_profile_id',
-                  'Account / Profile',
-                  'bookingSourceProfiles',
-                  'booking_source_profile',
-                  {
-                    source_method_id: method.id,
-                    provider: method.name,
-                    status: 'Active',
-                    booking_contact_ids: [v.customer_id, ...v.traveler_ids],
-                  },
-                  undefined,
-                  undefined,
-                  (r) => r.source_method_id === method.id && r.status === 'Active',
-                )}
+              ) : null}
+              {howVis.showCap1Hints ? (
+                <p className="full field-hint">
+                  Cap1 account / profile below. Cost card: card amount (Cap1 Travel portal — Padova
+                  saved card optional) plus old credit used when applicable. New price-match credits
+                  are recorded after Save.
+                </p>
+              ) : null}
+              {howVis.showBookedThrough ? (
+                <div className="full form-grid" id="booking-source">
+                  <h4 className="form-subsection-title">Booked through</h4>
+                  {entity(
+                    'source_method_id',
+                    'Booked Through',
+                    'bookingSourceMethods',
+                    'booking_source_method',
+                    { products: [v.product] },
+                    undefined,
+                    undefined,
+                    (m) =>
+                      m.products.includes(v.product) &&
+                      (!/^(Other|Custom|Other \/ Custom)$/i.test(m.name) ||
+                        m.id === v.source_method_id),
+                  )}
+                  {rows('bookingSourceMethods').find((m) => m.id === v.source_method_id)?.award &&
+                    entity(
+                      'award_program_id',
+                      'Loyalty Program',
+                      'programs',
+                      'program',
+                      {
+                        category: 'Airline',
+                      },
+                      undefined,
+                      undefined,
+                      (r) =>
+                        ['Airline', 'Hotel', 'Bank'].includes(r.category) &&
+                        !/business platinum/i.test(r.name),
+                    )}
+                  {text('booking_source_confirmation', sourceConfirmationLabel(method?.name))}
+                  {activeProfile && (
+                    <p className="full">
+                      {sourceContact ? (
+                        <>
+                          Contact / account owner: <strong>{sourceContact.name}</strong>
+                          {sourceContact.phone && ` · ${sourceContact.phone}`}
+                          {sourceContact.details?.whatsapp &&
+                            ` · WhatsApp ${sourceContact.details.whatsapp}`}
+                        </>
+                      ) : (
+                        activeProfile.name
+                      )}
+                      {activeProfile.notes && <small>{activeProfile.notes}</small>}
+                    </p>
+                  )}
+                  {howVis.showSourceProfile &&
+                    state.sourceProfilesEnabled &&
+                    method &&
+                    !/^(GDS|Direct Airline|Direct Hotel)$/i.test(method.name) &&
+                    entity(
+                      'source_profile_id',
+                      howVis.showCap1Hints
+                        ? 'Cap1 account / profile'
+                        : howVis.showFhrHints
+                          ? 'Booked-in account (someone else’s)'
+                          : 'Account / Profile',
+                      'bookingSourceProfiles',
+                      'booking_source_profile',
+                      {
+                        source_method_id: method.id,
+                        provider: method.name,
+                        status: 'Active',
+                        booking_contact_ids: [v.customer_id, ...v.traveler_ids],
+                      },
+                      undefined,
+                      undefined,
+                      (r) => r.source_method_id === method.id && r.status === 'Active',
+                    )}
+                </div>
+              ) : null}
             </section>
-            <section className="booking-section full form-grid" id="booking-cost">
+            <section className="booking-section full form-grid" id="booking-money">
               <h3 className="form-section-title">
-                <span>4</span> Cost & Payment<small>What it cost Padova and how it was paid</small>
+                <span>4</span> Price & cost
+                <small>What the customer pays and what it costs Padova</small>
               </h3>
+              <div className="full form-grid" id="booking-cost">
+              <h4 className="form-subsection-title">Cost & payment</h4>
+              {!howBooked ? (
+                <p className="full field-hint">
+                  Select <strong>How booked</strong> above so the cost card matches this trip.
+                </p>
+              ) : null}
+              {howVis.showOutsideSeller ? (
+                <p className="full field-hint">{OUTSIDE_SELLER_COST_HINT}</p>
+              ) : null}
+              {howVis.showPointsFunding ? (
+                <p className="full field-hint">
+                  Prefer funding with Padova points / miles from a named batch (exact cost). Cash taxes
+                  stay separate.
+                </p>
+              ) : null}
+              {howVis.showVoucherFunding ? (
+                <p className="full field-hint">
+                  Prefer voucher / Capital One credit / airline credit as the funding kind — face value
+                  is cost when spent.
+                </p>
+              ) : null}
+              {howVis.showCap1Hints ? (
+                <p className="full field-hint">
+                  Payment 1 = Cap1 card amount. Payment 2 = old Cap1 credit used (pick inventory or
+                  remove if none). Leave card amount blank only when the whole fare was old credit.
+                </p>
+              ) : null}
               {can('manage_funding') ? (
                 <div className="full">
                   {components.map((c, i) => {
@@ -3170,6 +3698,9 @@ export default function BookingEntry(props: Props) {
                       : settlement.status === 'Unknown'
                         ? (c.payment_status ?? 'Unpaid')
                         : settlement.status;
+                    const unpaidSellerHint = ['Outside seller', 'Other'].includes(c.type)
+                      ? sellerUnpaidEntryHint(sellerStatus || c.payment_status)
+                      : null;
                     return (
                       <section className="booking-payment-card" key={i}>
                         <div className="booking-payment-card-head">
@@ -3186,27 +3717,38 @@ export default function BookingEntry(props: Props) {
                         </div>
                         <div className="form-grid">
                           <div className="full">
-                            {select(
-                              `type-${i}`,
-                              'Payment type',
-                              componentTypes,
-                              (x) =>
-                                setComponents((old) =>
-                                  old.map((r, j) =>
-                                    j === i
-                                      ? {
-                                          type: x,
-                                          date: v.booked_on,
-                                          unit: 'money',
-                                          payment_status: 'Unpaid',
-                                        }
-                                      : r,
-                                  ),
+                          {select(
+                            `type-${i}`,
+                            howVis.showCap1Hints && c.cap1_role === 'card'
+                              ? 'Cap1 card amount'
+                              : howVis.showCap1Hints && c.cap1_role === 'old_credit'
+                                ? 'Old Cap1 credit used'
+                                : 'Payment type',
+                            howVis.paymentTypes.length
+                              ? howVis.paymentTypes
+                              : componentTypes,
+                            (x) =>
+                              setComponents((old) =>
+                                old.map((r, j) =>
+                                  j === i
+                                    ? {
+                                        type: x,
+                                        date: v.booked_on,
+                                        unit: 'money',
+                                        payment_status: 'Unpaid',
+                                        ...(x === 'Padova payment' && howVis.showCap1Hints
+                                          ? { method: 'Card', cap1_role: 'card' }
+                                          : x === 'Owned value' && howVis.showCap1Hints
+                                            ? { cap1_role: 'old_credit' }
+                                            : { cap1_role: undefined }),
+                                      }
+                                    : r,
                                 ),
-                              c.type,
-                            )}
+                              ),
+                            c.type,
+                          )}
                           </div>
-                              {['Outside seller', 'Other'].includes(c.type) && (
+                          {['Outside seller', 'Other'].includes(c.type) && (
                             <>
                               {entity(
                                 `seller-${i}`,
@@ -3236,24 +3778,24 @@ export default function BookingEntry(props: Props) {
                                   hint="Choose what the seller supplied"
                                 />
                                 <div className="form-grid">
-                                  {select(
-                                    `supplied-${i}`,
-                                    'What seller supplied',
-                                    suppliedTypes,
-                                    (x) => {
-                                      patch(i, 'supplied', x);
-                                      patch(
-                                        i,
-                                        'unit',
-                                        x === 'Points / Miles'
-                                          ? 'points'
-                                          : x === 'Certificate / Award'
-                                            ? 'count'
-                                            : 'money',
-                                      );
-                                    },
-                                    c.supplied ?? suppliedTypes[0],
-                                  )}
+                                {select(
+                                  `supplied-${i}`,
+                                  'What seller supplied',
+                                  suppliedTypes,
+                                  (x) => {
+                                    patch(i, 'supplied', x);
+                                    patch(
+                                      i,
+                                      'unit',
+                                      x === 'Points / Miles'
+                                        ? 'points'
+                                        : x === 'Certificate / Award'
+                                          ? 'count'
+                                          : 'money',
+                                    );
+                                  },
+                                  c.supplied ?? suppliedTypes[0],
+                                )}
                                 </div>
                               </details>
                             </>
@@ -3290,11 +3832,11 @@ export default function BookingEntry(props: Props) {
                                       );
                                     }}
                                   />{' '}
-                                  Amex Biz Plat (gross − rebate %)
+                                  {OUTSIDE_SELLER_BP_LABEL}
                                 </label>
                                 {c.use_bp_economics && (
                                   <>
-                                    <Field label="Gross points bought">
+                                    <Field label="Gross points bought (info)">
                                       <input
                                         aria-label={`BP gross points ${i + 1}`}
                                         type="number"
@@ -3310,7 +3852,7 @@ export default function BookingEntry(props: Props) {
                                         }}
                                       />
                                     </Field>
-                                    <Field label="Seller rebate %">
+                                    <Field label={OUTSIDE_SELLER_REBATE_LABEL}>
                                       <input
                                         aria-label={`BP seller rebate percent ${i + 1}`}
                                         type="number"
@@ -3327,13 +3869,12 @@ export default function BookingEntry(props: Props) {
                                       {Number(c.bp_gross_points || 0).toLocaleString() || '—'} −{' '}
                                       {c.bp_rebate_percent ?? 35}% ={' '}
                                       <strong>
-                                        {bpNet(
-                                          c.bp_gross_points,
+                                      {bpNet(
+                                        c.bp_gross_points,
                                           c.bp_rebate_percent ?? 35,
                                         )?.toLocaleString() ?? 'Unknown'}
                                       </strong>{' '}
-                                      net points (quantity below). Cost per point applies to this
-                                      net.
+                                      net points (quantity below). {OUTSIDE_SELLER_BP_SUMMARY}
                                     </output>
                                   </>
                                 )}
@@ -3509,7 +4050,7 @@ export default function BookingEntry(props: Props) {
                           {['Outside seller', 'Other'].includes(c.type) && (
                             <output className="full booking-cost-summary" aria-live="polite">
                               <span>
-                                Total Purchase Cost:{' '}
+                              Total Purchase Cost:{' '}
                                 <strong>
                                   {amount === undefined ? 'Unknown' : dollars(amount)}
                                 </strong>
@@ -3520,7 +4061,7 @@ export default function BookingEntry(props: Props) {
                               <span>
                                 Balance owed:{' '}
                                 <strong>
-                                  {amount === undefined ? 'Unknown' : dollars(amount - paid)}
+                              {amount === undefined ? 'Unknown' : dollars(amount - paid)}
                                 </strong>
                               </span>
                             </output>
@@ -3632,45 +4173,59 @@ export default function BookingEntry(props: Props) {
                                 c.type === 'Customer card' ? ' booking-cost-paid-row--single' : ''
                               }`}
                             >
-                              <Field
-                                label={
-                                  c.type === 'Customer card'
-                                    ? 'Customer direct card amount (USD)'
+                            <Field
+                              label={
+                                c.type === 'Customer card'
+                                  ? 'Customer direct card amount (USD)'
+                                  : howVis.showCap1Hints && c.type === 'Padova payment'
+                                    ? 'Cap1 card amount (USD)'
                                     : 'Cost to Padova (USD)'
-                                }
-                              >
-                                {calculatedRate && amount !== undefined ? (
-                                  <output>
-                                    {dollars(amount)} · calculated from quantity × agreed rate
-                                  </output>
-                                ) : (
-                                  <input
-                                    aria-label={`${c.type === 'Customer card' ? 'Customer paid provider' : 'Cost to Padova'} (USD), payment ${i + 1}`}
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={
-                                      calculatedRate && amount !== undefined
-                                        ? (amount / 100).toFixed(2)
-                                        : (c.cost ?? '')
-                                    }
-                                    onChange={(e) => {
-                                      patch(i, 'cost', e.target.value);
-                                      if (c.quoted_rate)
-                                        patch(i, 'rate_unit', 'Fixed supplier price');
-                                    }}
-                                  />
-                                )}
-                              </Field>
+                              }
+                            >
+                              {calculatedRate && amount !== undefined ? (
+                                <output>
+                                  {dollars(amount)} · calculated from quantity × agreed rate
+                                </output>
+                              ) : (
+                                <input
+                                  aria-label={`${c.type === 'Customer card' ? 'Customer paid provider' : 'Cost to Padova'} (USD), payment ${i + 1}`}
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={
+                                    calculatedRate && amount !== undefined
+                                      ? (amount / 100).toFixed(2)
+                                      : (c.cost ?? '')
+                                  }
+                                  onChange={(e) => {
+                                    patch(i, 'cost', e.target.value);
+                                    if (c.quoted_rate)
+                                      patch(i, 'rate_unit', 'Fixed supplier price');
+                                  }}
+                                />
+                              )}
+                            </Field>
                               {c.type === 'Padova payment' ? (
                                 <>
                                   {select(
                                     `method-${i}`,
                                     'Payment Method',
-                                    PAYMENT_METHODS,
+                                    mergePaymentMethodOptions([
+                                      ...(state.payments ?? []).map((p: R) => p.method),
+                                    ]),
                                     (x) => patch(i, 'method', x),
                                     c.method,
                                   )}
+                                  {c.method === PAYMENT_METHOD_OTHER || c.method === 'Other' ? (
+                                    <Field label="New payment method" required>
+                                      <input
+                                        aria-label={`New payment method ${i + 1}`}
+                                        value={c.method_custom ?? ''}
+                                        onChange={(e) => patch(i, 'method_custom', e.target.value)}
+                                        placeholder="e.g. Venmo"
+                                      />
+                                    </Field>
+                                  ) : null}
                                   {c.method ? (
                                     <Field label="Payment confirmation #">
                                       <input
@@ -3720,6 +4275,13 @@ export default function BookingEntry(props: Props) {
                                   : 'Payment not recorded'}{' '}
                                 · Recorded balance owed:{' '}
                                 {amount === undefined ? 'Unknown' : dollars(amount - paid)}
+                                {c.cost_is_estimate ? ' · Estimate (not posted)' : ''}
+                                {unpaidSellerHint ? (
+                                  <>
+                                    <br />
+                                    {unpaidSellerHint}
+                                  </>
+                                ) : null}
                               </output>
                             )}
                           {c.type !== 'Customer card' && c.type !== 'Owned value' && (
@@ -3731,42 +4293,73 @@ export default function BookingEntry(props: Props) {
                                   rows('paymentAccounts').some((a) =>
                                     accountSupports(a, c.method),
                                   )) &&
-                                entity(
-                                  `account-${i}`,
-                                  'Card / account used',
-                                  'paymentAccounts',
-                                  'payment_account',
-                                  { kind: c.method === 'Card' ? 'Card' : 'Bank' },
-                                  (x) => patch(i, 'account_id', x),
-                                  c.account_id,
-                                  (a) => accountSupports(a, c.method),
-                                )}
+                                (howVis.showCap1Hints && c.method === 'Card' ? (
+                                  <details className="full optional-section">
+                                    <summary>
+                                      Padova saved card (optional — Cap1 Travel portal charge is
+                                      fine without it)
+                                    </summary>
+                                    {entity(
+                                      `account-${i}`,
+                                      'Card / account used',
+                                      'paymentAccounts',
+                                      'payment_account',
+                                      { kind: 'Card' },
+                                      (x) => patch(i, 'account_id', x),
+                                      c.account_id,
+                                      (a) => accountSupports(a, c.method),
+                                    )}
+                                  </details>
+                                ) : (
+                                  entity(
+                                    `account-${i}`,
+                                    'Card / account used',
+                                    'paymentAccounts',
+                                    'payment_account',
+                                    { kind: c.method === 'Card' ? 'Card' : 'Bank' },
+                                    (x) => patch(i, 'account_id', x),
+                                    c.account_id,
+                                    (a) => accountSupports(a, c.method),
+                                  )
+                                ))}
                               {c.type !== 'Padova payment' &&
                                 (c.payment_status !== 'Unpaid' || paid > 0) && (
-                                  <>
-                                    {select(
-                                      `method-${i}`,
-                                      'Payment Method',
-                                      PAYMENT_METHODS,
-                                      (x) => patch(i, 'method', x),
-                                      c.method,
+                                <>
+                                  {select(
+                                    `method-${i}`,
+                                    'Payment Method',
+                                    mergePaymentMethodOptions([
+                                      ...(state.payments ?? []).map((p: R) => p.method),
+                                    ]),
+                                    (x) => patch(i, 'method', x),
+                                    c.method,
+                                  )}
+                                  {c.method === PAYMENT_METHOD_OTHER || c.method === 'Other' ? (
+                                    <Field label="New payment method" required>
+                                      <input
+                                        aria-label={`New payment method ${i + 1}`}
+                                        value={c.method_custom ?? ''}
+                                        onChange={(e) => patch(i, 'method_custom', e.target.value)}
+                                        placeholder="e.g. Venmo"
+                                      />
+                                    </Field>
+                                  ) : null}
+                                  {c.method &&
+                                    c.method !== 'Cash' &&
+                                    (c.method === 'Card' ||
+                                      rows('paymentAccounts').some((a) =>
+                                        accountSupports(a, c.method),
+                                      )) &&
+                                    entity(
+                                      `account-${i}`,
+                                      'Card / account used',
+                                      'paymentAccounts',
+                                      'payment_account',
+                                      { kind: c.method === 'Card' ? 'Card' : 'Bank' },
+                                      (x) => patch(i, 'account_id', x),
+                                      c.account_id,
+                                      (a) => accountSupports(a, c.method),
                                     )}
-                                    {c.method &&
-                                      c.method !== 'Cash' &&
-                                      (c.method === 'Card' ||
-                                        rows('paymentAccounts').some((a) =>
-                                          accountSupports(a, c.method),
-                                        )) &&
-                                      entity(
-                                        `account-${i}`,
-                                        'Card / account used',
-                                        'paymentAccounts',
-                                        'payment_account',
-                                        { kind: c.method === 'Card' ? 'Card' : 'Bank' },
-                                        (x) => patch(i, 'account_id', x),
-                                        c.account_id,
-                                        (a) => accountSupports(a, c.method),
-                                      )}
                                     {c.method ? (
                                       <Field label="Payment confirmation #">
                                         <input
@@ -3777,18 +4370,72 @@ export default function BookingEntry(props: Props) {
                                         />
                                       </Field>
                                     ) : null}
-                                  </>
-                                )}
+                                </>
+                              )}
                             </>
                           )}
                           {c.type !== 'Customer card' && (
                             <details className="full optional-section">
                               <OptionalSummary
                                 title="More Cost Details"
-                                hint="Payment date, account holder and exceptions"
-                                filled={[c.notes, c.owner_id, c.holder_id].filter(Boolean).length}
+                                hint="Estimate, other currency, payment date, account holder"
+                                filled={[
+                                  c.notes,
+                                  c.owner_id,
+                                  c.holder_id,
+                                  c.cost_is_estimate,
+                                  c.other_currency_code,
+                                ].filter(Boolean).length}
                               />
                               <div className="form-grid">
+                                {c.type !== 'Owned value' && (
+                                  <>
+                                    <label className="full checkbox-row">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!c.cost_is_estimate}
+                                        onChange={(e) =>
+                                          patch(i, 'cost_is_estimate', e.target.checked)
+                                        }
+                                      />
+                                      Cost is estimate (USD not final)
+                                    </label>
+                                    {c.cost_is_estimate ? (
+                                      <small className="full">{costEstimateEntryHint()}</small>
+                                    ) : null}
+                                    <Field label="Other currency (info only)">
+                                      <input
+                                        aria-label={`Other currency code ${i + 1}`}
+                                        placeholder="EUR"
+                                        maxLength={12}
+                                        value={c.other_currency_code ?? ''}
+                                        onChange={(e) =>
+                                          patch(i, 'other_currency_code', e.target.value)
+                                        }
+                                      />
+                                    </Field>
+                                    <Field label="Amount in that currency">
+                                      <input
+                                        aria-label={`Other currency amount ${i + 1}`}
+                                        placeholder="e.g. 420.00"
+                                        value={c.other_currency_amount ?? ''}
+                                        onChange={(e) =>
+                                          patch(i, 'other_currency_amount', e.target.value)
+                                        }
+                                      />
+                                    </Field>
+                                    <Field label="Rate note (optional)">
+                                      <input
+                                        aria-label={`Other currency rate ${i + 1}`}
+                                        placeholder="Info only — never invents USD"
+                                        value={c.other_currency_rate ?? ''}
+                                        onChange={(e) =>
+                                          patch(i, 'other_currency_rate', e.target.value)
+                                        }
+                                      />
+                                    </Field>
+                                  </>
+                                )}
                                 {bpSource && c.type === 'Outside seller' && (
                                   <button
                                     type="button"
@@ -3993,23 +4640,23 @@ export default function BookingEntry(props: Props) {
                     );
                   })}
                   <div className="full" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    <button
-                      type="button"
-                      className="btn small"
-                      onClick={() =>
-                        setComponents((old) => [
-                          ...old,
-                          {
-                            type: 'Padova payment',
-                            unit: 'money',
-                            date: v.booked_on,
-                            payment_status: 'Unpaid',
-                          },
-                        ])
-                      }
-                    >
-                      {components.length ? '+ Add another payment' : '+ Add payment / value'}
-                    </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() =>
+                      setComponents((old) => [
+                        ...old,
+                        {
+                          type: 'Padova payment',
+                          unit: 'money',
+                          date: v.booked_on,
+                          payment_status: 'Unpaid',
+                        },
+                      ])
+                    }
+                  >
+                    {components.length ? '+ Add another payment' : '+ Add payment / value'}
+                  </button>
                     <button
                       type="button"
                       className="btn small"
@@ -4036,113 +4683,33 @@ export default function BookingEntry(props: Props) {
               ) : (
                 <p className="full">Cost details can be completed by an authorized colleague.</p>
               )}
-              <details className="full">
-                <OptionalSummary
-                  title="Taxes & Fees"
-                  hint="Separate taxes, who paid them, and customer recovery"
-                  filled={v.tax_amount ? 1 : 0}
-                />
-                <div className="form-grid">
-                  {text('tax_amount', 'Taxes / Fees (USD)', 'number')}
-                  {select(
-                    'tax_bearer',
-                    'Who paid the taxes?',
-                    [
-                      'Unknown',
-                      ...(can('manage_funding') ? ['Padova'] : []),
-                      'Customer',
-                      'Seller',
-                      'Included in Seller Price',
-                    ],
-                    undefined,
-                    v.tax_bearer || 'Unknown',
-                  )}
-                  {usd(v.tax_amount) !== undefined && (
-                    <details className="full">
-                      <summary>Tax cost / customer recovery</summary>
-                      <div className="form-grid">
-                        {select(
-                          'tax_economic_bearer',
-                          'Who bears the tax cost?',
-                          ['Unknown', 'Padova', 'Customer', 'Seller'],
-                          undefined,
-                          v.tax_economic_bearer || 'Unknown',
-                        )}
-                        {v.tax_economic_bearer === 'Customer' &&
-                          text(
-                            'tax_customer_recovery',
-                            'Tax recovered within customer price (USD)',
-                            'number',
-                          )}
-                        <small className="full">
-                          Include any recovery in the customer price below. This records the tax
-                          split; it does not add another charge.
-                        </small>
-                      </div>
-                    </details>
-                  )}
-                  {can('manage_funding') && v.tax_bearer === 'Padova' && (
-                    <>
-                      <Field label="Already included in a Padova payment above">
-                        <input
-                          type="checkbox"
-                          checked={!!v.tax_included}
-                          onChange={(e) => change('tax_included', e.target.checked)}
-                        />
-                      </Field>
-                      {!v.tax_included && (
-                        <>
-                          {select('tax_method', 'Tax payment method', PAYMENT_METHODS)}
-                          {entity(
-                            'tax_account_id',
-                            'Tax payment account',
-                            'paymentAccounts',
-                            'payment_account',
-                            { kind: 'Card' },
-                            undefined,
-                            undefined,
-                            (a) => accountSupports(a, v.tax_method),
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
-                  <small className="full">
-                    Taxes paid directly by the customer or included in the seller price add no extra
-                    Padova expense. Record a separate amount owed to a seller as another seller
-                    component.
-                  </small>
-                </div>
-              </details>
-            </section>
-            <section className="booking-section full form-grid" id="booking-price">
-              <h3 className="form-section-title">
-                <span>5</span> Customer Price<small>What the customer owes Padova</small>
-              </h3>
+              </div>
+              <div className="full form-grid" id="booking-price">
+              <h4 className="form-subsection-title">Customer price</h4>
               {can('edit_customer_charges') ? (
                 <>
-                  {select(
-                    'pricing_method',
-                    'Pricing Method',
-                    ['Manual Customer Price', 'Percentage Off Comparable Online Price'],
-                    (x) => change('pricing_method', x),
-                    v.pricing_method || 'Manual Customer Price',
-                  )}
                   <p className="full customer-price-hint">
                     {providerDirect
                       ? `Customer already paid the provider${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Default amount owed to Padova is $0, add only a fee below, or use booked cost if Padova is also collecting the trip price.`
-                      : `Typical: customer price matches what the trip was booked for${bookedCostLabel ? ` (${bookedCostLabel})` : ''}. Adjust only when it differs. Commissions stay separate.`}
+                      : `Typical: type the customer price${bookedCostLabel ? ` (booked cost ${bookedCostLabel})` : ''}. Same as cost, fixed margin, and percent off stay optional.`}
                   </p>
                   {bookedCostCents !== undefined && (
                     <div className="full customer-price-actions">
                       <button
                         type="button"
-                        className={providerDirect ? 'btn small' : 'btn primary'}
-                        aria-label={`Use booked cost ${bookedCostLabel}`}
+                        className={
+                          sameAsCostPricing
+                            ? 'btn primary'
+                            : providerDirect
+                              ? 'btn small'
+                              : 'btn primary'
+                        }
+                        aria-label={`Same as cost ${bookedCostLabel}`}
+                        aria-pressed={sameAsCostPricing}
                         onClick={() =>
                           setV((old) => ({
                             ...old,
-                            pricing_method: 'Manual Customer Price',
+                            pricing_method: 'Same as Cost',
                             price_override: false,
                             sale: (bookedCostCents / 100).toFixed(2),
                             sale_touched: true,
@@ -4150,7 +4717,7 @@ export default function BookingEntry(props: Props) {
                           }))
                         }
                       >
-                        Use booked cost ({bookedCostLabel})
+                        Same as cost ({bookedCostLabel})
                       </button>
                       {providerDirect && (
                         <button
@@ -4170,46 +4737,8 @@ export default function BookingEntry(props: Props) {
                       )}
                     </div>
                   )}
-                  {percentPricing && (
-                    <>
-                      {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
-                      {text('discount_percent', 'Discount %', 'number')}
-                      <output className="full booking-price-summary" aria-live="polite">
-                        <span>
-                          Customer Price:{' '}
-                          <strong>
-                            {calculatedSale === undefined
-                              ? dollars(0)
-                              : dollars(calculatedSale)}
-                          </strong>
-                        </span>
-                        <span>
-                          Savings:{' '}
-                          <strong>
-                            {calculatedSale === undefined || usd(v.comparable_price) === undefined
-                              ? dollars(0)
-                              : dollars(usd(v.comparable_price)! - calculatedSale)}
-                          </strong>
-                        </span>
-                      </output>
-                      <div className="form-field full inline-checkbox-field">
-                        <label className="check-card">
-                          <input
-                            type="checkbox"
-                            checked={!!v.price_override}
-                            onChange={(e) => change('price_override', e.target.checked)}
-                          />
-                          <span className="check-card-body">
-                            <span className="check-card-title">Override calculated price</span>
-                            <small>
-                              Enter a manual Customer Sale Price instead of the percent-off amount.
-                            </small>
-                          </span>
-                        </label>
-                      </div>
-                    </>
-                  )}
-                  {(!percentPricing || v.price_override) &&
+                  {((!percentPricing && !sameAsCostPricing && !fixedMarginPricing) ||
+                    v.price_override) &&
                     text(
                       'sale',
                       providerDirect
@@ -4217,8 +4746,54 @@ export default function BookingEntry(props: Props) {
                         : 'Customer Sale Price (USD)',
                       'number',
                     )}
+                  {(sameAsCostPricing || fixedMarginPricing) && !v.price_override ? (
+                    <output className="full booking-price-summary" aria-live="polite">
+                      <span>
+                        Customer Price:{' '}
+                        <strong>
+                          {calculatedSale === undefined ? 'Incomplete' : dollars(calculatedSale)}
+                        </strong>
+                        {sameAsCostPricing ? ' · same as cost' : null}
+                        {fixedMarginPricing ? ' · cost + margin' : null}
+                      </span>
+                    </output>
+                  ) : null}
+                  <details
+                    className="full optional-block"
+                    open={bookingFixedMarginShouldOpen(v)}
+                  >
+                    <OptionalSummary
+                      title="Fixed margin over cost"
+                      hint="Rare — customer price = booked cost + margin (Unknown cost stays Incomplete)"
+                      filled={fixedMarginPricing || v.fixed_margin ? 1 : 0}
+                    />
+                    <div className="form-grid">
+                      {text('fixed_margin', 'Margin over cost (USD)', 'number')}
+                      <button
+                        type="button"
+                        className="btn small"
+                        disabled={bookedCostCents === undefined}
+                        onClick={() =>
+                          setV((old) => ({
+                            ...old,
+                            pricing_method: 'Fixed Margin',
+                            price_override: false,
+                            sale_touched: true,
+                            sale_seeded_from_cost: false,
+                          }))
+                        }
+                      >
+                        Use fixed margin
+                      </button>
+                      {bookedCostCents === undefined ? (
+                        <small className="full field-hint">
+                          Enter cost first — margin cannot invent a missing cost.
+                        </small>
+                      ) : null}
+                    </div>
+                  </details>
                   {providerDirect && (
-                      <p className="full">
+                    <p className="full">
                       Customer card paid the provider directly
                       {bookedCostLabel ? ` (${bookedCostLabel})` : ''}. That amount is recorded
                       separately below, it is not owed to Padova. Keep amount owed at $0 and put
@@ -4227,9 +4802,9 @@ export default function BookingEntry(props: Props) {
                     </p>
                   )}
                   {providerDirect && bookedCostCents === undefined && (
-                      <button
-                        type="button"
-                        className="btn small"
+                    <button
+                      type="button"
+                      className="btn small"
                       onClick={() =>
                         setV((old) => ({
                           ...old,
@@ -4238,67 +4813,101 @@ export default function BookingEntry(props: Props) {
                           sale_touched: true,
                         }))
                       }
-                      >
-                        No amount owed to Padova ($0)
-                      </button>
+                    >
+                      No amount owed to Padova ($0)
+                    </button>
                   )}
-                  {!percentPricing && (
-                    <details>
-                      <OptionalSummary
-                        title="Compare to online price"
-                        hint="Reference price for this booking"
-                        filled={v.comparable_price ? 1 : 0}
-                      />
-                      {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
-                      <div className="form-field full inline-checkbox-field">
-                        <label className="check-card">
-                          <input
-                            type="checkbox"
-                            checked={!!v.record_comparable}
-                            onChange={(e) => change('record_comparable', e.target.checked)}
-                          />
-                          <span className="check-card-body">
-                            <span className="check-card-title">Keep this comparison</span>
-                            <small>Store the online reference price with this booking.</small>
-                          </span>
-                        </label>
-                      </div>
-                    </details>
-                  )}
-                  <details open={!!v.additional_charge || !!v.additional_charge_note}>
+                  <details
+                    className="full optional-block"
+                    open={bookingPercentPricingShouldOpen(v)}
+                  >
                     <OptionalSummary
-                      title="Extra charge / fee"
-                      hint="Booking fee or other amount owed to Padova, say what it is"
+                      title="Percent off comparable online"
+                      hint="Rare — leave collapsed for a typed customer price"
                       filled={
-                        [v.additional_charge, v.additional_charge_note].filter(Boolean).length
+                        [
+                          percentPricing ? 'percent' : '',
+                          v.comparable_price,
+                          v.discount_percent,
+                          v.record_comparable ? 'keep' : '',
+                        ].filter(Boolean).length
                       }
                     />
-                    {text('additional_charge', 'Optional Additional Charge / Fee (USD)', 'number')}
-                    <Field label="What is this fee?" full>
+                    {select(
+                      'pricing_method',
+                      'Pricing Method',
+                      [
+                        'Manual Customer Price',
+                        'Same as Cost',
+                        'Fixed Margin',
+                        'Percentage Off Comparable Online Price',
+                      ],
+                      (x) => change('pricing_method', x),
+                      v.pricing_method || 'Manual Customer Price',
+                    )}
+                    {percentPricing ? (
                       <>
-                        <div className="fee-note-chips" role="group" aria-label="Common fee types">
-                          {['Booking fee', 'Service fee', 'Agency fee', 'Other'].map((label) => (
-                            <button
-                              key={label}
-                              type="button"
-                              className={`btn small${
-                                String(v.additional_charge_note || '') === label ? ' primary' : ''
-                              }`}
-                              onClick={() => change('additional_charge_note', label)}
-                            >
-                              {label}
-                            </button>
-                          ))}
+                        {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
+                        {text('discount_percent', 'Discount %', 'number')}
+                        <output className="full booking-price-summary" aria-live="polite">
+                          <span>
+                            Customer Price:{' '}
+                            <strong>
+                              {calculatedSale === undefined
+                                ? dollars(0)
+                                : dollars(calculatedSale)}
+                            </strong>
+                          </span>
+                          <span>
+                            Savings:{' '}
+                            <strong>
+                              {calculatedSale === undefined ||
+                              usd(v.comparable_price) === undefined
+                                ? dollars(0)
+                                : dollars(usd(v.comparable_price)! - calculatedSale)}
+                            </strong>
+                          </span>
+                        </output>
+                        <div className="form-field full inline-checkbox-field">
+                          <label className="check-card">
+                            <input
+                              type="checkbox"
+                              checked={!!v.price_override}
+                              onChange={(e) => change('price_override', e.target.checked)}
+                            />
+                            <span className="check-card-body">
+                              <span className="check-card-title">Override calculated price</span>
+                              <small>
+                                Enter a manual Customer Sale Price instead of the percent-off
+                                amount.
+                              </small>
+                            </span>
+                          </label>
                         </div>
-                        <input
-                          aria-label="Extra fee note"
-                          placeholder="e.g. Booking fee, service fee, or leave blank"
-                          value={v.additional_charge_note ?? ''}
-                          onChange={(e) => change('additional_charge_note', e.target.value)}
-                        />
                       </>
-                    </Field>
+                    ) : (
+                      <>
+                        {text('comparable_price', 'Comparable Online Price (USD)', 'number')}
+                        <div className="form-field full inline-checkbox-field">
+                          <label className="check-card">
+                            <input
+                              type="checkbox"
+                              checked={!!v.record_comparable}
+                              onChange={(e) => change('record_comparable', e.target.checked)}
+                            />
+                            <span className="check-card-body">
+                              <span className="check-card-title">Keep this comparison</span>
+                              <small>Store the online reference price with this booking.</small>
+                            </span>
+                          </label>
+                        </div>
+                      </>
+                    )}
                   </details>
+                  <p className="full field-hint">
+                    Extra charge / card fee and optional taxes live in <strong>More</strong>{' '}
+                    (Plan rare fields).
+                  </p>
                   <dl className="customer-money-summary full" aria-label="Customer summary">
                     {(() => {
                       const feeNote =
@@ -4381,7 +4990,24 @@ export default function BookingEntry(props: Props) {
                   </Field>
                   {received > 0 && (
                     <>
-                      {select('receipt_method', 'Customer payment method', PAYMENT_METHODS)}
+                      {select(
+                        'receipt_method',
+                        'Customer payment method',
+                        mergePaymentMethodOptions([
+                          ...(state.payments ?? []).map((p: R) => p.method),
+                        ]),
+                      )}
+                      {v.receipt_method === PAYMENT_METHOD_OTHER ||
+                      v.receipt_method === 'Other' ? (
+                        <Field label="New customer payment method" required>
+                          <input
+                            aria-label="New customer payment method"
+                            value={v.receipt_method_custom ?? ''}
+                            onChange={(e) => change('receipt_method_custom', e.target.value)}
+                            placeholder="e.g. Venmo"
+                          />
+                        </Field>
+                      ) : null}
                       {entity(
                         'receipt_account_id',
                         'Receipt account',
@@ -4405,14 +5031,404 @@ export default function BookingEntry(props: Props) {
                 <p className="full note">
                   After Save, open <strong>Add commission</strong> on the booking to record who owes
                   Padova (IATA partner and any secondary payer). Affiliate payable comes from the
-                  referring organization above when set, do not post the same payout twice.
+                  referring organization in More when set, do not post the same payout twice.
                 </p>
               )}
+              </div>
             </section>
-            <section className="booking-section full form-grid" id="booking-summary">
+            <section className="booking-section full form-grid" id="booking-more">
               <h3 className="form-section-title">
-                <span>6</span> Summary & Notes<small>Automatic summary and useful notes</small>
+                <span>5</span> More
+                <small>
+                  Extra charge, taxes, referrer, extra income, Held PNR, FHR, document link,
+                  notes — keep collapsed unless needed
+                </small>
               </h3>
+              <details
+                className="optional-block full"
+                open={moreOpen}
+                onToggle={(e) => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}
+              >
+                <summary>
+                  Open More (extra charge, taxes, referrer, extra income, Held PNR, FHR,
+                  document, notes, summary)
+                </summary>
+              <details
+                className="optional-block full"
+                open={!!v.additional_charge || !!v.additional_charge_note}
+              >
+                <OptionalSummary
+                  title="Extra charge / fee"
+                  hint="Booking fee or card fee owed to Padova — rare; leave blank when none"
+                  filled={
+                    [v.additional_charge, v.additional_charge_note].filter(Boolean).length
+                  }
+                />
+                {can('edit_customer_charges') ? (
+                  <>
+                    {text(
+                      'additional_charge',
+                      'Optional Additional Charge / Fee (USD)',
+                      'number',
+                    )}
+                    <Field label="What is this fee?" full>
+                      <>
+                        <div className="fee-note-chips" role="group" aria-label="Common fee types">
+                          {['Booking fee', 'Card fee', 'Service fee', 'Agency fee', 'Other'].map(
+                            (label) => (
+                              <button
+                                key={label}
+                                type="button"
+                                className={`btn small${
+                                  String(v.additional_charge_note || '') === label
+                                    ? ' primary'
+                                    : ''
+                                }`}
+                                onClick={() => {
+                                  change('additional_charge_note', label);
+                                  if (
+                                    label === 'Card fee' &&
+                                    !(Number(v.additional_charge) > 0) &&
+                                    Number(v.sale) > 0
+                                  ) {
+                                    const bps = Number(
+                                      state.feeSettings?.customer_card_fee_bps ??
+                                        DEFAULT_CUSTOMER_CARD_FEE_BPS,
+                                    );
+                                    const suggested = customerCardFeeCents(
+                                      decimalUnits(String(v.sale)),
+                                      bps,
+                                    );
+                                    if (suggested > 0)
+                                      change('additional_charge', centsToUsdInput(suggested));
+                                  }
+                                }}
+                              >
+                                {label}
+                              </button>
+                            ),
+                          )}
+                        </div>
+                        <input
+                          aria-label="Extra fee note"
+                          placeholder="e.g. Booking fee, service fee, or leave blank"
+                          value={v.additional_charge_note ?? ''}
+                          onChange={(e) => change('additional_charge_note', e.target.value)}
+                        />
+                      </>
+                    </Field>
+                  </>
+                ) : (
+                  <small className="note">Charge permission required to set an extra fee.</small>
+                )}
+              </details>
+              <details
+                className="optional-block full"
+                open={
+                  !!(
+                    (typeof v.tax_amount === 'string' && v.tax_amount.trim()) ||
+                    (typeof v.tax_amount === 'number' && Number.isFinite(v.tax_amount)) ||
+                    (v.tax_bearer && v.tax_bearer !== 'Unknown')
+                  )
+                }
+              >
+                <OptionalSummary
+                  title="Taxes & Fees"
+                  hint="Optional part of customer price (e.g. sale excluding taxes) — blank stays Unknown"
+                  filled={
+                    [v.tax_amount, v.tax_bearer && v.tax_bearer !== 'Unknown' ? v.tax_bearer : '']
+                      .filter(Boolean).length
+                  }
+                />
+                <div className="form-grid">
+                  {text('tax_amount', 'Taxes / Fees (USD)', 'number')}
+                  {select(
+                    'tax_bearer',
+                    'Who paid the taxes?',
+                    [
+                      'Unknown',
+                      ...(can('manage_funding') ? ['Padova'] : []),
+                      'Customer',
+                      'Seller',
+                      'Included in Seller Price',
+                    ],
+                    undefined,
+                    v.tax_bearer || 'Unknown',
+                  )}
+                  {usd(v.tax_amount) !== undefined && (
+                    <details className="full">
+                      <summary>Tax cost / customer recovery</summary>
+                      <div className="form-grid">
+                        {select(
+                          'tax_economic_bearer',
+                          'Who bears the tax cost?',
+                          ['Unknown', 'Padova', 'Customer', 'Seller'],
+                          undefined,
+                          v.tax_economic_bearer || 'Unknown',
+                        )}
+                        {v.tax_economic_bearer === 'Customer' &&
+                          text(
+                            'tax_customer_recovery',
+                            'Tax recovered within customer price (USD)',
+                            'number',
+                          )}
+                        <small className="full">
+                          Include any recovery in the customer price. This records the tax split; it
+                          does not add another charge.
+                        </small>
+                      </div>
+                    </details>
+                  )}
+                  {can('manage_funding') && v.tax_bearer === 'Padova' && (
+                    <>
+                      <Field label="Already included in a Padova payment above">
+                        <input
+                          type="checkbox"
+                          checked={!!v.tax_included}
+                          onChange={(e) => change('tax_included', e.target.checked)}
+                        />
+                      </Field>
+                      {!v.tax_included && (
+                        <>
+                          {select(
+                            'tax_method',
+                            'Tax payment method',
+                            mergePaymentMethodOptions([
+                              ...(state.payments ?? []).map((p: R) => p.method),
+                            ]),
+                          )}
+                          {v.tax_method === PAYMENT_METHOD_OTHER ||
+                          v.tax_method === 'Other' ? (
+                            <Field label="New tax payment method" required>
+                              <input
+                                aria-label="New tax payment method"
+                                value={v.tax_method_custom ?? ''}
+                                onChange={(e) => change('tax_method_custom', e.target.value)}
+                                placeholder="e.g. Venmo"
+                              />
+                            </Field>
+                          ) : null}
+                          {entity(
+                            'tax_account_id',
+                            'Tax payment account',
+                            'paymentAccounts',
+                            'payment_account',
+                            { kind: 'Card' },
+                            undefined,
+                            undefined,
+                            (a) => accountSupports(a, v.tax_method),
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                  <small className="full">
+                    Taxes paid directly by the customer or included in the seller price add no extra
+                    Padova expense. Record a separate amount owed to a seller as another seller
+                    component. Needed for sale-excluding-taxes extra income deals.
+                  </small>
+                </div>
+              </details>
+              <details
+                className="optional-block full"
+                open={!!v.referring_organization_id}
+              >
+                <OptionalSummary title="Referring organization (affiliate)" />
+                {can('manage_commissions') ? (
+                  <SearchableSelect
+                    id="entry-referring_organization_id"
+                    label="Referring organization (affiliate)"
+                    value={v.referring_organization_id ?? ''}
+                    placeholder="Select organization…"
+                    options={[
+                      {
+                        value: '',
+                        label: 'None',
+                      },
+                      ...(state.referralOrganizations ?? []).map((r: R) => ({
+                        value: r.id,
+                        label: `${r.name}${r.location ? ` · ${r.location}` : ''} · ${
+                          r.terms?.calculation === 'fixed'
+                            ? `fixed $${((Number(r.terms.fixed_amount) || 0) / 100).toFixed(2)}`
+                            : `${((Number(r.terms?.rate_bps) || 0) / 100).toFixed(2)}% of ${r.terms?.percentage_basis ?? 'profit'}`
+                        }`,
+                      })),
+                    ]}
+                    onChange={(id) => change('referring_organization_id', id || '')}
+                    emptyLabel="No matching organization"
+                    hideCount
+                  />
+                ) : (
+                  <small className="note">Commission permission required to set affiliate.</small>
+                )}
+              </details>
+              <details
+                className="optional-block full"
+                open={
+                  !!(
+                    String(v.extra_income_label || '').trim() ||
+                    String(v.extra_income_percent ?? '').trim() ||
+                    String(v.extra_income_note || '').trim()
+                  )
+                }
+              >
+                <OptionalSummary
+                  title="Extra income"
+                  hint="Optional side deal (e.g. Marriott 10% cash) — blank stays Unknown"
+                  filled={
+                    [
+                      v.extra_income_label,
+                      v.extra_income_percent,
+                      v.extra_income_note,
+                    ].filter((x) => String(x ?? '').trim()).length
+                  }
+                />
+                <Field label="Label" full>
+                  <input
+                    aria-label="Extra income label"
+                    type="text"
+                    placeholder="e.g. Marriott cash back"
+                    value={v.extra_income_label ?? ''}
+                    onChange={(e) => change('extra_income_label', e.target.value)}
+                  />
+                </Field>
+                <Field label="Rate (%)">
+                  <input
+                    aria-label="Extra income percent"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    placeholder="10"
+                    value={v.extra_income_percent ?? ''}
+                    onChange={(e) => change('extra_income_percent', e.target.value)}
+                  />
+                </Field>
+                <Field label="Of">
+                  <select
+                    aria-label="Extra income basis"
+                    value={v.extra_income_basis || 'sale_ex_tax'}
+                    onChange={(e) => change('extra_income_basis', e.target.value)}
+                  >
+                    {STANDING_DEAL_BASES.map((basis) => (
+                      <option key={basis} value={basis}>
+                        {basis === 'sale_ex_tax'
+                          ? 'Stay price excluding taxes'
+                          : 'Full customer sale'}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Note (optional)" full>
+                  <textarea
+                    aria-label="Extra income note"
+                    rows={2}
+                    placeholder="Optional — never invent an amount"
+                    value={v.extra_income_note ?? ''}
+                    onChange={(e) => change('extra_income_note', e.target.value)}
+                  />
+                </Field>
+                <p className="full field-hint">
+                  Seeds an expected Money Back line on save. Amount stays Incomplete when sale or
+                  taxes needed for the basis are unknown. Customer standing deals still seed
+                  separately.
+                </p>
+              </details>
+            {howVis.showFhrHints ? (
+              <details
+                className="optional-block full"
+                id="booking-fhr-more"
+                open={bookingEntryFhrMoreShouldOpen(v)}
+              >
+                <OptionalSummary
+                  title="Program rate (FHR)"
+                  hint="Optional — FHR / Amex / similar; blank stays Unknown"
+                  filled={
+                    [v.program_rate_name, v.program_perks, v.program_benefit_gained].filter(
+                      (x) => typeof x === 'string' && !!String(x).trim(),
+                    ).length
+                  }
+                />
+                <div className="form-grid">
+                  <Field label="Program name (optional)">
+                    <input
+                      aria-label="Program name"
+                      type="text"
+                      placeholder="FHR"
+                      value={v.program_rate_name ?? ''}
+                      onChange={(e) => change('program_rate_name', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Perks included (optional)" full>
+                    <textarea
+                      aria-label="Program perks"
+                      rows={2}
+                      placeholder="Breakfast, property credit, upgrade"
+                      value={v.program_perks ?? ''}
+                      onChange={(e) => change('program_perks', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Amex credit / points gained (optional)" full>
+                    <input
+                      aria-label="Amex credit or points gained"
+                      type="text"
+                      placeholder="None — leave blank (info only, not income)"
+                      value={v.program_benefit_gained ?? ''}
+                      onChange={(e) => change('program_benefit_gained', e.target.value)}
+                    />
+                  </Field>
+                  <p className="full field-hint">
+                    Account used for the booking is under Booked Through (always someone
+                    else&apos;s). Amex credit / points gained default to none and are never counted
+                    as Padova income.
+                  </p>
+                </div>
+              </details>
+            ) : null}
+            <details
+              className="optional-block full"
+              id="booking-held"
+              open={bookingEntryHeldMoreShouldOpen(v)}
+            >
+              <OptionalSummary
+                title="Held PNR"
+                hint="Optional unpaid hold with ticketing deadline"
+                filled={v.held_pnr || v.ticketing_deadline ? 1 : 0}
+              />
+              <div className="form-field full inline-checkbox-field">
+                <label className="check-card">
+                  <input
+                    type="checkbox"
+                    checked={!!v.held_pnr}
+                    onChange={(e) => change('held_pnr', e.target.checked)}
+                  />
+                  <span className="check-card-body">
+                    <span className="check-card-title">Hold this PNR (customer not paid yet)</span>
+                    <small>
+                      Status Held until paid and ticketed. Reminder before the deadline — no
+                      auto-cancel.
+                    </small>
+                  </span>
+                </label>
+              </div>
+              {v.held_pnr ? text('ticketing_deadline', 'Ticketing deadline', 'date', true) : null}
+            </details>
+            <details
+              className="optional-block full"
+              id="booking-summary"
+              open={bookingEntryNotesMoreShouldOpen(v)}
+            >
+              <OptionalSummary
+                title="Summary & notes"
+                hint="Automatic summary and useful notes — leave collapsed when blank"
+                filled={
+                  [
+                    v.summary_override ? 'edit' : '',
+                    v.notes,
+                    v.price_breakdown_note,
+                  ].filter((x) => typeof x === 'string' && !!String(x).trim()).length
+                }
+              />
               <div className="full reservation-summary">
                 <div className="summary-heading">
                   <label>Reservation summary · {v.summary_override ? 'Edited' : 'Automatic'}</label>
@@ -4443,6 +5459,96 @@ export default function BookingEntry(props: Props) {
                   onChange={(e) => change('notes', e.target.value)}
                 />
               </Field>
+              <Field label="Per-traveler / per-flight breakdown (optional)" full>
+                <textarea
+                  aria-label="Per-traveler or per-flight price breakdown"
+                  rows={2}
+                  placeholder="Optional note only — customer price stays one total"
+                  value={v.price_breakdown_note ?? ''}
+                  onChange={(e) => change('price_breakdown_note', e.target.value)}
+                />
+              </Field>
+              <p className="full field-hint">
+                One booking = one customer price. A per-traveler or per-flight split is a note
+                only — never required, never invents dollars, and never shown on the list.
+              </p>
+            </details>
+            <details
+              className="optional-block full"
+              open={
+                !!(
+                  String(v.document_label || '').trim() ||
+                  String(v.document_url || '').trim() ||
+                  String(v.document_note || '').trim()
+                )
+              }
+            >
+              <OptionalSummary
+                title="Document link"
+                hint="Optional itinerary / screenshot / PDF link — metadata only; blank stays Unknown"
+                filled={
+                  [
+                    v.document_label,
+                    v.document_url,
+                    v.document_note,
+                    v.document_kind && v.document_kind !== 'other' ? v.document_kind : '',
+                  ].filter((x) => String(x || '').trim()).length
+                }
+              />
+              <Field label="Label" full>
+                <input
+                  aria-label="Document label"
+                  type="text"
+                  placeholder="e.g. United eTicket, hotel confirmation screenshot"
+                  value={v.document_label ?? ''}
+                  onChange={(e) => change('document_label', e.target.value)}
+                />
+              </Field>
+              <Field label="Kind">
+                <select
+                  aria-label="Document kind"
+                  value={v.document_kind || 'other'}
+                  onChange={(e) => change('document_kind', e.target.value)}
+                >
+                  {BOOKING_DOCUMENT_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {bookingDocumentKindLabel(kind)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Link URL (optional)" full>
+                <input
+                  aria-label="Document URL"
+                  type="url"
+                  placeholder="https://…"
+                  value={v.document_url ?? ''}
+                  onChange={(e) => change('document_url', e.target.value)}
+                />
+              </Field>
+              <Field label="Note (optional)" full>
+                <textarea
+                  aria-label="Document note"
+                  rows={2}
+                  placeholder="Where this came from — never invent a file"
+                  value={v.document_note ?? ''}
+                  onChange={(e) => change('document_note', e.target.value)}
+                />
+              </Field>
+              <Field label="Date (optional)">
+                <input
+                  aria-label="Document date"
+                  type="date"
+                  value={v.document_added_on ?? ''}
+                  onChange={(e) => change('document_added_on', e.target.value)}
+                />
+              </Field>
+              <p className="full field-hint">
+                Saves with the booking as a document link. Add more links later from the booking
+                page. No binary upload in v1.
+              </p>
+            </details>
+              </details>
             </section>
           </div>
           <p className={recoveryAvailable ? 'muted' : 'form-error'} role="status">

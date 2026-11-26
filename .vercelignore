@@ -14,3 +14,11 @@ coverage
 *.tsbuildinfo
 CURRENT_SOURCE_SNAPSHOT_*.txt
 render.yaml
+scripts
+Padova-WhatsApp-Helper-QA
+.vercel-prod-link
+.vercel-qa-backup
+AGENTS.md
+README.md
+.prettierrc.json
+.prettierignore

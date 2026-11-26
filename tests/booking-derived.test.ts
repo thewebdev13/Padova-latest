@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import {
+  bookingTravelEndMissingMessage,
+  bookingTravelEndRequired,
   derivedTravel,
   travelDateLabels,
   originalConfirmedRate,
@@ -12,6 +14,37 @@ import { financialDatabase, testOwner } from './helpers';
 import { execute, economics } from '../src/lib/finance';
 import { fulfillmentSchemas } from '../src/lib/fulfillment';
 import { effectiveTravelComponents } from '../src/lib/fulfillment';
+
+test('Plan Do-now: hotel check-out / round-trip return required; blank stays missing', () => {
+  assert.equal(bookingTravelEndRequired({ product: 'Hotel' }), true);
+  assert.equal(bookingTravelEndRequired({ product: 'Car' }), true);
+  assert.equal(
+    bookingTravelEndRequired({ product: 'Flight', trip_type: 'Round Trip' }),
+    true,
+  );
+  assert.equal(bookingTravelEndRequired({ product: 'Flight', trip_type: 'One Way' }), false);
+  assert.equal(bookingTravelEndRequired({ product: 'Other' }), false);
+  assert.match(
+    bookingTravelEndMissingMessage({ product: 'Hotel', travel_end: '' }) || '',
+    /Check-out date/i,
+  );
+  assert.match(
+    bookingTravelEndMissingMessage({
+      product: 'Flight',
+      trip_type: 'Round Trip',
+      travel_end: '',
+    }) || '',
+    /Return Date/i,
+  );
+  assert.equal(
+    bookingTravelEndMissingMessage({ product: 'Hotel', travel_end: '2027-03-04' }),
+    null,
+  );
+  assert.equal(
+    bookingTravelEndMissingMessage({ product: 'Flight', trip_type: 'One Way' }),
+    null,
+  );
+});
 
 test('structured travel derives the summary and dates without duplicating employee input', () => {
   assert.deepEqual(travelDateLabels('Flight'), { start: 'Departure Date', end: undefined });

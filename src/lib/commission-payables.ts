@@ -1,4 +1,9 @@
 import type { Row, SQL } from './db';
+import {
+  commissionConfirmedOnBooking,
+  referralHoldForPayableWhen,
+  resolveReferralPayableWhen,
+} from './referrer-payable';
 
 export async function hasPayableTerms(db: SQL): Promise<boolean> {
   const name =
@@ -69,7 +74,10 @@ export async function payableStates(db: SQL, booking: Row, today: string): Promi
           : Number((BigInt(base) * BigInt(terms?.rate_bps ?? r.rate_bps) + 5000n) / 10000n);
     const earned = terms?.earned ?? true;
     const accrued = !active || !earned ? 0 : expected;
-    const rule = terms?.payable_when ?? 'After travel';
+    const rule = resolveReferralPayableWhen({
+      payable_when: terms?.payable_when,
+      after_receipt: terms ? undefined : r.after_receipt,
+    });
     const due = String(terms?.due_on ?? r.due_on);
     let hold =
       accrued == null
@@ -81,21 +89,26 @@ export async function payableStates(db: SQL, booking: Row, today: string): Promi
             : due > today
               ? 'Payout date not reached'
               : '';
-    if (!hold && rule === 'After travel' && String(booking.travel_end) > today)
-      hold = 'Travel not completed';
-    if (
-      !hold &&
-      rule === 'After customer paid' &&
-      (booking.customer_balance == null || Number(booking.customer_balance) > 0)
-    )
-      hold = 'Customer payment pending';
-    if (
-      !hold &&
-      (rule === 'After commission received' || (!terms && r.after_receipt)) &&
-      (booking.commission_incomplete ||
-        Number(booking.expected_commission) > Number(booking.received_commission))
-    )
-      hold = 'Commission receipt pending';
+    if (!hold) {
+      const commissions = (
+        await db.query('SELECT id, booking_id FROM commissions WHERE booking_id=$1', [booking.id])
+      ).rows as Array<{ id: string; booking_id?: string }>;
+      hold = referralHoldForPayableWhen({
+        rule,
+        commissionConfirmed: commissionConfirmedOnBooking({
+          commissions,
+          operational: booking.itinerary?.operational_entry,
+          bookingId: booking.id,
+        }),
+        commissionIncomplete: Boolean(booking.commission_incomplete),
+        expectedCommission: Number(booking.expected_commission ?? 0),
+        receivedCommission: Number(booking.received_commission ?? 0),
+        customerBalance:
+          booking.customer_balance == null ? null : Number(booking.customer_balance),
+        travelEnd: booking.travel_end,
+        today,
+      });
+    }
     const outstanding = accrued == null ? null : Math.max(0, accrued - paid);
     const recovery = accrued == null ? null : Math.max(0, paid - accrued);
     states.push({

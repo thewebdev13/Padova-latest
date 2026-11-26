@@ -94,6 +94,7 @@ export const agreementTerms = z
       'When earned',
       'After travel',
       'After customer paid',
+      'After commission confirmed',
       'After commission received',
       'On date',
     ]),

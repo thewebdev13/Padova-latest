@@ -19,6 +19,8 @@ export type IntakePasteLine = {
   value: string;
 };
 
+export type IntakePreviewRowStatus = 'found' | 'missing' | 'confirm';
+
 export type IntakePreviewRow = {
   id: string;
   fieldLabel: string;
@@ -27,10 +29,27 @@ export type IntakePreviewRow = {
   /** Extra status under the source line, e.g. existing person */
   sourceHint?: string;
   value: string;
-  status: 'found' | 'missing';
+  /**
+   * found = confident match · missing = blank · confirm = value present but ambiguous
+   * (e.g. multiple people with the same name — never a green tick).
+   */
+  status: IntakePreviewRowStatus;
   /** Canonical Field: label used when remapping into paste text */
   canonicalLabel: string;
 };
+
+/** Mark glyph for intake preview rows (Do-now: multiple matches ≠ green ✓). */
+export function intakePreviewMark(status: IntakePreviewRowStatus): string {
+  if (status === 'found') return '✓';
+  if (status === 'confirm') return '?';
+  return '!';
+}
+
+export function intakePreviewMarkLabel(status: IntakePreviewRowStatus): string {
+  if (status === 'found') return 'Found';
+  if (status === 'confirm') return 'Confirm match';
+  return 'Missing';
+}
 
 /** Manual remap: row id → paste line id, or '' to clear */
 export type IntakeFieldOverrides = Record<string, string>;
@@ -85,16 +104,17 @@ function locationFieldLabel(product: string): string {
   return 'Route';
 }
 
-function partyHint(
+function partyMatch(
   name: string | undefined,
   parties: { name?: string }[] | undefined,
-): string | undefined {
-  if (!name?.trim() || !parties?.length) return undefined;
+): { hint?: string; status?: 'found' | 'confirm' } {
+  if (!name?.trim() || !parties?.length) return {};
   const wanted = normalizePasteValue(name);
   const hits = parties.filter((p) => normalizePasteValue(String(p.name || '')) === wanted);
-  if (hits.length === 1) return 'existing person';
-  if (hits.length > 1) return 'multiple matches, confirm';
-  return 'new, confirm on save';
+  if (hits.length === 1) return { hint: 'existing person', status: 'found' };
+  // Do-now: several people with the same name must not look like a confident green tick.
+  if (hits.length > 1) return { hint: 'multiple matches, confirm', status: 'confirm' };
+  return { hint: 'new, confirm on save', status: 'found' };
 }
 
 /** Every Field: Value line from paste (known + unknown) for remap dropdowns. */
@@ -219,7 +239,12 @@ export function buildIntakeMappingPreview(
     fieldLabel: string,
     key: string | null,
     value: string | undefined,
-    extras?: { sourceKey?: string; sourceHint?: string; canonicalLabel?: string },
+    extras?: {
+      sourceKey?: string;
+      sourceHint?: string;
+      canonicalLabel?: string;
+      statusWhenFound?: 'found' | 'confirm';
+    },
   ) => {
     const canonicalLabel =
       extras?.canonicalLabel || INTAKE_ROW_CANONICAL[id] || fieldLabel;
@@ -266,7 +291,7 @@ export function buildIntakeMappingPreview(
         sourceLabel,
         sourceHint: extras?.sourceHint,
         value: v,
-        status: 'found',
+        status: extras?.statusWhenFound || 'found',
         canonicalLabel,
       });
     } else {
@@ -280,11 +305,15 @@ export function buildIntakeMappingPreview(
     }
   };
 
+  const customerMatch = partyMatch(f.customer, options.parties);
   push('customer', 'Customer', 'customer', f.customer, {
-    sourceHint: partyHint(f.customer, options.parties),
+    sourceHint: customerMatch.hint,
+    statusWhenFound: customerMatch.status,
   });
+  const travelerMatch = partyMatch(f.traveler, options.parties);
   push('traveler', 'Traveler', 'traveler', f.traveler, {
-    sourceHint: partyHint(f.traveler, options.parties),
+    sourceHint: travelerMatch.hint,
+    statusWhenFound: travelerMatch.status,
   });
   push('product', 'Product', 'product', product || undefined);
   push('route', locationFieldLabel(product), 'route', f.route, {
@@ -336,9 +365,11 @@ export function buildIntakeMappingPreview(
     paste,
     rows: reservationBlock
       ? rows.map((r) =>
-          r.status === 'found'
+          r.status === 'found' || r.status === 'confirm'
             ? {
                 ...r,
+                // Ambiguous person rows stay confirm (never upgrade to green ✓).
+                status: r.status === 'confirm' ? ('confirm' as const) : r.status,
                 sourceHint: r.sourceHint
                   ? `${r.sourceHint} · verify (not a new booking confirm)`
                   : 'verify (not a new booking confirm)',

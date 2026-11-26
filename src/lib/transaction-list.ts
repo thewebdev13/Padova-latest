@@ -2,6 +2,7 @@ export type TransactionRecord = {
   id: string;
   booked_on?: string | null;
   effective_on?: string | null;
+  created_at?: string | null;
 };
 
 /** Only use authorized, recorded balances. An absent/unknown balance is never paid. */
@@ -58,6 +59,7 @@ export function transactionList<B extends TransactionRecord, S extends Transacti
   ].sort(
     (a, b) =>
       (b.date || '').localeCompare(a.date || '') ||
+      String(b.record.created_at || '').localeCompare(String(a.record.created_at || '')) ||
       a.kind.localeCompare(b.kind) ||
       a.record.id.localeCompare(b.record.id),
   );

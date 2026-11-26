@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fixedMenuStyleFromRect } from '@/lib/fixed-menu-style';
+import { searchableDropdownOpensFor } from '@/lib/searchable-dropdown-policy';
 const airports = [
   ['EWR', 'Newark'],
   ['JFK', 'New York JFK'],
@@ -79,25 +80,30 @@ export default function AirportInput({
         value={value}
         onFocus={(e) => {
           if (blurClose.current != null) window.clearTimeout(blurClose.current);
+          // Plan Do-now: do not open on tab-focus alone (same as SearchableSelect).
           e.target.select();
           setSearching(false);
-          setOpen(true);
+          if (searchableDropdownOpensFor('focus')) setOpen(true);
         }}
         onClick={(e) => {
           e.currentTarget.select();
           setSearching(false);
-          setOpen(true);
+          if (searchableDropdownOpensFor('click')) setOpen(true);
         }}
         onBlur={() => {
           blurClose.current = window.setTimeout(() => setOpen(false), 250);
         }}
         onChange={(e) => {
           setSearching(true);
-          setOpen(true);
+          if (searchableDropdownOpensFor('change')) setOpen(true);
           onChange(e.target.value.toUpperCase());
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (searchableDropdownOpensFor('arrow')) setOpen(true);
+          }
+          if (e.key === 'Escape' && open) {
             e.preventDefault();
             e.stopPropagation();
             setOpen(false);

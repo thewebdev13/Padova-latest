@@ -83,20 +83,26 @@ async function access(
   u.token = session.token;
   u.actor = (await sessionActor(db, u.token))!;
 }
-test('individual accounts have distinct sessions; owner defaults are complete and employee defaults deny financial visibility', async () => {
+test('individual accounts have distinct sessions; Plan v1 staff see booking money but not company totals', async () => {
   const a = await employee(),
     b = await employee();
   assert.notEqual(a.actor.id, b.actor.id);
   assert.notEqual(a.token, b.token);
   assert.equal(a.actor.role, 'EMPLOYEE');
   for (const p of [
-    'view_total_profit',
     'view_sale_price',
     'view_supplier_cost',
     'view_booking_profit',
     'view_asset_basis',
+    'manage_funding',
+  ] as const)
+    assert.ok(hasPermission(a.actor, p), p);
+  for (const p of [
+    'view_total_profit',
     'view_accounting',
     'manage_users',
+    'manage_settings',
+    'view_audit',
   ] as const)
     assert.ok(!hasPermission(a.actor, p), p);
   for (const p of OWNER_PERMISSIONS) assert.ok(hasPermission(owner, p));
@@ -110,7 +116,7 @@ test('individual accounts have distinct sessions; owner defaults are complete an
     /already provisioned/,
   );
 });
-test('default employee responses contain no prices, costs, profits, asset basis, accounting or raw financial audit payloads', async () => {
+test('default staff see per-booking prices/costs and traveler details; company totals stay hidden', async () => {
   const u = await employee(),
     customer = await cmd(owner, 'party', {
       name: 'Visibility customer',
@@ -157,34 +163,21 @@ test('default employee responses contain no prices, costs, profits, asset basis,
   const s = await snapshot(db, u.actor),
     d = await detail(db, u.actor, 'booking', b.id),
     p = await detail(db, u.actor, 'person', customer.id);
-  for (const r of [s.bookings.find((x) => x.id === b.id)!, d.booking])
-    for (const key of [
-      'sale',
-      'paid',
-      'customer_balance',
-      'funding_cost',
-      'generated_value',
-      'net_economic_cost',
-      'obligations',
-      'supplier_paid',
-      'profit',
-      'gross_profit',
-      'expected_commission',
-      'referral_due',
-    ])
-      assert.equal(r[key], undefined, key);
+  const bookingRow = s.bookings.find((x) => x.id === b.id)!;
+  assert.equal(bookingRow.sale, 128987);
+  assert.equal(d.booking.sale, 128987);
+  assert.ok(bookingRow.funding_cost != null || d.booking.funding_cost != null);
+  // Company-wide accounting / profit movements stay Owner-only.
   assert.deepEqual(s.journal, []);
   assert.deepEqual(s.movements, []);
-  assert.deepEqual(s.assets, []);
-  assert.deepEqual(d.charges, []);
-  assert.deepEqual(d.funding, []);
-  assert.deepEqual(p.statement, []);
-  assert.equal(p.privateData, null);
-  assert.ok(!JSON.stringify({ s, d, p }).includes('PRIVATE-SYNTHETIC-KTN'));
-  for (const a of d.activity) {
-    assert.equal(a.before_value, undefined);
-    assert.equal(a.after_value, undefined);
-  }
+  // Plan v1: staff may use traveler details for daily booking work.
+  assert.ok(p.privateData);
+  assert.equal(p.privateData.ktn, 'PRIVATE-SYNTHETIC-KTN');
+  // Explicit revoke still hides traveler secrets server-side.
+  await access(u, EMPLOYEE_PERMISSIONS.filter((x) => x !== 'view_traveler_sensitive'));
+  const hidden = await detail(db, u.actor, 'person', customer.id);
+  assert.equal(hidden.privateData, null);
+  assert.ok(!JSON.stringify(hidden).includes('PRIVATE-SYNTHETIC-KTN'));
 });
 test('shared booking notes retain individual author/time and join automatic payment activity', async () => {
   const worker = await employee(['operations']);

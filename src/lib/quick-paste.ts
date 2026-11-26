@@ -264,6 +264,22 @@ export function exactEligibleMatch(rows: R[], label: string, role?: DirectoryRol
   );
   return matches.length === 1 ? matches[0] : undefined;
 }
+
+/**
+ * Booking-source / channel match: exact first, then unique contains (e.g. paste
+ * "Capital One Travel" → directory "Capital One"). Never invents when ambiguous.
+ */
+export function bookingSourceMethodMatch(rows: R[], label: string) {
+  const exact = exactEligibleMatch(rows, label);
+  if (exact) return exact;
+  const key = referenceKey(label);
+  if (!key) return undefined;
+  const soft = rows.filter((r) => {
+    const n = referenceKey(String(r.name || ''));
+    return n === key || n.includes(key) || key.includes(n);
+  });
+  return soft.length === 1 ? soft[0] : undefined;
+}
 export function exactPointCost(quantity: number, rate: string, unit: string): number {
   if (!['USD per point', 'USD per 1,000 points', 'cents per point'].includes(unit))
     throw new Error('Choose an explicit point-rate unit');
